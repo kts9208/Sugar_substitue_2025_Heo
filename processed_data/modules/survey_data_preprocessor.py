@@ -276,7 +276,7 @@ class SurveyDataPreprocessor:
 # Example usage
 if __name__ == "__main__":
     # Example usage of the preprocessor
-    file_path = "Raw data/Sugar_substitue_Raw data_250730.xlsx"
+    file_path = "../Raw data/Sugar_substitue_Raw data_250730.xlsx"
     
     try:
         # Initialize preprocessor

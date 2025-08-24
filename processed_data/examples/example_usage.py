@@ -8,6 +8,9 @@ Author: Sugar Substitute Research Team
 Date: 2025-08-24
 """
 
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'modules'))
 from survey_data_preprocessor import SurveyDataPreprocessor, FactorConfig
 import pandas as pd
 
@@ -17,7 +20,7 @@ def main():
     # 1. Initialize the preprocessor with the raw data file
     print("=== Survey Data Preprocessor Example ===\n")
     
-    file_path = "Raw data/Sugar_substitue_Raw data_250730.xlsx"
+    file_path = "../Raw data/Sugar_substitue_Raw data_250730.xlsx"
     preprocessor = SurveyDataPreprocessor(file_path)
     
     # 2. Load and prepare the data
@@ -96,7 +99,7 @@ def demonstrate_advanced_usage():
     print("\n=== Advanced Usage Examples ===\n")
     
     # Initialize preprocessor
-    preprocessor = SurveyDataPreprocessor("Raw data/Sugar_substitue_Raw data_250730.xlsx")
+    preprocessor = SurveyDataPreprocessor("../Raw data/Sugar_substitue_Raw data_250730.xlsx")
     preprocessor.load_and_prepare_data()
     
     # Example 1: Combine multiple factors for analysis

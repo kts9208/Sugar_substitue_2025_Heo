@@ -12,10 +12,13 @@ import pandas as pd
 from pathlib import Path
 import tempfile
 import shutil
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'modules'))
 from survey_data_preprocessor import (
-    FactorConfig, 
-    DataLoader, 
-    FactorGrouper, 
+    FactorConfig,
+    DataLoader,
+    FactorGrouper,
     SurveyDataPreprocessor
 )
 
@@ -69,7 +72,7 @@ class TestDataLoader(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        self.raw_data_path = "Raw data/Sugar_substitue_Raw data_250730.xlsx"
+        self.raw_data_path = "../../Raw data/Sugar_substitue_Raw data_250730.xlsx"
         
         # Check if raw data file exists
         if not Path(self.raw_data_path).exists():
@@ -119,7 +122,7 @@ class TestFactorGrouper(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        self.raw_data_path = "Raw data/Sugar_substitue_Raw data_250730.xlsx"
+        self.raw_data_path = "../Raw data/Sugar_substitue_Raw data_250730.xlsx"
         
         # Check if raw data file exists
         if not Path(self.raw_data_path).exists():
@@ -206,7 +209,7 @@ class TestSurveyDataPreprocessor(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        self.raw_data_path = "Raw data/Sugar_substitue_Raw data_250730.xlsx"
+        self.raw_data_path = "../Raw data/Sugar_substitue_Raw data_250730.xlsx"
         
         # Check if raw data file exists
         if not Path(self.raw_data_path).exists():
@@ -282,7 +285,7 @@ class TestIntegration(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        self.raw_data_path = "Raw data/Sugar_substitue_Raw data_250730.xlsx"
+        self.raw_data_path = "../Raw data/Sugar_substitue_Raw data_250730.xlsx"
         
         # Check if raw data file exists
         if not Path(self.raw_data_path).exists():
