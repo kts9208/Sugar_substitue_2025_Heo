@@ -1,7 +1,8 @@
 """
-Multinomial Logit Model 메인 실행 스크립트
+MNL (Multinomial Logit) 분석 실행 스크립트
 
-DCE 데이터를 사용하여 Multinomial Logit Model을 추정하고 결과를 분석합니다.
+DCE(Discrete Choice Experiment) 데이터를 사용하여
+Multinomial Logit Model을 추정하고 결과를 분석합니다.
 """
 
 import os
@@ -10,12 +11,20 @@ import logging
 from pathlib import Path
 from typing import Dict, Any
 
+# 현재 디렉토리를 상위 디렉토리로 변경 (데이터 접근을 위해)
+current_dir = Path(__file__).parent
+parent_dir = current_dir.parent
+os.chdir(parent_dir)
+
+# 패키지 경로 추가
+sys.path.insert(0, str(parent_dir))
+
 # 로깅 설정
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('multinomial_logit_analysis.log'),
+        logging.FileHandler('multinomial_logit/multinomial_logit_analysis.log'),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -142,7 +151,7 @@ def main():
         comprehensive_report = analyzer.create_comprehensive_report()
         
         # 보고서를 파일로 저장
-        report_filename = "multinomial_logit_analysis_report.txt"
+        report_filename = "multinomial_logit/multinomial_logit_analysis_report.txt"
         with open(report_filename, 'w', encoding='utf-8') as f:
             f.write(comprehensive_report)
         
@@ -152,7 +161,7 @@ def main():
         print("\n" + comprehensive_report)
         
         # 8. Excel 파일로 결과 내보내기
-        excel_filename = "multinomial_logit_results.xlsx"
+        excel_filename = "multinomial_logit/multinomial_logit_results.xlsx"
         try:
             analyzer.export_results_to_excel(excel_filename)
             logger.info(f"상세 결과가 {excel_filename}에 저장되었습니다")
@@ -226,8 +235,8 @@ def run_sensitivity_analysis():
         logger.info(f"\n{comparison_df.to_string(index=False)}")
         
         # 파일로 저장
-        comparison_df.to_csv("sensitivity_analysis_results.csv", index=False)
-        logger.info("민감도 분석 결과가 sensitivity_analysis_results.csv에 저장되었습니다")
+        comparison_df.to_csv("multinomial_logit/sensitivity_analysis_results.csv", index=False)
+        logger.info("민감도 분석 결과가 multinomial_logit/sensitivity_analysis_results.csv에 저장되었습니다")
         
     except Exception as e:
         logger.error(f"민감도 분석 중 오류: {e}")

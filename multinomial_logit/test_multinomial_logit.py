@@ -13,7 +13,10 @@ from pathlib import Path
 import sys
 
 # 테스트를 위한 경로 설정
-sys.path.insert(0, str(Path(__file__).parent.parent))
+current_dir = Path(__file__).parent
+parent_dir = current_dir.parent
+sys.path.insert(0, str(parent_dir))
+os.chdir(parent_dir)
 
 from multinomial_logit import (
     DCEDataLoader, DCEDataPreprocessor, ModelConfig, ModelConfigManager,
@@ -35,7 +38,8 @@ class TestDCEDataLoader(unittest.TestCase):
         if Path(self.test_data_dir).exists():
             loader = DCEDataLoader(self.test_data_dir)
             self.assertIsInstance(loader, DCEDataLoader)
-            self.assertEqual(str(loader.data_dir), self.test_data_dir)
+            # 경로 구분자 차이 무시
+            self.assertTrue(str(loader.data_dir).replace('\\', '/').endswith('processed_data/dce_data'))
     
     def test_load_choice_matrix(self):
         """선택 매트릭스 로딩 테스트"""

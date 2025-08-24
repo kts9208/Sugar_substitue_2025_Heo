@@ -18,18 +18,21 @@ DCE(Discrete Choice Experiment) 데이터를 사용한 Multinomial Logit Model �
 
 ```
 multinomial_logit/
-├── __init__.py              # 패키지 초기화
-├── data_loader.py           # DCE 데이터 로딩 모듈
-├── data_preprocessor.py     # 데이터 전처리 모듈
-├── model_config.py          # 모델 설정 관리 모듈
-├── model_estimator.py       # 모델 추정 모듈
-└── results_analyzer.py      # 결과 분석 모듈
+├── __init__.py                          # 패키지 초기화
+├── data_loader.py                       # DCE 데이터 로딩 모듈
+├── data_preprocessor.py                 # 데이터 전처리 모듈
+├── model_config.py                      # 모델 설정 관리 모듈
+├── model_estimator.py                   # 모델 추정 모듈
+├── results_analyzer.py                  # 결과 분석 모듈
+├── mnl_analysis.py                      # MNL 분석 실행 스크립트
+├── test_multinomial_logit.py            # 테스트 코드
+├── multinomial_logit_analysis.log       # 실행 로그
+├── multinomial_logit_analysis_report.txt # 분석 보고서
+├── multinomial_logit_results.xlsx       # Excel 결과 파일
+└── sensitivity_analysis_results.csv     # 민감도 분석 결과
 
-tests/
-└── test_multinomial_logit.py # 테스트 코드
-
-main_analysis.py             # 메인 실행 스크립트
-README.md                    # 프로젝트 문서
+processed_data/dce_data/                 # DCE 데이터 디렉토리
+README.md                                # 프로젝트 문서
 ```
 
 ## 설치 및 실행
@@ -44,12 +47,12 @@ pip install statsmodels pandas numpy scipy
 
 1. **메인 분석 실행**:
 ```bash
-python main_analysis.py
+python multinomial_logit/mnl_analysis.py
 ```
 
 2. **테스트 실행**:
 ```bash
-python tests/test_multinomial_logit.py
+python multinomial_logit/test_multinomial_logit.py
 ```
 
 ## 데이터 요구사항

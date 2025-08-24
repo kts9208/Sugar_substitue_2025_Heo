@@ -1,0 +1,757 @@
+2025-08-24 12:06:55,777 - __main__ - ERROR - 패키지 임포트 실패: No module named 'multinomial_logit'
+2025-08-24 12:07:21,031 - __main__ - INFO - ============================================================
+2025-08-24 12:07:21,040 - __main__ - INFO - Multinomial Logit Model 분석 시작
+2025-08-24 12:07:21,040 - __main__ - INFO - ============================================================
+2025-08-24 12:07:21,040 - __main__ - INFO - 데이터 디렉토리: processed_data/dce_data
+2025-08-24 12:07:21,040 - __main__ - INFO - DCE 데이터 로딩 중...
+2025-08-24 12:07:21,041 - multinomial_logit.data_loader - INFO - 데이터 디렉토리 검증 완료: processed_data\dce_data
+2025-08-24 12:07:21,046 - multinomial_logit.data_loader - INFO - 선택 매트릭스 데이터 로딩 완료: 5400 행
+2025-08-24 12:07:21,049 - multinomial_logit.data_loader - INFO - 속성 데이터 로딩 완료: 1699 행
+2025-08-24 12:07:21,050 - multinomial_logit.data_loader - INFO - 선택 요약 데이터 로딩 완료: 6 행
+2025-08-24 12:07:21,050 - multinomial_logit.data_loader - INFO - 모든 DCE 데이터 로딩 완료
+2025-08-24 12:07:21,051 - multinomial_logit.data_loader - INFO - 데이터 디렉토리 검증 완료: processed_data\dce_data
+2025-08-24 12:07:21,053 - multinomial_logit.data_loader - INFO - 선택 매트릭스 데이터 로딩 완료: 5400 행
+2025-08-24 12:07:21,056 - multinomial_logit.data_loader - INFO - 속성 데이터 로딩 완료: 1699 행
+2025-08-24 12:07:21,057 - __main__ - INFO - 데이터 요약:
+2025-08-24 12:07:21,057 - __main__ - INFO -   total_respondents: 300
+2025-08-24 12:07:21,057 - __main__ - INFO -   total_questions: 6
+2025-08-24 12:07:21,057 - __main__ - INFO -   total_choices: 5400
+2025-08-24 12:07:21,057 - __main__ - INFO -   total_actual_choices: 1699
+2025-08-24 12:07:21,057 - __main__ - INFO -   alternatives_per_question: 3
+2025-08-24 12:07:21,057 - __main__ - INFO -   sugar_types: ['무설탕', '일반당', nan]
+2025-08-24 12:07:21,057 - __main__ - INFO -   health_labels: ['건강라벨 있음', '건강라벨 없음', nan]
+2025-08-24 12:07:21,057 - __main__ - INFO -   price_range: {'min': np.int64(0), 'max': np.int64(3000)}
+2025-08-24 12:07:21,057 - __main__ - INFO - 데이터 전처리 중...
+2025-08-24 12:07:21,057 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 시작
+2025-08-24 12:07:21,058 - multinomial_logit.data_preprocessor - INFO - Neither가 선택된 101개 선택 세트를 제거합니다
+2025-08-24 12:07:21,095 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 완료: 3398 행
+2025-08-24 12:07:21,096 - __main__ - INFO - 전처리 요약:
+2025-08-24 12:07:21,096 - __main__ - INFO -   total_observations: 3398
+2025-08-24 12:07:21,096 - __main__ - INFO -   total_choice_sets: 1699
+2025-08-24 12:07:21,096 - __main__ - INFO -   feature_statistics:
+2025-08-24 12:07:21,096 - __main__ - INFO -     sugar_free: {'mean': np.float64(0.503825779870512), 'std': np.float64(0.5000589499725555), 'min': np.int64(0), 'max': np.int64(1)}
+2025-08-24 12:07:21,096 - __main__ - INFO -     has_health_label: {'mean': np.float64(0.5), 'std': np.float64(0.5000735889326231), 'min': np.int64(0), 'max': np.int64(1)}
+2025-08-24 12:07:21,096 - __main__ - INFO -     price_scaled: {'mean': np.float64(2.5025014714537965), 'std': np.float64(0.40845088763575177), 'min': np.float64(2.0), 'max': np.float64(3.0)}
+2025-08-24 12:07:21,097 - __main__ - INFO -   choice_rates:
+2025-08-24 12:07:21,097 - __main__ - INFO -     sugar_free_chosen: 0.7051206592113007
+2025-08-24 12:07:21,097 - __main__ - INFO -     health_label_chosen: 0.5903472630959388
+2025-08-24 12:07:21,097 - __main__ - INFO -     alternative_B_chosen: 0.43496174220129485
+2025-08-24 12:07:21,097 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 시작
+2025-08-24 12:07:21,097 - multinomial_logit.data_preprocessor - INFO - Neither가 선택된 101개 선택 세트를 제거합니다
+2025-08-24 12:07:21,134 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 완료: 3398 행
+2025-08-24 12:07:21,135 - multinomial_logit.data_preprocessor - INFO - 선택 세트 생성 시작
+2025-08-24 12:07:21,146 - multinomial_logit.data_preprocessor - INFO - 선택 세트 생성 완료: 1699개 선택 세트, 3398개 대안
+2025-08-24 12:07:21,148 - multinomial_logit.data_preprocessor - INFO - 선택 세트 유효성 검증 완료
+2025-08-24 12:07:21,148 - __main__ - INFO - 전처리 완료:
+2025-08-24 12:07:21,148 - __main__ - INFO -   설명변수 행렬 크기: (3398, 4)
+2025-08-24 12:07:21,148 - __main__ - INFO -   종속변수 벡터 크기: (3398,)
+2025-08-24 12:07:21,148 - __main__ - INFO -   선택 세트 수: 1699
+2025-08-24 12:07:21,148 - __main__ - INFO -   특성 이름: ['sugar_free', 'has_health_label', 'price_scaled', 'alternative_B']
+2025-08-24 12:07:21,148 - __main__ - INFO - 모델 설정 중...
+2025-08-24 12:07:21,148 - __main__ - INFO - 모델 설정 완료
+2025-08-24 12:07:21,148 - __main__ - INFO - Multinomial Logit Model 추정 중...
+2025-08-24 12:07:21,148 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:07:21,148 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:07:21,150 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:07:21,757 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:07:21,784 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:07:21,784 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:07:21,784 - __main__ - INFO - 모델 추정 완료
+2025-08-24 12:07:21,784 - __main__ - INFO - 결과 분석 중...
+2025-08-24 12:07:21,785 - __main__ - INFO - 계수 테이블:
+2025-08-24 12:07:21,786 - __main__ - INFO - 
+        Variable  Coefficient  Std_Error    Z_Score      P_Value  CI_Lower  CI_Upper Significance
+           const    -4.150085   0.285841 -14.518844 9.205013e-48 -4.710323 -3.589846          ***
+      sugar_free     0.798678   0.077671  10.282801 8.424348e-25  0.646445  0.950911          ***
+has_health_label    -0.531256   0.083307  -6.377119 1.804499e-10 -0.694534 -0.367978          ***
+    price_scaled     1.476320   0.109836  13.441082 3.473193e-41  1.261045  1.691595          ***
+   alternative_B     0.046172   0.072270   0.638881 5.229005e-01 -0.095474  0.187818             
+2025-08-24 12:07:21,787 - __main__ - INFO - 오즈비 테이블:
+2025-08-24 12:07:21,788 - __main__ - INFO - 
+        Variable  Odds_Ratio  OR_CI_Lower  OR_CI_Upper OR_Interpretation
+           const    0.015763     0.009002     0.027603  63.439배 낮은 선택 확률
+      sugar_free    2.222601     1.908744     2.588067   2.223배 높은 선택 확률
+has_health_label    0.587866     0.499307     0.692132   1.701배 낮은 선택 확률
+    price_scaled    4.376809     3.529106     5.428133   4.377배 높은 선택 확률
+   alternative_B    1.047254     0.908942     1.206614   1.047배 높은 선택 확률
+2025-08-24 12:07:21,788 - __main__ - INFO - 모델 요약:
+2025-08-24 12:07:21,788 - __main__ - INFO -   model_fit:
+2025-08-24 12:07:21,788 - __main__ - INFO -     log_likelihood: -2201.5227063677876
+2025-08-24 12:07:21,788 - __main__ - INFO -     aic: 4413.045412735575
+2025-08-24 12:07:21,788 - __main__ - INFO -     bic: 4443.700124246735
+2025-08-24 12:07:21,788 - __main__ - INFO -     pseudo_r_squared: 0.053713156152216834
+2025-08-24 12:07:21,788 - __main__ - INFO -   sample_info:
+2025-08-24 12:07:21,788 - __main__ - INFO -     n_observations: 3398
+2025-08-24 12:07:21,788 - __main__ - INFO -     n_choice_sets: 1699
+2025-08-24 12:07:21,788 - __main__ - INFO -     n_features: 4
+2025-08-24 12:07:21,789 - __main__ - INFO -   convergence:
+2025-08-24 12:07:21,789 - __main__ - INFO -     converged: True
+2025-08-24 12:07:21,789 - __main__ - INFO -     iterations: None
+2025-08-24 12:07:21,789 - __main__ - INFO -     method: bfgs
+2025-08-24 12:07:21,789 - __main__ - INFO - 종합 보고서 생성 중...
+2025-08-24 12:07:21,791 - __main__ - INFO - 종합 보고서가 multinomial_logit/multinomial_logit_analysis_report.txt에 저장되었습니다
+2025-08-24 12:07:21,978 - multinomial_logit.results_analyzer - ERROR - Excel 파일 저장 중 오류: Per-column arrays must each be 1-dimensional
+2025-08-24 12:07:21,978 - __main__ - WARNING - Excel 파일 저장 실패: Per-column arrays must each be 1-dimensional
+2025-08-24 12:07:21,978 - __main__ - INFO - 계수 해석:
+2025-08-24 12:07:21,979 - __main__ - INFO -   무설탕 제품은 일반당 제품 대비 선택 확률을 증가시킵니다 (계수: 0.7987, 통계적으로 유의한)
+2025-08-24 12:07:21,979 - __main__ - INFO -   건강라벨이 있는 제품은 없는 제품 대비 선택 확률을 감소시킵니다 (계수: -0.5313, 통계적으로 유의한)
+2025-08-24 12:07:21,979 - __main__ - INFO -   가격이 1000원 증가할 때마다 선택 확률이 증가합니다 (계수: 1.4763, 통계적으로 유의한)
+2025-08-24 12:07:21,979 - __main__ - INFO -   대안 B는 대안 A 대비 선택 확률을 증가시킵니다 (계수: 0.0462, 통계적으로 유의하지 않은)
+2025-08-24 12:07:21,979 - __main__ - INFO - ============================================================
+2025-08-24 12:07:21,979 - __main__ - INFO - 분석 완료!
+2025-08-24 12:07:21,979 - __main__ - INFO - ============================================================
+2025-08-24 12:07:21,979 - __main__ - INFO - 민감도 분석 시작...
+2025-08-24 12:07:21,980 - multinomial_logit.data_loader - INFO - 데이터 디렉토리 검증 완료: processed_data\dce_data
+2025-08-24 12:07:21,983 - multinomial_logit.data_loader - INFO - 선택 매트릭스 데이터 로딩 완료: 5400 행
+2025-08-24 12:07:21,986 - multinomial_logit.data_loader - INFO - 속성 데이터 로딩 완료: 1699 행
+2025-08-24 12:07:21,987 - multinomial_logit.data_loader - INFO - 선택 요약 데이터 로딩 완료: 6 행
+2025-08-24 12:07:21,987 - multinomial_logit.data_loader - INFO - 모든 DCE 데이터 로딩 완료
+2025-08-24 12:07:21,987 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 시작
+2025-08-24 12:07:21,988 - multinomial_logit.data_preprocessor - INFO - Neither가 선택된 101개 선택 세트를 제거합니다
+2025-08-24 12:07:22,025 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 완료: 3398 행
+2025-08-24 12:07:22,026 - multinomial_logit.data_preprocessor - INFO - 선택 세트 생성 시작
+2025-08-24 12:07:22,038 - multinomial_logit.data_preprocessor - INFO - 선택 세트 생성 완료: 1699개 선택 세트, 3398개 대안
+2025-08-24 12:07:22,039 - multinomial_logit.data_preprocessor - INFO - 선택 세트 유효성 검증 완료
+2025-08-24 12:07:22,039 - __main__ - INFO - 민감도 분석: method=bfgs, tolerance=0.0001
+2025-08-24 12:07:22,040 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:07:22,040 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:07:22,041 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:07:22,645 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:07:22,671 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:07:22,671 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:07:22,671 - __main__ - INFO - 민감도 분석: method=bfgs, tolerance=1e-06
+2025-08-24 12:07:22,671 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:07:22,671 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:07:22,673 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:07:23,283 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:07:23,308 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:07:23,308 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:07:23,308 - __main__ - INFO - 민감도 분석: method=bfgs, tolerance=1e-08
+2025-08-24 12:07:23,308 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:07:23,308 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:07:23,310 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:07:23,935 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:07:23,957 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:07:23,957 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:07:23,957 - __main__ - INFO - 민감도 분석: method=newton, tolerance=0.0001
+2025-08-24 12:07:23,959 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:07:23,959 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:07:23,960 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:07:24,604 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:07:24,622 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:07:24,622 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:07:24,622 - __main__ - INFO - 민감도 분석: method=newton, tolerance=1e-06
+2025-08-24 12:07:24,622 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:07:24,622 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:07:24,624 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:07:25,258 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:07:25,276 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:07:25,276 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:07:25,277 - __main__ - INFO - 민감도 분석: method=newton, tolerance=1e-08
+2025-08-24 12:07:25,277 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:07:25,277 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:07:25,279 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:07:25,874 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:07:25,893 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:07:25,894 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:07:25,894 - __main__ - INFO - 민감도 분석: method=lbfgs, tolerance=0.0001
+2025-08-24 12:07:25,894 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:07:25,894 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:07:25,896 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:07:26,497 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:07:26,521 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:07:26,521 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:07:26,521 - __main__ - INFO - 민감도 분석: method=lbfgs, tolerance=1e-06
+2025-08-24 12:07:26,521 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:07:26,521 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:07:26,523 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:07:27,128 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:07:27,150 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:07:27,151 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:07:27,151 - __main__ - INFO - 민감도 분석: method=lbfgs, tolerance=1e-08
+2025-08-24 12:07:27,151 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:07:27,151 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:07:27,153 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:07:27,762 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:07:27,786 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:07:27,786 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:07:27,786 - __main__ - INFO - 민감도 분석 결과:
+2025-08-24 12:07:27,787 - __main__ - INFO - 
+method    tolerance  log_likelihood         aic  converged
+  bfgs 1.000000e-04    -2201.522706 4413.045413       True
+  bfgs 1.000000e-06    -2201.522706 4413.045413       True
+  bfgs 1.000000e-08    -2201.522706 4413.045413       True
+newton 1.000000e-04    -2201.522703 4413.045407       True
+newton 1.000000e-06    -2201.522703 4413.045407       True
+newton 1.000000e-08    -2201.522703 4413.045407       True
+ lbfgs 1.000000e-04    -2201.522704 4413.045408       True
+ lbfgs 1.000000e-06    -2201.522704 4413.045408       True
+ lbfgs 1.000000e-08    -2201.522704 4413.045408       True
+2025-08-24 12:07:27,789 - __main__ - INFO - 민감도 분석 결과가 multinomial_logit/sensitivity_analysis_results.csv에 저장되었습니다
+2025-08-24 12:08:35,646 - __main__ - INFO - ============================================================
+2025-08-24 12:08:35,647 - __main__ - INFO - Multinomial Logit Model 분석 시작
+2025-08-24 12:08:35,647 - __main__ - INFO - ============================================================
+2025-08-24 12:08:35,647 - __main__ - INFO - 데이터 디렉토리: processed_data/dce_data
+2025-08-24 12:08:35,647 - __main__ - INFO - DCE 데이터 로딩 중...
+2025-08-24 12:08:35,648 - multinomial_logit.data_loader - INFO - 데이터 디렉토리 검증 완료: processed_data\dce_data
+2025-08-24 12:08:35,652 - multinomial_logit.data_loader - INFO - 선택 매트릭스 데이터 로딩 완료: 5400 행
+2025-08-24 12:08:35,655 - multinomial_logit.data_loader - INFO - 속성 데이터 로딩 완료: 1699 행
+2025-08-24 12:08:35,656 - multinomial_logit.data_loader - INFO - 선택 요약 데이터 로딩 완료: 6 행
+2025-08-24 12:08:35,656 - multinomial_logit.data_loader - INFO - 모든 DCE 데이터 로딩 완료
+2025-08-24 12:08:35,657 - multinomial_logit.data_loader - INFO - 데이터 디렉토리 검증 완료: processed_data\dce_data
+2025-08-24 12:08:35,660 - multinomial_logit.data_loader - INFO - 선택 매트릭스 데이터 로딩 완료: 5400 행
+2025-08-24 12:08:35,663 - multinomial_logit.data_loader - INFO - 속성 데이터 로딩 완료: 1699 행
+2025-08-24 12:08:35,664 - __main__ - INFO - 데이터 요약:
+2025-08-24 12:08:35,664 - __main__ - INFO -   total_respondents: 300
+2025-08-24 12:08:35,665 - __main__ - INFO -   total_questions: 6
+2025-08-24 12:08:35,665 - __main__ - INFO -   total_choices: 5400
+2025-08-24 12:08:35,665 - __main__ - INFO -   total_actual_choices: 1699
+2025-08-24 12:08:35,665 - __main__ - INFO -   alternatives_per_question: 3
+2025-08-24 12:08:35,665 - __main__ - INFO -   sugar_types: ['무설탕', '일반당', nan]
+2025-08-24 12:08:35,665 - __main__ - INFO -   health_labels: ['건강라벨 있음', '건강라벨 없음', nan]
+2025-08-24 12:08:35,665 - __main__ - INFO -   price_range: {'min': np.int64(0), 'max': np.int64(3000)}
+2025-08-24 12:08:35,665 - __main__ - INFO - 데이터 전처리 중...
+2025-08-24 12:08:35,665 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 시작
+2025-08-24 12:08:35,666 - multinomial_logit.data_preprocessor - INFO - Neither가 선택된 101개 선택 세트를 제거합니다
+2025-08-24 12:08:35,704 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 완료: 3398 행
+2025-08-24 12:08:35,705 - __main__ - INFO - 전처리 요약:
+2025-08-24 12:08:35,705 - __main__ - INFO -   total_observations: 3398
+2025-08-24 12:08:35,705 - __main__ - INFO -   total_choice_sets: 1699
+2025-08-24 12:08:35,705 - __main__ - INFO -   feature_statistics:
+2025-08-24 12:08:35,705 - __main__ - INFO -     sugar_free: {'mean': np.float64(0.503825779870512), 'std': np.float64(0.5000589499725555), 'min': np.int64(0), 'max': np.int64(1)}
+2025-08-24 12:08:35,706 - __main__ - INFO -     has_health_label: {'mean': np.float64(0.5), 'std': np.float64(0.5000735889326231), 'min': np.int64(0), 'max': np.int64(1)}
+2025-08-24 12:08:35,706 - __main__ - INFO -     price_scaled: {'mean': np.float64(2.5025014714537965), 'std': np.float64(0.40845088763575177), 'min': np.float64(2.0), 'max': np.float64(3.0)}
+2025-08-24 12:08:35,706 - __main__ - INFO -   choice_rates:
+2025-08-24 12:08:35,706 - __main__ - INFO -     sugar_free_chosen: 0.7051206592113007
+2025-08-24 12:08:35,706 - __main__ - INFO -     health_label_chosen: 0.5903472630959388
+2025-08-24 12:08:35,706 - __main__ - INFO -     alternative_B_chosen: 0.43496174220129485
+2025-08-24 12:08:35,706 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 시작
+2025-08-24 12:08:35,707 - multinomial_logit.data_preprocessor - INFO - Neither가 선택된 101개 선택 세트를 제거합니다
+2025-08-24 12:08:35,744 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 완료: 3398 행
+2025-08-24 12:08:35,744 - multinomial_logit.data_preprocessor - INFO - 선택 세트 생성 시작
+2025-08-24 12:08:35,754 - multinomial_logit.data_preprocessor - INFO - 선택 세트 생성 완료: 1699개 선택 세트, 3398개 대안
+2025-08-24 12:08:35,756 - multinomial_logit.data_preprocessor - INFO - 선택 세트 유효성 검증 완료
+2025-08-24 12:08:35,756 - __main__ - INFO - 전처리 완료:
+2025-08-24 12:08:35,757 - __main__ - INFO -   설명변수 행렬 크기: (3398, 4)
+2025-08-24 12:08:35,757 - __main__ - INFO -   종속변수 벡터 크기: (3398,)
+2025-08-24 12:08:35,757 - __main__ - INFO -   선택 세트 수: 1699
+2025-08-24 12:08:35,757 - __main__ - INFO -   특성 이름: ['sugar_free', 'has_health_label', 'price_scaled', 'alternative_B']
+2025-08-24 12:08:35,757 - __main__ - INFO - 모델 설정 중...
+2025-08-24 12:08:35,757 - __main__ - INFO - 모델 설정 완료
+2025-08-24 12:08:35,757 - __main__ - INFO - Multinomial Logit Model 추정 중...
+2025-08-24 12:08:35,757 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:08:35,757 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:08:35,760 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:08:36,367 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:08:36,394 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:08:36,394 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:08:36,394 - __main__ - INFO - 모델 추정 완료
+2025-08-24 12:08:36,394 - __main__ - INFO - 결과 분석 중...
+2025-08-24 12:08:36,395 - __main__ - INFO - 계수 테이블:
+2025-08-24 12:08:36,396 - __main__ - INFO - 
+        Variable  Coefficient  Std_Error    Z_Score      P_Value  CI_Lower  CI_Upper Significance
+           const    -4.150085   0.285841 -14.518844 9.205013e-48 -4.710323 -3.589846          ***
+      sugar_free     0.798678   0.077671  10.282801 8.424348e-25  0.646445  0.950911          ***
+has_health_label    -0.531256   0.083307  -6.377119 1.804499e-10 -0.694534 -0.367978          ***
+    price_scaled     1.476320   0.109836  13.441082 3.473193e-41  1.261045  1.691595          ***
+   alternative_B     0.046172   0.072270   0.638881 5.229005e-01 -0.095474  0.187818             
+2025-08-24 12:08:36,397 - __main__ - INFO - 오즈비 테이블:
+2025-08-24 12:08:36,398 - __main__ - INFO - 
+        Variable  Odds_Ratio  OR_CI_Lower  OR_CI_Upper OR_Interpretation
+           const    0.015763     0.009002     0.027603  63.439배 낮은 선택 확률
+      sugar_free    2.222601     1.908744     2.588067   2.223배 높은 선택 확률
+has_health_label    0.587866     0.499307     0.692132   1.701배 낮은 선택 확률
+    price_scaled    4.376809     3.529106     5.428133   4.377배 높은 선택 확률
+   alternative_B    1.047254     0.908942     1.206614   1.047배 높은 선택 확률
+2025-08-24 12:08:36,398 - __main__ - INFO - 모델 요약:
+2025-08-24 12:08:36,398 - __main__ - INFO -   model_fit:
+2025-08-24 12:08:36,398 - __main__ - INFO -     log_likelihood: -2201.5227063677876
+2025-08-24 12:08:36,398 - __main__ - INFO -     aic: 4413.045412735575
+2025-08-24 12:08:36,398 - __main__ - INFO -     bic: 4443.700124246735
+2025-08-24 12:08:36,398 - __main__ - INFO -     pseudo_r_squared: 0.053713156152216834
+2025-08-24 12:08:36,398 - __main__ - INFO -   sample_info:
+2025-08-24 12:08:36,398 - __main__ - INFO -     n_observations: 3398
+2025-08-24 12:08:36,398 - __main__ - INFO -     n_choice_sets: 1699
+2025-08-24 12:08:36,398 - __main__ - INFO -     n_features: 4
+2025-08-24 12:08:36,398 - __main__ - INFO -   convergence:
+2025-08-24 12:08:36,399 - __main__ - INFO -     converged: True
+2025-08-24 12:08:36,399 - __main__ - INFO -     iterations: None
+2025-08-24 12:08:36,399 - __main__ - INFO -     method: bfgs
+2025-08-24 12:08:36,399 - __main__ - INFO - 종합 보고서 생성 중...
+2025-08-24 12:08:36,401 - __main__ - INFO - 종합 보고서가 multinomial_logit/multinomial_logit_analysis_report.txt에 저장되었습니다
+2025-08-24 12:08:36,586 - multinomial_logit.results_analyzer - ERROR - Excel 파일 저장 중 오류: Per-column arrays must each be 1-dimensional
+2025-08-24 12:08:36,586 - __main__ - WARNING - Excel 파일 저장 실패: Per-column arrays must each be 1-dimensional
+2025-08-24 12:08:36,586 - __main__ - INFO - 계수 해석:
+2025-08-24 12:08:36,587 - __main__ - INFO -   무설탕 제품은 일반당 제품 대비 선택 확률을 증가시킵니다 (계수: 0.7987, 통계적으로 유의한)
+2025-08-24 12:08:36,587 - __main__ - INFO -   건강라벨이 있는 제품은 없는 제품 대비 선택 확률을 감소시킵니다 (계수: -0.5313, 통계적으로 유의한)
+2025-08-24 12:08:36,587 - __main__ - INFO -   가격이 1000원 증가할 때마다 선택 확률이 증가합니다 (계수: 1.4763, 통계적으로 유의한)
+2025-08-24 12:08:36,587 - __main__ - INFO -   대안 B는 대안 A 대비 선택 확률을 증가시킵니다 (계수: 0.0462, 통계적으로 유의하지 않은)
+2025-08-24 12:08:36,587 - __main__ - INFO - ============================================================
+2025-08-24 12:08:36,587 - __main__ - INFO - 분석 완료!
+2025-08-24 12:08:36,587 - __main__ - INFO - ============================================================
+2025-08-24 12:08:36,587 - __main__ - INFO - 민감도 분석 시작...
+2025-08-24 12:08:36,588 - multinomial_logit.data_loader - INFO - 데이터 디렉토리 검증 완료: processed_data\dce_data
+2025-08-24 12:08:36,592 - multinomial_logit.data_loader - INFO - 선택 매트릭스 데이터 로딩 완료: 5400 행
+2025-08-24 12:08:36,594 - multinomial_logit.data_loader - INFO - 속성 데이터 로딩 완료: 1699 행
+2025-08-24 12:08:36,595 - multinomial_logit.data_loader - INFO - 선택 요약 데이터 로딩 완료: 6 행
+2025-08-24 12:08:36,596 - multinomial_logit.data_loader - INFO - 모든 DCE 데이터 로딩 완료
+2025-08-24 12:08:36,596 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 시작
+2025-08-24 12:08:36,596 - multinomial_logit.data_preprocessor - INFO - Neither가 선택된 101개 선택 세트를 제거합니다
+2025-08-24 12:08:36,635 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 완료: 3398 행
+2025-08-24 12:08:36,635 - multinomial_logit.data_preprocessor - INFO - 선택 세트 생성 시작
+2025-08-24 12:08:36,646 - multinomial_logit.data_preprocessor - INFO - 선택 세트 생성 완료: 1699개 선택 세트, 3398개 대안
+2025-08-24 12:08:36,648 - multinomial_logit.data_preprocessor - INFO - 선택 세트 유효성 검증 완료
+2025-08-24 12:08:36,648 - __main__ - INFO - 민감도 분석: method=bfgs, tolerance=0.0001
+2025-08-24 12:08:36,648 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:08:36,649 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:08:36,650 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:08:37,247 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:08:37,272 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:08:37,272 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:08:37,272 - __main__ - INFO - 민감도 분석: method=bfgs, tolerance=1e-06
+2025-08-24 12:08:37,272 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:08:37,272 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:08:37,274 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:08:37,879 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:08:37,904 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:08:37,904 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:08:37,904 - __main__ - INFO - 민감도 분석: method=bfgs, tolerance=1e-08
+2025-08-24 12:08:37,904 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:08:37,904 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:08:37,906 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:08:38,520 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:08:38,544 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:08:38,545 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:08:38,545 - __main__ - INFO - 민감도 분석: method=newton, tolerance=0.0001
+2025-08-24 12:08:38,545 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:08:38,545 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:08:38,547 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:08:39,157 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:08:39,175 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:08:39,175 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:08:39,176 - __main__ - INFO - 민감도 분석: method=newton, tolerance=1e-06
+2025-08-24 12:08:39,176 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:08:39,176 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:08:39,178 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:08:39,780 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:08:39,799 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:08:39,799 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:08:39,800 - __main__ - INFO - 민감도 분석: method=newton, tolerance=1e-08
+2025-08-24 12:08:39,800 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:08:39,800 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:08:39,802 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:08:40,369 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:08:40,387 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:08:40,387 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:08:40,387 - __main__ - INFO - 민감도 분석: method=lbfgs, tolerance=0.0001
+2025-08-24 12:08:40,388 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:08:40,388 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:08:40,390 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:08:40,983 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:08:41,008 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:08:41,008 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:08:41,009 - __main__ - INFO - 민감도 분석: method=lbfgs, tolerance=1e-06
+2025-08-24 12:08:41,009 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:08:41,009 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:08:41,011 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:08:41,616 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:08:41,641 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:08:41,641 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:08:41,641 - __main__ - INFO - 민감도 분석: method=lbfgs, tolerance=1e-08
+2025-08-24 12:08:41,641 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:08:41,641 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:08:41,643 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:08:42,260 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:08:42,283 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:08:42,283 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:08:42,283 - __main__ - INFO - 민감도 분석 결과:
+2025-08-24 12:08:42,284 - __main__ - INFO - 
+method    tolerance  log_likelihood         aic  converged
+  bfgs 1.000000e-04    -2201.522706 4413.045413       True
+  bfgs 1.000000e-06    -2201.522706 4413.045413       True
+  bfgs 1.000000e-08    -2201.522706 4413.045413       True
+newton 1.000000e-04    -2201.522703 4413.045407       True
+newton 1.000000e-06    -2201.522703 4413.045407       True
+newton 1.000000e-08    -2201.522703 4413.045407       True
+ lbfgs 1.000000e-04    -2201.522704 4413.045408       True
+ lbfgs 1.000000e-06    -2201.522704 4413.045408       True
+ lbfgs 1.000000e-08    -2201.522704 4413.045408       True
+2025-08-24 12:08:42,286 - __main__ - INFO - 민감도 분석 결과가 multinomial_logit/sensitivity_analysis_results.csv에 저장되었습니다
+2025-08-24 12:10:38,531 - __main__ - INFO - ============================================================
+2025-08-24 12:10:38,532 - __main__ - INFO - Multinomial Logit Model 분석 시작
+2025-08-24 12:10:38,532 - __main__ - INFO - ============================================================
+2025-08-24 12:10:38,532 - __main__ - INFO - 데이터 디렉토리: processed_data/dce_data
+2025-08-24 12:10:38,532 - __main__ - INFO - DCE 데이터 로딩 중...
+2025-08-24 12:10:38,533 - multinomial_logit.data_loader - INFO - 데이터 디렉토리 검증 완료: processed_data\dce_data
+2025-08-24 12:10:38,537 - multinomial_logit.data_loader - INFO - 선택 매트릭스 데이터 로딩 완료: 5400 행
+2025-08-24 12:10:38,541 - multinomial_logit.data_loader - INFO - 속성 데이터 로딩 완료: 1699 행
+2025-08-24 12:10:38,542 - multinomial_logit.data_loader - INFO - 선택 요약 데이터 로딩 완료: 6 행
+2025-08-24 12:10:38,542 - multinomial_logit.data_loader - INFO - 모든 DCE 데이터 로딩 완료
+2025-08-24 12:10:38,542 - multinomial_logit.data_loader - INFO - 데이터 디렉토리 검증 완료: processed_data\dce_data
+2025-08-24 12:10:38,545 - multinomial_logit.data_loader - INFO - 선택 매트릭스 데이터 로딩 완료: 5400 행
+2025-08-24 12:10:38,548 - multinomial_logit.data_loader - INFO - 속성 데이터 로딩 완료: 1699 행
+2025-08-24 12:10:38,549 - __main__ - INFO - 데이터 요약:
+2025-08-24 12:10:38,549 - __main__ - INFO -   total_respondents: 300
+2025-08-24 12:10:38,549 - __main__ - INFO -   total_questions: 6
+2025-08-24 12:10:38,549 - __main__ - INFO -   total_choices: 5400
+2025-08-24 12:10:38,550 - __main__ - INFO -   total_actual_choices: 1699
+2025-08-24 12:10:38,550 - __main__ - INFO -   alternatives_per_question: 3
+2025-08-24 12:10:38,550 - __main__ - INFO -   sugar_types: ['무설탕', '일반당', nan]
+2025-08-24 12:10:38,550 - __main__ - INFO -   health_labels: ['건강라벨 있음', '건강라벨 없음', nan]
+2025-08-24 12:10:38,550 - __main__ - INFO -   price_range: {'min': np.int64(0), 'max': np.int64(3000)}
+2025-08-24 12:10:38,550 - __main__ - INFO - 데이터 전처리 중...
+2025-08-24 12:10:38,550 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 시작
+2025-08-24 12:10:38,551 - multinomial_logit.data_preprocessor - INFO - Neither가 선택된 101개 선택 세트를 제거합니다
+2025-08-24 12:10:38,588 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 완료: 3398 행
+2025-08-24 12:10:38,590 - __main__ - INFO - 전처리 요약:
+2025-08-24 12:10:38,590 - __main__ - INFO -   total_observations: 3398
+2025-08-24 12:10:38,590 - __main__ - INFO -   total_choice_sets: 1699
+2025-08-24 12:10:38,590 - __main__ - INFO -   feature_statistics:
+2025-08-24 12:10:38,591 - __main__ - INFO -     sugar_free: {'mean': np.float64(0.503825779870512), 'std': np.float64(0.5000589499725555), 'min': np.int64(0), 'max': np.int64(1)}
+2025-08-24 12:10:38,591 - __main__ - INFO -     has_health_label: {'mean': np.float64(0.5), 'std': np.float64(0.5000735889326231), 'min': np.int64(0), 'max': np.int64(1)}
+2025-08-24 12:10:38,591 - __main__ - INFO -     price_scaled: {'mean': np.float64(2.5025014714537965), 'std': np.float64(0.40845088763575177), 'min': np.float64(2.0), 'max': np.float64(3.0)}
+2025-08-24 12:10:38,591 - __main__ - INFO -   choice_rates:
+2025-08-24 12:10:38,591 - __main__ - INFO -     sugar_free_chosen: 0.7051206592113007
+2025-08-24 12:10:38,591 - __main__ - INFO -     health_label_chosen: 0.5903472630959388
+2025-08-24 12:10:38,591 - __main__ - INFO -     alternative_B_chosen: 0.43496174220129485
+2025-08-24 12:10:38,591 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 시작
+2025-08-24 12:10:38,592 - multinomial_logit.data_preprocessor - INFO - Neither가 선택된 101개 선택 세트를 제거합니다
+2025-08-24 12:10:38,629 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 완료: 3398 행
+2025-08-24 12:10:38,630 - multinomial_logit.data_preprocessor - INFO - 선택 세트 생성 시작
+2025-08-24 12:10:38,641 - multinomial_logit.data_preprocessor - INFO - 선택 세트 생성 완료: 1699개 선택 세트, 3398개 대안
+2025-08-24 12:10:38,643 - multinomial_logit.data_preprocessor - INFO - 선택 세트 유효성 검증 완료
+2025-08-24 12:10:38,643 - __main__ - INFO - 전처리 완료:
+2025-08-24 12:10:38,643 - __main__ - INFO -   설명변수 행렬 크기: (3398, 4)
+2025-08-24 12:10:38,644 - __main__ - INFO -   종속변수 벡터 크기: (3398,)
+2025-08-24 12:10:38,644 - __main__ - INFO -   선택 세트 수: 1699
+2025-08-24 12:10:38,644 - __main__ - INFO -   특성 이름: ['sugar_free', 'has_health_label', 'price_scaled', 'alternative_B']
+2025-08-24 12:10:38,644 - __main__ - INFO - 모델 설정 중...
+2025-08-24 12:10:38,644 - __main__ - INFO - 모델 설정 완료
+2025-08-24 12:10:38,644 - __main__ - INFO - Multinomial Logit Model 추정 중...
+2025-08-24 12:10:38,644 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:10:38,644 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:10:38,646 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:10:39,265 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:10:39,291 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:10:39,291 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:10:39,291 - __main__ - INFO - 모델 추정 완료
+2025-08-24 12:10:39,291 - __main__ - INFO - 결과 분석 중...
+2025-08-24 12:10:39,292 - __main__ - INFO - 계수 테이블:
+2025-08-24 12:10:39,294 - __main__ - INFO - 
+        Variable  Coefficient  Std_Error    Z_Score      P_Value  CI_Lower  CI_Upper Significance
+           const    -4.150085   0.285841 -14.518844 9.205013e-48 -4.710323 -3.589846          ***
+      sugar_free     0.798678   0.077671  10.282801 8.424348e-25  0.646445  0.950911          ***
+has_health_label    -0.531256   0.083307  -6.377119 1.804499e-10 -0.694534 -0.367978          ***
+    price_scaled     1.476320   0.109836  13.441082 3.473193e-41  1.261045  1.691595          ***
+   alternative_B     0.046172   0.072270   0.638881 5.229005e-01 -0.095474  0.187818             
+2025-08-24 12:10:39,295 - __main__ - INFO - 오즈비 테이블:
+2025-08-24 12:10:39,296 - __main__ - INFO - 
+        Variable  Odds_Ratio  OR_CI_Lower  OR_CI_Upper OR_Interpretation
+           const    0.015763     0.009002     0.027603  63.439배 낮은 선택 확률
+      sugar_free    2.222601     1.908744     2.588067   2.223배 높은 선택 확률
+has_health_label    0.587866     0.499307     0.692132   1.701배 낮은 선택 확률
+    price_scaled    4.376809     3.529106     5.428133   4.377배 높은 선택 확률
+   alternative_B    1.047254     0.908942     1.206614   1.047배 높은 선택 확률
+2025-08-24 12:10:39,296 - __main__ - INFO - 모델 요약:
+2025-08-24 12:10:39,296 - __main__ - INFO -   model_fit:
+2025-08-24 12:10:39,296 - __main__ - INFO -     log_likelihood: -2201.5227063677876
+2025-08-24 12:10:39,296 - __main__ - INFO -     aic: 4413.045412735575
+2025-08-24 12:10:39,297 - __main__ - INFO -     bic: 4443.700124246735
+2025-08-24 12:10:39,297 - __main__ - INFO -     pseudo_r_squared: 0.053713156152216834
+2025-08-24 12:10:39,297 - __main__ - INFO -   sample_info:
+2025-08-24 12:10:39,297 - __main__ - INFO -     n_observations: 3398
+2025-08-24 12:10:39,297 - __main__ - INFO -     n_choice_sets: 1699
+2025-08-24 12:10:39,297 - __main__ - INFO -     n_features: 4
+2025-08-24 12:10:39,297 - __main__ - INFO -   convergence:
+2025-08-24 12:10:39,297 - __main__ - INFO -     converged: True
+2025-08-24 12:10:39,297 - __main__ - INFO -     iterations: None
+2025-08-24 12:10:39,297 - __main__ - INFO -     method: bfgs
+2025-08-24 12:10:39,297 - __main__ - INFO - 종합 보고서 생성 중...
+2025-08-24 12:10:39,299 - __main__ - INFO - 종합 보고서가 multinomial_logit/multinomial_logit_analysis_report.txt에 저장되었습니다
+2025-08-24 12:10:39,479 - multinomial_logit.results_analyzer - ERROR - Excel 파일 저장 중 오류: Per-column arrays must each be 1-dimensional
+2025-08-24 12:10:39,479 - __main__ - WARNING - Excel 파일 저장 실패: Per-column arrays must each be 1-dimensional
+2025-08-24 12:10:39,479 - __main__ - INFO - 계수 해석:
+2025-08-24 12:10:39,479 - __main__ - INFO -   무설탕 제품은 일반당 제품 대비 선택 확률을 증가시킵니다 (계수: 0.7987, 통계적으로 유의한)
+2025-08-24 12:10:39,480 - __main__ - INFO -   건강라벨이 있는 제품은 없는 제품 대비 선택 확률을 감소시킵니다 (계수: -0.5313, 통계적으로 유의한)
+2025-08-24 12:10:39,480 - __main__ - INFO -   가격이 1000원 증가할 때마다 선택 확률이 증가합니다 (계수: 1.4763, 통계적으로 유의한)
+2025-08-24 12:10:39,480 - __main__ - INFO -   대안 B는 대안 A 대비 선택 확률을 증가시킵니다 (계수: 0.0462, 통계적으로 유의하지 않은)
+2025-08-24 12:10:39,480 - __main__ - INFO - ============================================================
+2025-08-24 12:10:39,480 - __main__ - INFO - 분석 완료!
+2025-08-24 12:10:39,480 - __main__ - INFO - ============================================================
+2025-08-24 12:10:39,480 - __main__ - INFO - 민감도 분석 시작...
+2025-08-24 12:10:39,481 - multinomial_logit.data_loader - INFO - 데이터 디렉토리 검증 완료: processed_data\dce_data
+2025-08-24 12:10:39,484 - multinomial_logit.data_loader - INFO - 선택 매트릭스 데이터 로딩 완료: 5400 행
+2025-08-24 12:10:39,487 - multinomial_logit.data_loader - INFO - 속성 데이터 로딩 완료: 1699 행
+2025-08-24 12:10:39,488 - multinomial_logit.data_loader - INFO - 선택 요약 데이터 로딩 완료: 6 행
+2025-08-24 12:10:39,488 - multinomial_logit.data_loader - INFO - 모든 DCE 데이터 로딩 완료
+2025-08-24 12:10:39,488 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 시작
+2025-08-24 12:10:39,488 - multinomial_logit.data_preprocessor - INFO - Neither가 선택된 101개 선택 세트를 제거합니다
+2025-08-24 12:10:39,526 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 완료: 3398 행
+2025-08-24 12:10:39,527 - multinomial_logit.data_preprocessor - INFO - 선택 세트 생성 시작
+2025-08-24 12:10:39,539 - multinomial_logit.data_preprocessor - INFO - 선택 세트 생성 완료: 1699개 선택 세트, 3398개 대안
+2025-08-24 12:10:39,540 - multinomial_logit.data_preprocessor - INFO - 선택 세트 유효성 검증 완료
+2025-08-24 12:10:39,541 - __main__ - INFO - 민감도 분석: method=bfgs, tolerance=0.0001
+2025-08-24 12:10:39,541 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:10:39,541 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:10:39,542 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:10:40,163 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:10:40,188 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:10:40,188 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:10:40,188 - __main__ - INFO - 민감도 분석: method=bfgs, tolerance=1e-06
+2025-08-24 12:10:40,188 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:10:40,188 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:10:40,190 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:10:40,801 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:10:40,827 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:10:40,827 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:10:40,827 - __main__ - INFO - 민감도 분석: method=bfgs, tolerance=1e-08
+2025-08-24 12:10:40,827 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:10:40,827 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:10:40,829 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:10:41,436 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:10:41,461 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:10:41,462 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:10:41,462 - __main__ - INFO - 민감도 분석: method=newton, tolerance=0.0001
+2025-08-24 12:10:41,462 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:10:41,462 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:10:41,464 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:10:42,092 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:10:42,110 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:10:42,111 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:10:42,111 - __main__ - INFO - 민감도 분석: method=newton, tolerance=1e-06
+2025-08-24 12:10:42,111 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:10:42,111 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:10:42,113 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:10:42,722 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:10:42,741 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:10:42,741 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:10:42,741 - __main__ - INFO - 민감도 분석: method=newton, tolerance=1e-08
+2025-08-24 12:10:42,741 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:10:42,741 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:10:42,743 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:10:43,324 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:10:43,343 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:10:43,343 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:10:43,344 - __main__ - INFO - 민감도 분석: method=lbfgs, tolerance=0.0001
+2025-08-24 12:10:43,344 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:10:43,344 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:10:43,347 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:10:43,974 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:10:43,998 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:10:43,998 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:10:43,998 - __main__ - INFO - 민감도 분석: method=lbfgs, tolerance=1e-06
+2025-08-24 12:10:43,999 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:10:43,999 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:10:44,000 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:10:44,615 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:10:44,639 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:10:44,639 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:10:44,639 - __main__ - INFO - 민감도 분석: method=lbfgs, tolerance=1e-08
+2025-08-24 12:10:44,639 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:10:44,639 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:10:44,642 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:10:45,264 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:10:45,287 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:10:45,287 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:10:45,287 - __main__ - INFO - 민감도 분석 결과:
+2025-08-24 12:10:45,288 - __main__ - INFO - 
+method    tolerance  log_likelihood         aic  converged
+  bfgs 1.000000e-04    -2201.522706 4413.045413       True
+  bfgs 1.000000e-06    -2201.522706 4413.045413       True
+  bfgs 1.000000e-08    -2201.522706 4413.045413       True
+newton 1.000000e-04    -2201.522703 4413.045407       True
+newton 1.000000e-06    -2201.522703 4413.045407       True
+newton 1.000000e-08    -2201.522703 4413.045407       True
+ lbfgs 1.000000e-04    -2201.522704 4413.045408       True
+ lbfgs 1.000000e-06    -2201.522704 4413.045408       True
+ lbfgs 1.000000e-08    -2201.522704 4413.045408       True
+2025-08-24 12:10:45,290 - __main__ - INFO - 민감도 분석 결과가 multinomial_logit/sensitivity_analysis_results.csv에 저장되었습니다
+2025-08-24 12:11:59,461 - __main__ - INFO - ============================================================
+2025-08-24 12:11:59,462 - __main__ - INFO - Multinomial Logit Model 분석 시작
+2025-08-24 12:11:59,462 - __main__ - INFO - ============================================================
+2025-08-24 12:11:59,462 - __main__ - INFO - 데이터 디렉토리: processed_data/dce_data
+2025-08-24 12:11:59,462 - __main__ - INFO - DCE 데이터 로딩 중...
+2025-08-24 12:11:59,463 - multinomial_logit.data_loader - INFO - 데이터 디렉토리 검증 완료: processed_data\dce_data
+2025-08-24 12:11:59,467 - multinomial_logit.data_loader - INFO - 선택 매트릭스 데이터 로딩 완료: 5400 행
+2025-08-24 12:11:59,470 - multinomial_logit.data_loader - INFO - 속성 데이터 로딩 완료: 1699 행
+2025-08-24 12:11:59,470 - multinomial_logit.data_loader - INFO - 선택 요약 데이터 로딩 완료: 6 행
+2025-08-24 12:11:59,471 - multinomial_logit.data_loader - INFO - 모든 DCE 데이터 로딩 완료
+2025-08-24 12:11:59,471 - multinomial_logit.data_loader - INFO - 데이터 디렉토리 검증 완료: processed_data\dce_data
+2025-08-24 12:11:59,474 - multinomial_logit.data_loader - INFO - 선택 매트릭스 데이터 로딩 완료: 5400 행
+2025-08-24 12:11:59,476 - multinomial_logit.data_loader - INFO - 속성 데이터 로딩 완료: 1699 행
+2025-08-24 12:11:59,477 - __main__ - INFO - 데이터 요약:
+2025-08-24 12:11:59,477 - __main__ - INFO -   total_respondents: 300
+2025-08-24 12:11:59,477 - __main__ - INFO -   total_questions: 6
+2025-08-24 12:11:59,479 - __main__ - INFO -   total_choices: 5400
+2025-08-24 12:11:59,479 - __main__ - INFO -   total_actual_choices: 1699
+2025-08-24 12:11:59,479 - __main__ - INFO -   alternatives_per_question: 3
+2025-08-24 12:11:59,479 - __main__ - INFO -   sugar_types: ['무설탕', '일반당', nan]
+2025-08-24 12:11:59,479 - __main__ - INFO -   health_labels: ['건강라벨 있음', '건강라벨 없음', nan]
+2025-08-24 12:11:59,479 - __main__ - INFO -   price_range: {'min': np.int64(0), 'max': np.int64(3000)}
+2025-08-24 12:11:59,479 - __main__ - INFO - 데이터 전처리 중...
+2025-08-24 12:11:59,479 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 시작
+2025-08-24 12:11:59,480 - multinomial_logit.data_preprocessor - INFO - Neither가 선택된 101개 선택 세트를 제거합니다
+2025-08-24 12:11:59,517 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 완료: 3398 행
+2025-08-24 12:11:59,519 - __main__ - INFO - 전처리 요약:
+2025-08-24 12:11:59,519 - __main__ - INFO -   total_observations: 3398
+2025-08-24 12:11:59,519 - __main__ - INFO -   total_choice_sets: 1699
+2025-08-24 12:11:59,519 - __main__ - INFO -   feature_statistics:
+2025-08-24 12:11:59,519 - __main__ - INFO -     sugar_free: {'mean': np.float64(0.503825779870512), 'std': np.float64(0.5000589499725555), 'min': np.int64(0), 'max': np.int64(1)}
+2025-08-24 12:11:59,520 - __main__ - INFO -     has_health_label: {'mean': np.float64(0.5), 'std': np.float64(0.5000735889326231), 'min': np.int64(0), 'max': np.int64(1)}
+2025-08-24 12:11:59,520 - __main__ - INFO -     price_scaled: {'mean': np.float64(2.5025014714537965), 'std': np.float64(0.40845088763575177), 'min': np.float64(2.0), 'max': np.float64(3.0)}
+2025-08-24 12:11:59,520 - __main__ - INFO -   choice_rates:
+2025-08-24 12:11:59,520 - __main__ - INFO -     sugar_free_chosen: 0.7051206592113007
+2025-08-24 12:11:59,520 - __main__ - INFO -     health_label_chosen: 0.5903472630959388
+2025-08-24 12:11:59,520 - __main__ - INFO -     alternative_B_chosen: 0.43496174220129485
+2025-08-24 12:11:59,520 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 시작
+2025-08-24 12:11:59,521 - multinomial_logit.data_preprocessor - INFO - Neither가 선택된 101개 선택 세트를 제거합니다
+2025-08-24 12:11:59,558 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 완료: 3398 행
+2025-08-24 12:11:59,558 - multinomial_logit.data_preprocessor - INFO - 선택 세트 생성 시작
+2025-08-24 12:11:59,570 - multinomial_logit.data_preprocessor - INFO - 선택 세트 생성 완료: 1699개 선택 세트, 3398개 대안
+2025-08-24 12:11:59,571 - multinomial_logit.data_preprocessor - INFO - 선택 세트 유효성 검증 완료
+2025-08-24 12:11:59,572 - __main__ - INFO - 전처리 완료:
+2025-08-24 12:11:59,572 - __main__ - INFO -   설명변수 행렬 크기: (3398, 4)
+2025-08-24 12:11:59,572 - __main__ - INFO -   종속변수 벡터 크기: (3398,)
+2025-08-24 12:11:59,572 - __main__ - INFO -   선택 세트 수: 1699
+2025-08-24 12:11:59,572 - __main__ - INFO -   특성 이름: ['sugar_free', 'has_health_label', 'price_scaled', 'alternative_B']
+2025-08-24 12:11:59,572 - __main__ - INFO - 모델 설정 중...
+2025-08-24 12:11:59,572 - __main__ - INFO - 모델 설정 완료
+2025-08-24 12:11:59,572 - __main__ - INFO - Multinomial Logit Model 추정 중...
+2025-08-24 12:11:59,572 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:11:59,573 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:11:59,574 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:12:00,195 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:12:00,221 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:12:00,221 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:12:00,221 - __main__ - INFO - 모델 추정 완료
+2025-08-24 12:12:00,221 - __main__ - INFO - 결과 분석 중...
+2025-08-24 12:12:00,221 - __main__ - INFO - 계수 테이블:
+2025-08-24 12:12:00,223 - __main__ - INFO - 
+        Variable  Coefficient  Std_Error    Z_Score      P_Value  CI_Lower  CI_Upper Significance
+           const    -4.150085   0.285841 -14.518844 9.205013e-48 -4.710323 -3.589846          ***
+      sugar_free     0.798678   0.077671  10.282801 8.424348e-25  0.646445  0.950911          ***
+has_health_label    -0.531256   0.083307  -6.377119 1.804499e-10 -0.694534 -0.367978          ***
+    price_scaled     1.476320   0.109836  13.441082 3.473193e-41  1.261045  1.691595          ***
+   alternative_B     0.046172   0.072270   0.638881 5.229005e-01 -0.095474  0.187818             
+2025-08-24 12:12:00,224 - __main__ - INFO - 오즈비 테이블:
+2025-08-24 12:12:00,225 - __main__ - INFO - 
+        Variable  Odds_Ratio  OR_CI_Lower  OR_CI_Upper OR_Interpretation
+           const    0.015763     0.009002     0.027603  63.439배 낮은 선택 확률
+      sugar_free    2.222601     1.908744     2.588067   2.223배 높은 선택 확률
+has_health_label    0.587866     0.499307     0.692132   1.701배 낮은 선택 확률
+    price_scaled    4.376809     3.529106     5.428133   4.377배 높은 선택 확률
+   alternative_B    1.047254     0.908942     1.206614   1.047배 높은 선택 확률
+2025-08-24 12:12:00,225 - __main__ - INFO - 모델 요약:
+2025-08-24 12:12:00,225 - __main__ - INFO -   model_fit:
+2025-08-24 12:12:00,225 - __main__ - INFO -     log_likelihood: -2201.5227063677876
+2025-08-24 12:12:00,225 - __main__ - INFO -     aic: 4413.045412735575
+2025-08-24 12:12:00,225 - __main__ - INFO -     bic: 4443.700124246735
+2025-08-24 12:12:00,225 - __main__ - INFO -     pseudo_r_squared: 0.053713156152216834
+2025-08-24 12:12:00,225 - __main__ - INFO -   sample_info:
+2025-08-24 12:12:00,226 - __main__ - INFO -     n_observations: 3398
+2025-08-24 12:12:00,226 - __main__ - INFO -     n_choice_sets: 1699
+2025-08-24 12:12:00,226 - __main__ - INFO -     n_features: 4
+2025-08-24 12:12:00,226 - __main__ - INFO -   convergence:
+2025-08-24 12:12:00,226 - __main__ - INFO -     converged: True
+2025-08-24 12:12:00,226 - __main__ - INFO -     iterations: None
+2025-08-24 12:12:00,226 - __main__ - INFO -     method: bfgs
+2025-08-24 12:12:00,226 - __main__ - INFO - 종합 보고서 생성 중...
+2025-08-24 12:12:00,230 - __main__ - INFO - 종합 보고서가 multinomial_logit/multinomial_logit_analysis_report.txt에 저장되었습니다
+2025-08-24 12:12:00,409 - multinomial_logit.results_analyzer - ERROR - Excel 파일 저장 중 오류: Per-column arrays must each be 1-dimensional
+2025-08-24 12:12:00,409 - __main__ - WARNING - Excel 파일 저장 실패: Per-column arrays must each be 1-dimensional
+2025-08-24 12:12:00,409 - __main__ - INFO - 계수 해석:
+2025-08-24 12:12:00,410 - __main__ - INFO -   무설탕 제품은 일반당 제품 대비 선택 확률을 증가시킵니다 (계수: 0.7987, 통계적으로 유의한)
+2025-08-24 12:12:00,410 - __main__ - INFO -   건강라벨이 있는 제품은 없는 제품 대비 선택 확률을 감소시킵니다 (계수: -0.5313, 통계적으로 유의한)
+2025-08-24 12:12:00,410 - __main__ - INFO -   가격이 1000원 증가할 때마다 선택 확률이 증가합니다 (계수: 1.4763, 통계적으로 유의한)
+2025-08-24 12:12:00,411 - __main__ - INFO -   대안 B는 대안 A 대비 선택 확률을 증가시킵니다 (계수: 0.0462, 통계적으로 유의하지 않은)
+2025-08-24 12:12:00,411 - __main__ - INFO - ============================================================
+2025-08-24 12:12:00,411 - __main__ - INFO - 분석 완료!
+2025-08-24 12:12:00,411 - __main__ - INFO - ============================================================
+2025-08-24 12:12:00,411 - __main__ - INFO - 민감도 분석 시작...
+2025-08-24 12:12:00,412 - multinomial_logit.data_loader - INFO - 데이터 디렉토리 검증 완료: processed_data\dce_data
+2025-08-24 12:12:00,416 - multinomial_logit.data_loader - INFO - 선택 매트릭스 데이터 로딩 완료: 5400 행
+2025-08-24 12:12:00,418 - multinomial_logit.data_loader - INFO - 속성 데이터 로딩 완료: 1699 행
+2025-08-24 12:12:00,419 - multinomial_logit.data_loader - INFO - 선택 요약 데이터 로딩 완료: 6 행
+2025-08-24 12:12:00,419 - multinomial_logit.data_loader - INFO - 모든 DCE 데이터 로딩 완료
+2025-08-24 12:12:00,419 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 시작
+2025-08-24 12:12:00,420 - multinomial_logit.data_preprocessor - INFO - Neither가 선택된 101개 선택 세트를 제거합니다
+2025-08-24 12:12:00,457 - multinomial_logit.data_preprocessor - INFO - 선택 데이터 전처리 완료: 3398 행
+2025-08-24 12:12:00,457 - multinomial_logit.data_preprocessor - INFO - 선택 세트 생성 시작
+2025-08-24 12:12:00,469 - multinomial_logit.data_preprocessor - INFO - 선택 세트 생성 완료: 1699개 선택 세트, 3398개 대안
+2025-08-24 12:12:00,471 - multinomial_logit.data_preprocessor - INFO - 선택 세트 유효성 검증 완료
+2025-08-24 12:12:00,471 - __main__ - INFO - 민감도 분석: method=bfgs, tolerance=0.0001
+2025-08-24 12:12:00,471 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:12:00,471 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:12:00,473 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:12:01,093 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:12:01,119 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:12:01,119 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:12:01,119 - __main__ - INFO - 민감도 분석: method=bfgs, tolerance=1e-06
+2025-08-24 12:12:01,119 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:12:01,119 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:12:01,121 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:12:01,746 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:12:01,771 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:12:01,771 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:12:01,771 - __main__ - INFO - 민감도 분석: method=bfgs, tolerance=1e-08
+2025-08-24 12:12:01,771 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:12:01,771 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:12:01,773 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:12:02,385 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:12:02,409 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:12:02,409 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:12:02,409 - __main__ - INFO - 민감도 분석: method=newton, tolerance=0.0001
+2025-08-24 12:12:02,409 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:12:02,409 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:12:02,411 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:12:03,029 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:12:03,047 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:12:03,047 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:12:03,047 - __main__ - INFO - 민감도 분석: method=newton, tolerance=1e-06
+2025-08-24 12:12:03,047 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:12:03,047 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:12:03,049 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:12:03,672 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:12:03,691 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:12:03,691 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:12:03,691 - __main__ - INFO - 민감도 분석: method=newton, tolerance=1e-08
+2025-08-24 12:12:03,691 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:12:03,691 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:12:03,694 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:12:04,272 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:12:04,292 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:12:04,292 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:12:04,293 - __main__ - INFO - 민감도 분석: method=lbfgs, tolerance=0.0001
+2025-08-24 12:12:04,293 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:12:04,293 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:12:04,294 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:12:04,895 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:12:04,923 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:12:04,923 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:12:04,923 - __main__ - INFO - 민감도 분석: method=lbfgs, tolerance=1e-06
+2025-08-24 12:12:04,923 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:12:04,923 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:12:04,924 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:12:05,525 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:12:05,549 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:12:05,549 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:12:05,549 - __main__ - INFO - 민감도 분석: method=lbfgs, tolerance=1e-08
+2025-08-24 12:12:05,549 - multinomial_logit.model_estimator - INFO - Multinomial Logit Model 추정 시작
+2025-08-24 12:12:05,549 - multinomial_logit.model_estimator - INFO - StatsModels용 데이터 변환 시작
+2025-08-24 12:12:05,551 - multinomial_logit.model_config - INFO - 입력 데이터 유효성 검증 완료
+2025-08-24 12:12:06,159 - multinomial_logit.model_estimator - INFO - 데이터 변환 완료: 3398 행, 4 열
+2025-08-24 12:12:06,182 - multinomial_logit.model_estimator - WARNING - 탄력성 계산 중 오류: shapes (1,4) and (5,1) not aligned: 4 (dim 1) != 5 (dim 0)
+2025-08-24 12:12:06,182 - multinomial_logit.model_estimator - INFO - 모델 추정 완료
+2025-08-24 12:12:06,183 - __main__ - INFO - 민감도 분석 결과:
+2025-08-24 12:12:06,184 - __main__ - INFO - 
+method    tolerance  log_likelihood         aic  converged
+  bfgs 1.000000e-04    -2201.522706 4413.045413       True
+  bfgs 1.000000e-06    -2201.522706 4413.045413       True
+  bfgs 1.000000e-08    -2201.522706 4413.045413       True
+newton 1.000000e-04    -2201.522703 4413.045407       True
+newton 1.000000e-06    -2201.522703 4413.045407       True
+newton 1.000000e-08    -2201.522703 4413.045407       True
+ lbfgs 1.000000e-04    -2201.522704 4413.045408       True
+ lbfgs 1.000000e-06    -2201.522704 4413.045408       True
+ lbfgs 1.000000e-08    -2201.522704 4413.045408       True
+2025-08-24 12:12:06,185 - __main__ - INFO - 민감도 분석 결과가 multinomial_logit/sensitivity_analysis_results.csv에 저장되었습니다
