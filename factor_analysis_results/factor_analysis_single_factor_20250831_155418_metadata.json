@@ -1,0 +1,22 @@
+{
+  "analysis_timestamp": "2025-08-31T15:54:18.512688",
+  "analysis_type": "single_factor",
+  "model_info": {
+    "n_observations": 300,
+    "n_variables": 6,
+    "estimator": "MLW",
+    "optimizer": "SLSQP"
+  },
+  "fit_indices": {
+    "CFI": 0.9506,
+    "TLI": 0.9177,
+    "RMSEA": 0.1391,
+    "GFI": 0.9429,
+    "AGFI": 0.9048,
+    "AIC": 23.5929,
+    "BIC": 68.0383
+  },
+  "factor_names": "health_concern",
+  "n_factors": 1,
+  "n_items": 6
+}

@@ -1,0 +1,28 @@
+{
+  "analysis_timestamp": "2025-08-31T16:21:51.660918",
+  "analysis_type": "multiple_factors",
+  "model_info": {
+    "n_observations": 300,
+    "n_variables": 38,
+    "estimator": "MLW",
+    "optimizer": "SLSQP"
+  },
+  "fit_indices": {
+    "CFI": 0.8546,
+    "TLI": 0.8451,
+    "RMSEA": 0.064,
+    "GFI": 0.7655,
+    "AGFI": 0.7502,
+    "AIC": 152.2136,
+    "BIC": 452.2199
+  },
+  "factor_names": [
+    "health_concern",
+    "perceived_benefit",
+    "purchase_intention",
+    "perceived_price",
+    "nutrition_knowledge"
+  ],
+  "n_factors": 5,
+  "n_items": 38
+}

@@ -1,0 +1,48 @@
+============================================================
+FACTOR ANALYSIS RESULTS SUMMARY
+============================================================
+Generated: 2025-08-31 16:08:01
+
+MODEL INFORMATION
+------------------------------
+Sample Size: 330
+Variables: 38
+Estimator: MLW
+Analysis Type: multiple_factors
+
+FIT INDICES
+------------------------------
+CFI: 0.8738 (Poor)
+TLI: 0.8646 (Poor)
+RMSEA: 0.0596 (Good)
+GFI: 0.7902 (N/A)
+AGFI: 0.7748 (N/A)
+AIC: 163.3896 (N/A)
+BIC: 490.1116 (N/A)
+
+FACTOR LOADINGS SUMMARY
+------------------------------
+health_concern:
+  Items: 6
+  Significant loadings: 5
+  Average loading: 0.968
+
+perceived_benefit:
+  Items: 6
+  Significant loadings: 5
+  Average loading: 0.878
+
+purchase_intention:
+  Items: 3
+  Significant loadings: 2
+  Average loading: 1.002
+
+perceived_price:
+  Items: 3
+  Significant loadings: 2
+  Average loading: 0.922
+
+nutrition_knowledge:
+  Items: 20
+  Significant loadings: 18
+  Average loading: 0.690

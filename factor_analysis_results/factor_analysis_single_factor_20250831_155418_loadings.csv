@@ -1,0 +1,7 @@
+﻿Item,Factor,Loading,SE,Z_value,P_value,Significant,Analysis_Type,Sample_Size
+q6,health_concern,1.0,-,-,,False,single_factor,300
+q7,health_concern,1.0519,0.06748104207418706,15.588683717386642,0.0,True,single_factor,300
+q8,health_concern,0.8452,0.06545426844851242,12.912879029337233,0.0,True,single_factor,300
+q9,health_concern,0.922,0.060811927841854074,15.161236841470906,0.0,True,single_factor,300
+q10,health_concern,0.8312,0.06310293977990597,13.172473124992528,0.0,True,single_factor,300
+q11,health_concern,1.003,0.06639298239758074,15.10645211473124,0.0,True,single_factor,300
