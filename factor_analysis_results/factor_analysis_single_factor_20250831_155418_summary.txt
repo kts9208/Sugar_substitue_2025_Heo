@@ -1,0 +1,28 @@
+============================================================
+FACTOR ANALYSIS RESULTS SUMMARY
+============================================================
+Generated: 2025-08-31 15:54:18
+
+MODEL INFORMATION
+------------------------------
+Sample Size: 300
+Variables: 6
+Estimator: MLW
+Analysis Type: single_factor
+
+FIT INDICES
+------------------------------
+CFI: 0.9506 (Excellent)
+TLI: 0.9177 (Good)
+RMSEA: 0.1391 (Poor)
+GFI: 0.9429 (N/A)
+AGFI: 0.9048 (N/A)
+AIC: 23.5929 (N/A)
+BIC: 68.0383 (N/A)
+
+FACTOR LOADINGS SUMMARY
+------------------------------
+health_concern:
+  Items: 6
+  Significant loadings: 5
+  Average loading: 0.942

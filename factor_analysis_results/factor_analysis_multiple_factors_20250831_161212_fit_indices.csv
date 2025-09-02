@@ -1,0 +1,8 @@
+﻿Fit_Index,Value,Analysis_Type,Sample_Size,Interpretation
+CFI,0.8907,multiple_factors,299,Poor
+TLI,0.8827,multiple_factors,299,Poor
+RMSEA,0.0557,multiple_factors,299,Good
+GFI,0.7982,multiple_factors,299,N/A
+AGFI,0.7834,multiple_factors,299,N/A
+AIC,163.5631,multiple_factors,299,N/A
+BIC,481.8012,multiple_factors,299,N/A

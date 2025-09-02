@@ -1,0 +1,8 @@
+﻿Fit_Index,Value,Analysis_Type,Sample_Size,Interpretation
+CFI,0.9506,single_factor,300,Excellent
+TLI,0.9177,single_factor,300,Good
+RMSEA,0.1391,single_factor,300,Poor
+GFI,0.9429,single_factor,300,N/A
+AGFI,0.9048,single_factor,300,N/A
+AIC,23.5929,single_factor,300,N/A
+BIC,68.0383,single_factor,300,N/A
