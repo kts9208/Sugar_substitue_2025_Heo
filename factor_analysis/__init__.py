@@ -32,8 +32,8 @@ from .semopy_native_visualizer import (
     create_diagrams_for_factors
 )
 from .reliability_calculator import (
-    ReliabilityCalculator,
-    calculate_reliability_from_results
+    IndependentReliabilityCalculator,
+    run_independent_reliability_analysis
 )
 
 __version__ = "1.0.0"
@@ -79,6 +79,6 @@ __all__ = [
     'create_diagrams_for_factors',
 
     # Reliability and Validity
-    'ReliabilityCalculator',
-    'calculate_reliability_from_results'
+    'IndependentReliabilityCalculator',
+    'run_independent_reliability_analysis'
 ]
