@@ -1,29 +1,195 @@
 """
-신뢰도 및 타당도 계산 모듈
+독립적인 신뢰도 및 타당도 계산 모듈
 
-이 모듈은 요인분석 결과에서 다음을 계산합니다:
+이 모듈은 저장된 요인분석 결과 파일들로부터 다음을 계산합니다:
 - Cronbach's Alpha (크론바흐 알파)
 - Composite Reliability (CR, 합성신뢰도)
 - Average Variance Extracted (AVE, 평균분산추출)
 - Discriminant Validity (판별타당도)
+- 요인간 상관관계 분석
 """
 
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Any, Tuple
 import logging
-from semopy import Model
+import json
+import os
+import glob
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 
-class ReliabilityCalculator:
-    """신뢰도 및 타당도 계산 클래스"""
+class IndependentReliabilityCalculator:
+    """독립적인 신뢰도 및 타당도 계산 클래스"""
+
+    def __init__(self, results_dir: str = "factor_analysis_results",
+                 survey_data_dir: str = "processed_data/survey_data"):
+        """
+        신뢰도 계산기 초기화
+
+        Args:
+            results_dir (str): 요인분석 결과 파일들이 저장된 디렉토리
+            survey_data_dir (str): 원본 설문 데이터가 저장된 디렉토리
+        """
+        self.results_dir = Path(results_dir)
+        self.survey_data_dir = Path(survey_data_dir)
+        logger.info("Independent Reliability Calculator 초기화 완료")
     
-    def __init__(self):
-        """신뢰도 계산기 초기화"""
-        logger.info("Reliability Calculator 초기화 완료")
-    
+    def load_latest_analysis_results(self, prefer_post_reverse_coding: bool = True) -> Optional[Dict[str, Any]]:
+        """
+        가장 최신의 요인분석 결과 파일들을 로드
+
+        Args:
+            prefer_post_reverse_coding (bool): 역문항 처리 후 결과를 우선적으로 선택할지 여부
+
+        Returns:
+            Dict[str, Any]: 분석 결과 딕셔너리 또는 None
+        """
+        try:
+            # 가장 최신 결과 파일들 찾기
+            pattern = str(self.results_dir / "factor_analysis_multiple_factors_*_metadata.json")
+            metadata_files = glob.glob(pattern)
+
+            if not metadata_files:
+                logger.error("요인분석 결과 파일을 찾을 수 없습니다.")
+                return None
+
+            # 역문항 처리 후 결과를 우선적으로 선택
+            if prefer_post_reverse_coding:
+                latest_metadata_file = self._select_post_reverse_coding_results(metadata_files)
+                if latest_metadata_file is None:
+                    logger.warning("역문항 처리 후 요인분석 결과를 찾을 수 없습니다. 가장 최신 결과를 사용합니다.")
+                    latest_metadata_file = max(metadata_files, key=lambda x: os.path.getmtime(x))
+            else:
+                # 가장 최신 파일 선택 (수정 시간 기준)
+                latest_metadata_file = max(metadata_files, key=lambda x: os.path.getmtime(x))
+
+            base_name = latest_metadata_file.replace('_metadata.json', '')
+
+            # 관련 파일들 로드
+            with open(latest_metadata_file, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+
+            loadings_file = f"{base_name}_loadings.csv"
+            fit_indices_file = f"{base_name}_fit_indices.csv"
+
+            if not os.path.exists(loadings_file):
+                logger.error(f"요인부하량 파일을 찾을 수 없습니다: {loadings_file}")
+                return None
+
+            loadings_df = pd.read_csv(loadings_file)
+            fit_indices_df = pd.read_csv(fit_indices_file) if os.path.exists(fit_indices_file) else None
+
+            logger.info(f"요인분석 결과 로드 완료: {os.path.basename(latest_metadata_file)}")
+
+            return {
+                'metadata': metadata,
+                'loadings': loadings_df,
+                'fit_indices': fit_indices_df,
+                'base_filename': os.path.basename(base_name),
+                'file_path': latest_metadata_file,
+                'file_timestamp': os.path.getmtime(latest_metadata_file)
+            }
+
+        except Exception as e:
+            logger.error(f"분석 결과 로드 중 오류: {e}")
+            return None
+
+    def _select_post_reverse_coding_results(self, metadata_files: List[str]) -> Optional[str]:
+        """
+        역문항 처리 후 생성된 요인분석 결과를 선택
+
+        Args:
+            metadata_files (List[str]): 메타데이터 파일 목록
+
+        Returns:
+            Optional[str]: 선택된 파일 경로 또는 None
+        """
+        try:
+            # 역문항 처리 시점 확인
+            reverse_processing_time = self._get_reverse_processing_time()
+            if reverse_processing_time is None:
+                return None
+
+            # 역문항 처리 이후에 생성된 파일들 필터링
+            post_reverse_files = []
+            for file_path in metadata_files:
+                file_time = os.path.getmtime(file_path)
+                if file_time > reverse_processing_time:
+                    post_reverse_files.append(file_path)
+
+            if not post_reverse_files:
+                return None
+
+            # 가장 최신 파일 선택
+            latest_file = max(post_reverse_files, key=lambda x: os.path.getmtime(x))
+            logger.info(f"역문항 처리 후 요인분석 결과 선택: {os.path.basename(latest_file)}")
+            return latest_file
+
+        except Exception as e:
+            logger.warning(f"역문항 처리 후 결과 선택 중 오류: {e}")
+            return None
+
+    def _get_reverse_processing_time(self) -> Optional[float]:
+        """
+        역문항 처리 시점을 확인
+
+        Returns:
+            Optional[float]: 역문항 처리 시점 (timestamp) 또는 None
+        """
+        try:
+            # 백업 디렉토리에서 가장 최신 백업 시점 확인
+            backup_dir = Path("processed_data/survey_data_backup")
+            if not backup_dir.exists():
+                return None
+
+            backup_subdirs = list(backup_dir.glob("backup_*"))
+            if not backup_subdirs:
+                return None
+
+            # 가장 최신 백업 디렉토리의 생성 시간
+            latest_backup = max(backup_subdirs, key=lambda x: x.stat().st_mtime)
+            return latest_backup.stat().st_mtime
+
+        except Exception as e:
+            logger.warning(f"역문항 처리 시점 확인 중 오류: {e}")
+            return None
+
+    def load_survey_data(self) -> Dict[str, pd.DataFrame]:
+        """
+        원본 설문 데이터 로드
+
+        Returns:
+            Dict[str, pd.DataFrame]: 요인별 설문 데이터
+        """
+        try:
+            survey_data = {}
+
+            # 각 요인별 데이터 파일 로드
+            factor_files = {
+                'health_concern': 'health_concern.csv',
+                'perceived_benefit': 'perceived_benefit.csv',
+                'purchase_intention': 'purchase_intention.csv',
+                'perceived_price': 'perceived_price.csv',
+                'nutrition_knowledge': 'nutrition_knowledge.csv'
+            }
+
+            for factor_name, filename in factor_files.items():
+                file_path = self.survey_data_dir / filename
+                if file_path.exists():
+                    survey_data[factor_name] = pd.read_csv(file_path)
+                    logger.info(f"{factor_name} 데이터 로드 완료: {len(survey_data[factor_name])} 행")
+                else:
+                    logger.warning(f"설문 데이터 파일을 찾을 수 없습니다: {file_path}")
+
+            return survey_data
+
+        except Exception as e:
+            logger.error(f"설문 데이터 로드 중 오류: {e}")
+            return {}
+
     def calculate_cronbach_alpha(self, data: pd.DataFrame, items: List[str]) -> float:
         """
         크론바흐 알파 계산
@@ -149,73 +315,89 @@ class ReliabilityCalculator:
             logger.error(f"AVE 계산 중 오류: {e}")
             return np.nan
     
-    def calculate_factor_reliability_stats(self, model: Model, 
-                                         data: pd.DataFrame,
-                                         factor_name: str,
-                                         items: List[str]) -> Dict[str, float]:
+    def calculate_factor_reliability_stats_from_loadings(self,
+                                                        loadings_df: pd.DataFrame,
+                                                        survey_data: Dict[str, pd.DataFrame],
+                                                        factor_name: str) -> Dict[str, float]:
         """
-        단일 요인의 신뢰도 통계 계산
-        
+        저장된 요인부하량으로부터 단일 요인의 신뢰도 통계 계산
+
         Args:
-            model (Model): 적합된 semopy 모델
-            data (pd.DataFrame): 원시 데이터
+            loadings_df (pd.DataFrame): 요인부하량 데이터프레임
+            survey_data (Dict[str, pd.DataFrame]): 원본 설문 데이터
             factor_name (str): 요인명
-            items (List[str]): 해당 요인의 문항들
-            
+
         Returns:
             Dict[str, float]: 신뢰도 통계들
         """
         try:
-            # 모델 파라미터 추출
-            params = model.inspect(std_est=True)  # 표준화 추정값 포함
-            
-            # 해당 요인의 factor loadings 추출
-            factor_loadings = params[
-                (params['op'] == '~') & 
-                (params['rval'] == factor_name)
-            ]
-            
-            # 표준화된 요인부하량
-            std_loadings = factor_loadings['Est. Std'].values
-            
-            # 오차분산 추출 (1 - λ²)
+            # 해당 요인의 요인부하량 추출
+            factor_loadings = loadings_df[loadings_df['Factor'] == factor_name]
+
+            if len(factor_loadings) == 0:
+                logger.warning(f"요인 '{factor_name}'의 부하량을 찾을 수 없습니다.")
+                return self._empty_reliability_stats()
+
+            # 문항 목록과 부하량 추출
+            items = factor_loadings['Item'].tolist()
+            loadings = factor_loadings['Loading'].values
+
+            # 표준화된 부하량으로 가정 (이미 표준화된 값이라고 가정)
+            std_loadings = loadings
+
+            # 오차분산 계산 (1 - λ²)
             error_variances = 1 - (std_loadings ** 2)
-            
-            # 1. 크론바흐 알파
-            cronbach_alpha = self.calculate_cronbach_alpha(data, items)
-            
+
+            # 1. 크론바흐 알파 계산 (원본 데이터 필요)
+            cronbach_alpha = np.nan
+            if factor_name in survey_data:
+                factor_data = survey_data[factor_name]
+                # 'no' 컬럼 제외하고 문항 컬럼들만 사용
+                item_columns = [col for col in factor_data.columns if col != 'no']
+                cronbach_alpha = self.calculate_cronbach_alpha(factor_data, item_columns)
+
             # 2. 합성신뢰도 (CR)
             composite_reliability = self.calculate_composite_reliability(
                 std_loadings, error_variances
             )
-            
+
             # 3. 평균분산추출 (AVE)
             ave = self.calculate_ave(std_loadings, error_variances)
-            
+
             results = {
                 'cronbach_alpha': cronbach_alpha,
                 'composite_reliability': composite_reliability,
                 'ave': ave,
+                'sqrt_ave': np.sqrt(ave) if not np.isnan(ave) else np.nan,
                 'n_items': len(items),
+                'items': items,
                 'mean_loading': np.mean(std_loadings),
                 'min_loading': np.min(std_loadings),
-                'max_loading': np.max(std_loadings)
+                'max_loading': np.max(std_loadings),
+                'loadings': std_loadings.tolist()
             }
-            
+
             logger.info(f"{factor_name} 신뢰도 통계 계산 완료")
             return results
-            
+
         except Exception as e:
             logger.error(f"{factor_name} 신뢰도 통계 계산 중 오류: {e}")
-            return {
-                'cronbach_alpha': np.nan,
-                'composite_reliability': np.nan,
-                'ave': np.nan,
-                'n_items': len(items),
-                'mean_loading': np.nan,
-                'min_loading': np.nan,
-                'max_loading': np.nan
-            }
+            return self._empty_reliability_stats()
+
+    def _empty_reliability_stats(self) -> Dict[str, Any]:
+        """빈 신뢰도 통계 딕셔너리 반환"""
+        return {
+            'cronbach_alpha': np.nan,
+            'composite_reliability': np.nan,
+            'ave': np.nan,
+            'sqrt_ave': np.nan,
+            'n_items': 0,
+            'items': [],
+            'mean_loading': np.nan,
+            'min_loading': np.nan,
+            'max_loading': np.nan,
+            'loadings': []
+        }
     
     def calculate_discriminant_validity(self, ave_values: Dict[str, float],
                                       correlations: pd.DataFrame) -> Dict[str, Dict[str, bool]]:
@@ -299,61 +481,148 @@ class ReliabilityCalculator:
             return pd.DataFrame()
 
 
-def calculate_reliability_from_results(analysis_results: Dict[str, Any],
-                                     raw_data: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
+    def extract_factor_correlations_from_model(self, analysis_results: Dict[str, Any]) -> Optional[pd.DataFrame]:
+        """
+        semopy 모델에서 요인간 상관계수 직접 추출 시도
+
+        Args:
+            analysis_results (Dict[str, Any]): 요인분석 결과
+
+        Returns:
+            Optional[pd.DataFrame]: 요인간 상관계수 매트릭스 또는 None
+        """
+        try:
+            # 저장된 결과에서 요인간 상관계수 정보가 있는지 확인
+            # 현재는 저장되지 않으므로 None 반환하고 향후 개선 예정
+            logger.info("semopy 모델에서 요인간 상관계수 추출 시도 중...")
+            logger.warning("현재 요인간 상관계수가 저장된 결과 파일에 포함되지 않음")
+            logger.info("원본 설문 데이터 기반 상관계수 계산으로 대체")
+            return None
+
+        except Exception as e:
+            logger.error(f"모델에서 요인간 상관계수 추출 중 오류: {e}")
+            return None
+
+    def calculate_factor_correlations(self, loadings_df: pd.DataFrame,
+                                     survey_data: Dict[str, pd.DataFrame],
+                                     analysis_results: Dict[str, Any] = None) -> pd.DataFrame:
+        """
+        요인간 상관관계 계산 (semopy 모델 우선, 실패시 원본 데이터 기반)
+
+        Args:
+            loadings_df (pd.DataFrame): 요인부하량 데이터프레임
+            survey_data (Dict[str, pd.DataFrame]): 원본 설문 데이터
+            analysis_results (Dict[str, Any]): 요인분석 결과 (선택사항)
+
+        Returns:
+            pd.DataFrame: 요인간 상관관계 매트릭스
+        """
+        try:
+            # 1. 먼저 semopy 모델에서 직접 추출 시도
+            if analysis_results:
+                model_correlations = self.extract_factor_correlations_from_model(analysis_results)
+                if model_correlations is not None:
+                    logger.info("semopy 모델에서 요인간 상관계수 추출 성공")
+                    return model_correlations
+
+            # 2. 원본 설문 데이터 기반 상관관계 계산 (fallback)
+            logger.info("원본 설문 데이터 기반으로 요인간 상관관계 계산")
+
+            factor_names = loadings_df['Factor'].unique()
+            correlations = pd.DataFrame(index=factor_names, columns=factor_names)
+
+            # 각 요인의 평균 점수 계산
+            factor_scores = {}
+            for factor_name in factor_names:
+                if factor_name in survey_data:
+                    factor_data = survey_data[factor_name]
+                    # 'no' 컬럼 제외하고 평균 계산
+                    item_columns = [col for col in factor_data.columns if col != 'no']
+                    factor_scores[factor_name] = factor_data[item_columns].mean(axis=1)
+
+            # 상관관계 계산
+            for i, factor1 in enumerate(factor_names):
+                for j, factor2 in enumerate(factor_names):
+                    if factor1 in factor_scores and factor2 in factor_scores:
+                        if i == j:
+                            correlations.loc[factor1, factor2] = 1.0
+                        else:
+                            corr = np.corrcoef(factor_scores[factor1], factor_scores[factor2])[0, 1]
+                            correlations.loc[factor1, factor2] = corr
+                    else:
+                        correlations.loc[factor1, factor2] = np.nan
+
+            logger.info("원본 데이터 기반 요인간 상관관계 계산 완료")
+            return correlations.astype(float)
+
+        except Exception as e:
+            logger.error(f"요인간 상관관계 계산 중 오류: {e}")
+            return pd.DataFrame()
+
+    def run_complete_reliability_analysis(self) -> Dict[str, Any]:
+        """
+        완전한 신뢰도 분석 실행
+
+        Returns:
+            Dict[str, Any]: 전체 신뢰도 분석 결과
+        """
+        try:
+            # 1. 분석 결과 로드
+            analysis_results = self.load_latest_analysis_results()
+            if analysis_results is None:
+                return {'error': '분석 결과를 로드할 수 없습니다.'}
+
+            # 2. 설문 데이터 로드
+            survey_data = self.load_survey_data()
+            if not survey_data:
+                logger.warning("설문 데이터를 로드할 수 없습니다. 크론바흐 알파 계산이 제한됩니다.")
+
+            # 3. 각 요인별 신뢰도 계산
+            loadings_df = analysis_results['loadings']
+            factor_names = analysis_results['metadata']['factor_names']
+
+            reliability_stats = {}
+            for factor_name in factor_names:
+                stats = self.calculate_factor_reliability_stats_from_loadings(
+                    loadings_df, survey_data, factor_name
+                )
+                reliability_stats[factor_name] = stats
+
+            # 4. 요인간 상관관계 계산
+            correlations = self.calculate_factor_correlations(loadings_df, survey_data, analysis_results)
+
+            # 5. 판별타당도 검증
+            ave_values = {name: stats['ave'] for name, stats in reliability_stats.items()}
+            discriminant_validity = self.calculate_discriminant_validity(ave_values, correlations)
+
+            # 6. 요약 테이블 생성
+            summary_table = self.create_reliability_summary_table(reliability_stats)
+
+            return {
+                'reliability_stats': reliability_stats,
+                'correlations': correlations,
+                'discriminant_validity': discriminant_validity,
+                'summary_table': summary_table,
+                'metadata': analysis_results['metadata'],
+                'analysis_timestamp': analysis_results['metadata']['analysis_timestamp']
+            }
+
+        except Exception as e:
+            logger.error(f"완전한 신뢰도 분석 중 오류: {e}")
+            return {'error': str(e)}
+
+
+def run_independent_reliability_analysis(results_dir: str = "factor_analysis_results",
+                                       survey_data_dir: str = "processed_data/survey_data") -> Dict[str, Any]:
     """
-    분석 결과로부터 신뢰도 통계 계산 편의 함수
-    
+    독립적인 신뢰도 분석 실행 편의 함수
+
     Args:
-        analysis_results (Dict[str, Any]): factor_analyzer의 분석 결과
-        raw_data (Optional[pd.DataFrame]): 원시 데이터 (크론바흐 알파 계산용)
-        
+        results_dir (str): 요인분석 결과 디렉토리
+        survey_data_dir (str): 설문 데이터 디렉토리
+
     Returns:
         Dict[str, Any]: 신뢰도 분석 결과
     """
-    calculator = ReliabilityCalculator()
-    
-    try:
-        # 모델 객체 추출
-        model = analysis_results.get('model')
-        if model is None:
-            logger.error("분석 결과에서 모델 객체를 찾을 수 없습니다.")
-            return {'error': '모델 객체 없음'}
-        
-        # 요인 정보 추출
-        if analysis_results.get('analysis_type') == 'single_factor':
-            factor_name = analysis_results.get('factor_name')
-            factor_names = [factor_name]
-        else:
-            factor_names = analysis_results.get('factor_names', [])
-        
-        if not factor_names:
-            logger.error("요인 정보를 찾을 수 없습니다.")
-            return {'error': '요인 정보 없음'}
-        
-        # 각 요인별 신뢰도 계산
-        reliability_stats = {}
-        
-        for factor_name in factor_names:
-            # 해당 요인의 문항들 추출
-            factor_loadings = analysis_results['factor_loadings']
-            items = factor_loadings[factor_loadings['Factor'] == factor_name]['Item'].tolist()
-            
-            # 신뢰도 통계 계산
-            stats = calculator.calculate_factor_reliability_stats(
-                model, raw_data, factor_name, items
-            )
-            reliability_stats[factor_name] = stats
-        
-        # 요약 테이블 생성
-        summary_table = calculator.create_reliability_summary_table(reliability_stats)
-        
-        return {
-            'reliability_stats': reliability_stats,
-            'summary_table': summary_table,
-            'calculator': calculator
-        }
-        
-    except Exception as e:
-        logger.error(f"신뢰도 계산 중 오류: {e}")
-        return {'error': str(e)}
+    calculator = IndependentReliabilityCalculator(results_dir, survey_data_dir)
+    return calculator.run_complete_reliability_analysis()

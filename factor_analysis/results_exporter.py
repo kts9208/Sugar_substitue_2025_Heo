@@ -12,8 +12,53 @@ from typing import Dict, List, Optional, Any, Union
 import logging
 from datetime import datetime
 import json
+import os
 
 logger = logging.getLogger(__name__)
+
+
+def detect_reverse_coding_status() -> str:
+    """
+    역문항 처리 상태를 감지
+
+    Returns:
+        str: 'pre_reverse' (처리 전) 또는 'post_reverse' (처리 후)
+    """
+    try:
+        # 백업 디렉토리 존재 여부로 역문항 처리 여부 판단
+        backup_dir = Path("processed_data/survey_data_backup")
+        if not backup_dir.exists():
+            return "pre_reverse"
+
+        backup_subdirs = list(backup_dir.glob("backup_*"))
+        if not backup_subdirs:
+            return "pre_reverse"
+
+        # 가장 최신 백업과 현재 데이터 비교
+        latest_backup = max(backup_subdirs, key=lambda x: x.stat().st_mtime)
+
+        # 역문항이 있는 요인의 데이터 확인 (예: nutrition_knowledge의 q30)
+        current_data_file = Path("processed_data/survey_data/nutrition_knowledge.csv")
+        backup_data_file = latest_backup / "nutrition_knowledge.csv"
+
+        if current_data_file.exists() and backup_data_file.exists():
+            current_data = pd.read_csv(current_data_file)
+            backup_data = pd.read_csv(backup_data_file)
+
+            # q30 (역문항)의 평균값 비교
+            if 'q30' in current_data.columns and 'q30' in backup_data.columns:
+                current_mean = current_data['q30'].mean()
+                backup_mean = backup_data['q30'].mean()
+
+                # 역코딩되었다면 평균값이 크게 달라야 함
+                if abs(current_mean - backup_mean) > 0.5:
+                    return "post_reverse"
+
+        return "pre_reverse"
+
+    except Exception as e:
+        logger.warning(f"역문항 처리 상태 감지 중 오류: {e}")
+        return "unknown"
 
 
 class FactorResultsExporter:
@@ -22,7 +67,7 @@ class FactorResultsExporter:
     def __init__(self, output_dir: Union[str, Path] = None):
         """
         Results Exporter 초기화
-        
+
         Args:
             output_dir (Union[str, Path]): 결과 저장 디렉토리
         """
@@ -31,9 +76,13 @@ class FactorResultsExporter:
             self.output_dir = Path("factor_analysis_results")
         else:
             self.output_dir = Path(output_dir)
-        
+
         # 출력 디렉토리 생성
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # 역문항 처리 상태 감지
+        self.reverse_status = detect_reverse_coding_status()
+        logger.info(f"역문항 처리 상태: {self.reverse_status}")
         
     def export_factor_loadings(self, results: Dict[str, Any], 
                               filename: Optional[str] = None) -> Path:
@@ -54,7 +103,8 @@ class FactorResultsExporter:
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             analysis_type = results.get('analysis_type', 'factor_analysis')
-            filename = f"factor_loadings_{analysis_type}_{timestamp}.csv"
+            reverse_suffix = f"_{self.reverse_status}" if self.reverse_status != "unknown" else ""
+            filename = f"factor_loadings_{analysis_type}{reverse_suffix}_{timestamp}.csv"
         
         file_path = self.output_dir / filename
         
@@ -90,7 +140,8 @@ class FactorResultsExporter:
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             analysis_type = results.get('analysis_type', 'factor_analysis')
-            filename = f"fit_indices_{analysis_type}_{timestamp}.csv"
+            reverse_suffix = f"_{self.reverse_status}" if self.reverse_status != "unknown" else ""
+            filename = f"fit_indices_{analysis_type}{reverse_suffix}_{timestamp}.csv"
         
         file_path = self.output_dir / filename
         
@@ -169,7 +220,8 @@ class FactorResultsExporter:
         if base_filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             analysis_type = results.get('analysis_type', 'factor_analysis')
-            base_filename = f"factor_analysis_{analysis_type}_{timestamp}"
+            reverse_suffix = f"_{self.reverse_status}" if self.reverse_status != "unknown" else ""
+            base_filename = f"factor_analysis_{analysis_type}{reverse_suffix}_{timestamp}"
         
         saved_files = {}
         
@@ -235,7 +287,8 @@ class FactorResultsExporter:
         """
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"factor_analysis_summary_{timestamp}.txt"
+            reverse_suffix = f"_{self.reverse_status}" if self.reverse_status != "unknown" else ""
+            filename = f"factor_analysis_summary{reverse_suffix}_{timestamp}.txt"
         
         file_path = self.output_dir / filename
         
@@ -306,7 +359,8 @@ class FactorResultsExporter:
         """
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"factor_analysis_metadata_{timestamp}.json"
+            reverse_suffix = f"_{self.reverse_status}" if self.reverse_status != "unknown" else ""
+            filename = f"factor_analysis_metadata{reverse_suffix}_{timestamp}.json"
         
         file_path = self.output_dir / filename
         
@@ -314,6 +368,7 @@ class FactorResultsExporter:
         metadata = {
             'analysis_timestamp': datetime.now().isoformat(),
             'analysis_type': results.get('analysis_type', 'unknown'),
+            'reverse_coding_status': self.reverse_status,
             'model_info': results.get('model_info', {}),
             'fit_indices': results.get('fit_indices', {}),
             'factor_names': results.get('factor_names', results.get('factor_name', [])),

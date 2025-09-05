@@ -194,34 +194,12 @@ class SemopyAnalyzer:
             Dict[str, Any]: 신뢰도 통계 결과
         """
         try:
-            from .reliability_calculator import ReliabilityCalculator
-
-            calculator = ReliabilityCalculator()
-
-            # 모델 파라미터에서 요인 정보 추출
-            params = self.model.inspect()
-            loadings = params[params['op'] == '~']
-
-            # 요인별로 그룹화
-            factors = loadings['rval'].unique()
-            reliability_stats = {}
-
-            for factor_name in factors:
-                # 해당 요인의 문항들
-                factor_items = loadings[loadings['rval'] == factor_name]['lval'].tolist()
-
-                # 신뢰도 통계 계산
-                stats = calculator.calculate_factor_reliability_stats(
-                    self.model, clean_data, factor_name, factor_items
-                )
-                reliability_stats[factor_name] = stats
-
-            # 요약 테이블 생성
-            summary_table = calculator.create_reliability_summary_table(reliability_stats)
+            # 신뢰도 계산은 별도의 신뢰도 분석 단계에서 수행
+            logger.info("신뢰도 통계는 별도의 신뢰도 분석 단계에서 계산됩니다.")
 
             return {
-                'factor_stats': reliability_stats,
-                'summary_table': summary_table
+                'message': '신뢰도 통계는 별도 분석 단계에서 계산됩니다.',
+                'note': '요인분석 완료 후 run_independent_reliability_analysis.py를 실행하세요.'
             }
 
         except Exception as e:
