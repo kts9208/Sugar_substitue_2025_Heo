@@ -18,6 +18,9 @@ import os
 import glob
 from pathlib import Path
 
+# semopy 상관계수 계산 모듈 임포트 (필요시)
+# from .semopy_correlations import SemopyCorrelationExtractor
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,6 +38,10 @@ class IndependentReliabilityCalculator:
         """
         self.results_dir = Path(results_dir)
         self.survey_data_dir = Path(survey_data_dir)
+
+        # 요인간 상관계수 계산기는 별도 모듈로 분리됨
+        # self.correlation_calculator = SemopyCorrelationExtractor()
+
         logger.info("Independent Reliability Calculator 초기화 완료")
     
     def load_latest_analysis_results(self, prefer_post_reverse_coding: bool = True) -> Optional[Dict[str, Any]]:
@@ -492,12 +499,18 @@ class IndependentReliabilityCalculator:
             Optional[pd.DataFrame]: 요인간 상관계수 매트릭스 또는 None
         """
         try:
-            # 저장된 결과에서 요인간 상관계수 정보가 있는지 확인
-            # 현재는 저장되지 않으므로 None 반환하고 향후 개선 예정
             logger.info("semopy 모델에서 요인간 상관계수 추출 시도 중...")
-            logger.warning("현재 요인간 상관계수가 저장된 결과 파일에 포함되지 않음")
-            logger.info("원본 설문 데이터 기반 상관계수 계산으로 대체")
-            return None
+
+            # 상관계수 추출 기능은 별도 모듈로 분리됨
+            # correlations = self.correlation_calculator.extract_from_analysis_results(analysis_results)
+            correlations = None
+
+            if correlations is not None and not correlations.empty:
+                logger.info("semopy 모델에서 요인간 상관계수 추출 성공")
+                return correlations
+            else:
+                logger.warning("semopy 모델에서 요인간 상관계수 추출 실패")
+                return None
 
         except Exception as e:
             logger.error(f"모델에서 요인간 상관계수 추출 중 오류: {e}")
@@ -518,42 +531,19 @@ class IndependentReliabilityCalculator:
             pd.DataFrame: 요인간 상관관계 매트릭스
         """
         try:
-            # 1. 먼저 semopy 모델에서 직접 추출 시도
-            if analysis_results:
-                model_correlations = self.extract_factor_correlations_from_model(analysis_results)
-                if model_correlations is not None:
-                    logger.info("semopy 모델에서 요인간 상관계수 추출 성공")
-                    return model_correlations
+            # 종합적인 상관계수 계산 기능은 별도 모듈로 분리됨
+            # results = self.correlation_calculator.calculate_comprehensive(
+            #     loadings_df, survey_data, analysis_results
+            # )
+            results = {'correlations': pd.DataFrame()}
 
-            # 2. 원본 설문 데이터 기반 상관관계 계산 (fallback)
-            logger.info("원본 설문 데이터 기반으로 요인간 상관관계 계산")
+            correlations = results.get('correlations', pd.DataFrame())
 
-            factor_names = loadings_df['Factor'].unique()
-            correlations = pd.DataFrame(index=factor_names, columns=factor_names)
+            if correlations.empty:
+                logger.warning("요인간 상관계수 계산에 실패했습니다.")
+                return pd.DataFrame()
 
-            # 각 요인의 평균 점수 계산
-            factor_scores = {}
-            for factor_name in factor_names:
-                if factor_name in survey_data:
-                    factor_data = survey_data[factor_name]
-                    # 'no' 컬럼 제외하고 평균 계산
-                    item_columns = [col for col in factor_data.columns if col != 'no']
-                    factor_scores[factor_name] = factor_data[item_columns].mean(axis=1)
-
-            # 상관관계 계산
-            for i, factor1 in enumerate(factor_names):
-                for j, factor2 in enumerate(factor_names):
-                    if factor1 in factor_scores and factor2 in factor_scores:
-                        if i == j:
-                            correlations.loc[factor1, factor2] = 1.0
-                        else:
-                            corr = np.corrcoef(factor_scores[factor1], factor_scores[factor2])[0, 1]
-                            correlations.loc[factor1, factor2] = corr
-                    else:
-                        correlations.loc[factor1, factor2] = np.nan
-
-            logger.info("원본 데이터 기반 요인간 상관관계 계산 완료")
-            return correlations.astype(float)
+            return correlations
 
         except Exception as e:
             logger.error(f"요인간 상관관계 계산 중 오류: {e}")

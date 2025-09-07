@@ -1,0 +1,122 @@
+{
+  "timestamp": "20250906_134216",
+  "analysis_type": "semopy_factor_correlations",
+  "correlations": {
+    "health_concern": {
+      "health_concern": 1.0,
+      "perceived_benefit": 0.2939344900193155,
+      "purchase_intention": 0.3014924768750837,
+      "perceived_price": 0.1614058087182092,
+      "nutrition_knowledge": 0.06069937387156845
+    },
+    "perceived_benefit": {
+      "health_concern": 0.2939344900193155,
+      "perceived_benefit": 1.0,
+      "purchase_intention": 0.8918752117589878,
+      "perceived_price": 0.16416910909113586,
+      "nutrition_knowledge": -0.01163707339651346
+    },
+    "purchase_intention": {
+      "health_concern": 0.3014924768750837,
+      "perceived_benefit": 0.8918752117589878,
+      "purchase_intention": 1.0,
+      "perceived_price": 0.057058690961586854,
+      "nutrition_knowledge": 0.021707366209662748
+    },
+    "perceived_price": {
+      "health_concern": 0.1614058087182092,
+      "perceived_benefit": 0.16416910909113586,
+      "purchase_intention": 0.057058690961586854,
+      "perceived_price": 1.0,
+      "nutrition_knowledge": 0.00671515654705779
+    },
+    "nutrition_knowledge": {
+      "health_concern": 0.06069937387156845,
+      "perceived_benefit": -0.01163707339651346,
+      "purchase_intention": 0.021707366209662748,
+      "perceived_price": 0.00671515654705779,
+      "nutrition_knowledge": 1.0
+    }
+  },
+  "p_values": {
+    "health_concern": {
+      "health_concern": 0.0,
+      "perceived_benefit": 2.519613920881625e-05,
+      "purchase_intention": 5.361149415739064e-06,
+      "perceived_price": 0.01599767583863554,
+      "nutrition_knowledge": 0.33674105980436386
+    },
+    "perceived_benefit": {
+      "health_concern": 2.519613920881625e-05,
+      "perceived_benefit": 0.0,
+      "purchase_intention": 0.0,
+      "perceived_price": 0.01707901537402967,
+      "nutrition_knowledge": 0.8572908981617824
+    },
+    "purchase_intention": {
+      "health_concern": 5.361149415739064e-06,
+      "perceived_benefit": 0.0,
+      "purchase_intention": 0.0,
+      "perceived_price": 0.3766040050234256,
+      "nutrition_knowledge": 0.7251294197211884
+    },
+    "perceived_price": {
+      "health_concern": 0.01599767583863554,
+      "perceived_benefit": 0.01707901537402967,
+      "purchase_intention": 0.3766040050234256,
+      "perceived_price": 0.0,
+      "nutrition_knowledge": 0.9176773586489155
+    },
+    "nutrition_knowledge": {
+      "health_concern": 0.33674105980436386,
+      "perceived_benefit": 0.8572908981617824,
+      "purchase_intention": 0.7251294197211884,
+      "perceived_price": 0.9176773586489155,
+      "nutrition_knowledge": 0.0
+    }
+  },
+  "significant_correlations": [
+    {
+      "factor1": "health_concern",
+      "factor2": "perceived_benefit",
+      "correlation": 0.2939344900193155,
+      "p_value": 2.519613920881625e-05,
+      "significance_level": "***"
+    },
+    {
+      "factor1": "health_concern",
+      "factor2": "purchase_intention",
+      "correlation": 0.3014924768750837,
+      "p_value": 5.361149415739064e-06,
+      "significance_level": "***"
+    },
+    {
+      "factor1": "health_concern",
+      "factor2": "perceived_price",
+      "correlation": 0.1614058087182092,
+      "p_value": 0.01599767583863554,
+      "significance_level": "*"
+    },
+    {
+      "factor1": "perceived_benefit",
+      "factor2": "purchase_intention",
+      "correlation": 0.8918752117589878,
+      "p_value": 0.0,
+      "significance_level": "***"
+    },
+    {
+      "factor1": "perceived_benefit",
+      "factor2": "perceived_price",
+      "correlation": 0.16416910909113586,
+      "p_value": 0.01707901537402967,
+      "significance_level": "*"
+    }
+  ],
+  "summary_statistics": {
+    "n_factors": 5,
+    "n_significant_correlations": 20,
+    "max_correlation": 0.8918752117589878,
+    "min_correlation": -0.01163707339651346,
+    "mean_correlation": 0.19474206106560943
+  }
+}

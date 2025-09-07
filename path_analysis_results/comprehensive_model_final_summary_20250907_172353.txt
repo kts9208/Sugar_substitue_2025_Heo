@@ -1,0 +1,39 @@
+============================================================
+PATH ANALYSIS SUMMARY REPORT
+============================================================
+Generated: 2025-09-07 17:23:53
+
+MODEL INFORMATION
+------------------------------
+Sample Size: 330
+Variables: 33
+Estimator: MLW
+
+MODEL FIT INDICES
+------------------------------
+CHI_SQUARE: 1100.1786
+CFI: 0.8688
+TLI: 0.8556
+RMSEA: 0.0627
+AIC: 155.3323
+BIC: 463.0588
+
+PATH COEFFICIENTS SUMMARY
+------------------------------
+health_concern -> perceived_benefit: -0.0572
+nutrition_knowledge -> perceived_benefit: -0.7650***
+perceived_price -> perceived_benefit: 0.0111
+health_concern -> perceived_price: 0.1480*
+nutrition_knowledge -> perceived_price: -0.0076
+perceived_benefit -> perceived_price: 0.0425
+health_concern -> nutrition_knowledge: -0.6992***
+perceived_benefit -> nutrition_knowledge: 0.9065***
+health_concern -> purchase_intention: 0.2032**
+nutrition_knowledge -> purchase_intention: 0.2065**
+perceived_benefit -> purchase_intention: 1.0497***
+perceived_price -> purchase_intention: -0.0198
+nutrition_knowledge -> health_concern: 0.6288***
+perceived_benefit -> health_concern: -0.0511
+purchase_intention -> health_concern: 0.0027
+
+============================================================

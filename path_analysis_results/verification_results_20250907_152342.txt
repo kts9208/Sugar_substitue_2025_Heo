@@ -1,0 +1,28 @@
+경로분석 모듈 검증 결과
+========================================
+검증 일시: 2025-09-07 15:23:42
+변수: health_concern, perceived_benefit, purchase_intention
+관측치 수: 306
+
+적합도 지수:
+  chi_square: 111.2879
+  cfi: 0.9541
+  tli: 0.9355
+  rmsea: 0.0901
+  aic: 45.2726
+  bic: 130.9151
+
+경로계수:
+  health_concern -> perceived_benefit: 0.1994
+  perceived_benefit -> purchase_intention: 0.9622
+  health_concern -> purchase_intention: 0.2066
+  health_concern -> q6: 1.0000
+  health_concern -> q7: 1.0431
+  health_concern -> q8: 0.8476
+  health_concern -> q9: 0.9223
+  health_concern -> q10: 0.8272
+  health_concern -> q11: 1.0105
+  perceived_benefit -> q16: 1.0000
+  perceived_benefit -> q17: 1.1160
+  purchase_intention -> q18: 1.0000
+  purchase_intention -> q19: 1.0262

@@ -1,0 +1,2 @@
+﻿n_observations,n_variables,estimator,optimizer
+100,15,MLW,SLSQP

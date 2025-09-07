@@ -1,0 +1,7 @@
+﻿n_observations,n_variables,estimator,optimizer,model_spec
+306,10,MLW,SLSQP,"health_concern =~ q6 + q7 + q8 + q9 + q10 + q11
+perceived_benefit =~ q16 + q17
+purchase_intention =~ q18 + q19
+perceived_benefit ~ health_concern
+purchase_intention ~ perceived_benefit
+purchase_intention ~ health_concern"

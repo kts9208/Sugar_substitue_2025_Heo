@@ -1,0 +1,22 @@
+5개 요인 경로분석 결과
+========================================
+분석 일시: 2025-09-07 14:08:49
+관측치 수: 330
+변수 수: 33
+
+포함된 변수:
+  - health_concern
+  - perceived_benefit
+  - perceived_price
+  - nutrition_knowledge
+  - purchase_intention
+
+경로 관계:
+  - health_concern -> perceived_benefit
+  - health_concern -> perceived_price
+  - health_concern -> nutrition_knowledge
+  - nutrition_knowledge -> perceived_benefit
+  - perceived_benefit -> purchase_intention
+  - perceived_price -> purchase_intention
+  - nutrition_knowledge -> purchase_intention
+  - health_concern -> purchase_intention

@@ -1,0 +1,6 @@
+﻿Fit_Index,Value,Interpretation
+chi_square,25.5,Lower is better (non-significant preferred)
+df,12.0,See literature for interpretation
+p_value,0.012,Non-significant (>0.05) preferred - Poor fit (significant)
+cfi,0.95,"Good: >0.95, Acceptable: >0.90 - Acceptable fit"
+rmsea,0.065,"Good: <0.06, Acceptable: <0.08 - Acceptable fit"

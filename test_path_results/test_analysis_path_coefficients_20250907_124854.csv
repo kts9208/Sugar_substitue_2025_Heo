@@ -1,0 +1,4 @@
+﻿From_Variable,To_Variable,Path,Coefficient,Standard_Error,Z_Value,P_Value,Significance
+X,M,X -> M,0.45,,,0.001,**
+M,Y,M -> Y,0.38,,,0.003,**
+X,Y,X -> Y,0.22,,,0.045,*

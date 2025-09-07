@@ -1,0 +1,27 @@
+﻿Category,Item,Value
+Basic Info,Number of Latent Variables,5
+Basic Info,Latent Variables,"perceived_price, purchase_intention, nutrition_knowledge, perceived_benefit, health_concern"
+Path Coverage,Total Possible Paths,20
+Path Coverage,Current Paths in Model,8
+Path Coverage,Missing Paths,12
+Path Coverage,Coverage Ratio,40.0%
+Current Paths,Path 1,health_concern → perceived_benefit
+Current Paths,Path 2,nutrition_knowledge → perceived_benefit
+Current Paths,Path 3,health_concern → perceived_price
+Current Paths,Path 4,health_concern → nutrition_knowledge
+Current Paths,Path 5,perceived_benefit → purchase_intention
+Current Paths,Path 6,perceived_price → purchase_intention
+Current Paths,Path 7,nutrition_knowledge → purchase_intention
+Current Paths,Path 8,health_concern → purchase_intention
+Missing Paths,Missing Path 1,perceived_price → nutrition_knowledge
+Missing Paths,Missing Path 2,perceived_price → perceived_benefit
+Missing Paths,Missing Path 3,perceived_price → health_concern
+Missing Paths,Missing Path 4,purchase_intention → perceived_price
+Missing Paths,Missing Path 5,purchase_intention → nutrition_knowledge
+Missing Paths,Missing Path 6,purchase_intention → perceived_benefit
+Missing Paths,Missing Path 7,purchase_intention → health_concern
+Missing Paths,Missing Path 8,nutrition_knowledge → perceived_price
+Missing Paths,Missing Path 9,nutrition_knowledge → health_concern
+Missing Paths,Missing Path 10,perceived_benefit → perceived_price
+Missing Paths,Missing Path 11,perceived_benefit → nutrition_knowledge
+Missing Paths,Missing Path 12,perceived_benefit → health_concern
