@@ -35,6 +35,9 @@ from .reliability_calculator import (
     IndependentReliabilityCalculator,
     run_independent_reliability_analysis
 )
+from .semopy_correlations import (
+    SemopyCorrelationExtractor
+)
 
 __version__ = "1.0.0"
 __author__ = "Sugar Substitute Research Team"
@@ -80,5 +83,8 @@ __all__ = [
 
     # Reliability and Validity
     'IndependentReliabilityCalculator',
-    'run_independent_reliability_analysis'
+    'run_independent_reliability_analysis',
+
+    # semopy Correlations
+    'SemopyCorrelationExtractor'
 ]

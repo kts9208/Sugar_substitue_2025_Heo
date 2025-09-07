@@ -1,0 +1,41 @@
+{
+  "model_info": {
+    "n_observations": 100,
+    "n_variables": 15,
+    "estimator": "MLW",
+    "optimizer": "SLSQP"
+  },
+  "fit_indices": {
+    "chi_square": 25.5,
+    "df": 12,
+    "p_value": 0.012,
+    "cfi": 0.95,
+    "rmsea": 0.065
+  },
+  "path_coefficients": {
+    "paths": [
+      [
+        "X",
+        "M"
+      ],
+      [
+        "M",
+        "Y"
+      ],
+      [
+        "X",
+        "Y"
+      ]
+    ],
+    "coefficients": {
+      "0": 0.45,
+      "1": 0.38,
+      "2": 0.22
+    },
+    "p_values": {
+      "0": 0.001,
+      "1": 0.003,
+      "2": 0.045
+    }
+  }
+}

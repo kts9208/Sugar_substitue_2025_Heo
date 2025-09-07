@@ -98,7 +98,7 @@ class FactorModelSpecBuilder:
     def create_multi_factor_spec(self, factor_names: List[str],
                                 allow_correlations: bool = True) -> str:
         """
-        다중 요인에 대한 semopy 모델 스펙 생성
+        다중 요인에 대한 semopy 모델 스펙 생성 (동적 생성)
 
         Args:
             factor_names (List[str]): 요인 이름 리스트
@@ -107,6 +107,9 @@ class FactorModelSpecBuilder:
         Returns:
             str: semopy 모델 스펙 문자열
         """
+        from pathlib import Path
+        import pandas as pd
+
         # 부적합한 요인들 제외
         excluded_factors = ['dce_variables', 'demographics_1', 'demographics_2']
         valid_factors = [f for f in factor_names if f not in excluded_factors]
@@ -114,23 +117,44 @@ class FactorModelSpecBuilder:
         if not valid_factors:
             raise ValueError("요인분석에 적합한 요인이 없습니다")
 
-        spec_lines = []
-        spec_lines.append("# Multi-Factor Model")
+        # 실제 데이터에서 사용 가능한 문항들을 확인
+        survey_data_dir = Path("processed_data/survey_data")
+        factor_items = {}
 
-        # 각 요인의 측정 모델 (모든 loading 자유 추정)
+        factor_files = {
+            'health_concern': 'health_concern.csv',
+            'perceived_benefit': 'perceived_benefit.csv',
+            'purchase_intention': 'purchase_intention.csv',
+            'perceived_price': 'perceived_price.csv',
+            'nutrition_knowledge': 'nutrition_knowledge.csv'
+        }
+
         for factor_name in valid_factors:
-            if factor_name not in self.factor_config.get_all_factors():
-                logger.warning(f"알 수 없는 요인 건너뜀: {factor_name}")
-                continue
+            if factor_name in factor_files:
+                file_path = survey_data_dir / factor_files[factor_name]
+                if file_path.exists():
+                    data = pd.read_csv(file_path)
+                    items = [col for col in data.columns if col.startswith('q')]
+                    factor_items[factor_name] = items
+                else:
+                    logger.warning(f"데이터 파일을 찾을 수 없음: {file_path}")
 
-            questions = self.factor_config.get_factor_questions(factor_name)
-            spec_lines.append(f"{factor_name} =~ " + " + ".join(questions))
+        spec_lines = []
+        spec_lines.append("# Multi-Factor Model (Dynamic)")
+
+        # 각 요인의 측정 모델 (실제 데이터 기반)
+        for factor_name in valid_factors:
+            if factor_name in factor_items and factor_items[factor_name]:
+                questions = factor_items[factor_name]
+                spec_lines.append(f"{factor_name} =~ " + " + ".join(questions))
+            else:
+                logger.warning(f"요인 {factor_name}의 문항을 찾을 수 없음")
 
         # 잠재변수 분산을 1로 고정하여 모델 식별
         spec_lines.append("")
         spec_lines.append("# Factor variances fixed to 1 for identification")
         for factor_name in valid_factors:
-            if factor_name in self.factor_config.get_all_factors():
+            if factor_name in factor_items and factor_items[factor_name]:
                 spec_lines.append(f"{factor_name} ~~ 1*{factor_name}")
 
         # 요인간 상관관계 (기본적으로 허용)

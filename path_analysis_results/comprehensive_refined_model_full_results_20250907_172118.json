@@ -1,0 +1,1998 @@
+{
+  "model_info": {
+    "n_observations": 330,
+    "n_variables": 33,
+    "estimator": "MLW",
+    "optimizer": "SLSQP",
+    "model_spec": "health_concern =~ q6 + q7 + q8 + q9 + q10 + q11\nperceived_benefit =~ q16 + q17\nperceived_price =~ q27 + q28 + q29\nnutrition_knowledge =~ q30 + q31 + q32 + q33 + q34 + q35 + q36 + q37 + q38 + q39 + q40 + q41 + q42 + q43 + q44 + q45 + q46 + q47 + q48 + q49\npurchase_intention =~ q18 + q19\nperceived_benefit ~ nutrition_knowledge\nperceived_price ~ health_concern\nnutrition_knowledge ~ health_concern\nnutrition_knowledge ~ perceived_benefit\npurchase_intention ~ health_concern\npurchase_intention ~ nutrition_knowledge\npurchase_intention ~ perceived_benefit\nhealth_concern ~ nutrition_knowledge"
+  },
+  "fit_indices": {
+    "chi_square": {
+      "Value": 1100.5886791056168
+    },
+    "df": NaN,
+    "p_value": NaN,
+    "cfi": {
+      "Value": 0.870145839473318
+    },
+    "tli": {
+      "Value": 0.8592135590182995
+    },
+    "rmsea": {
+      "Value": 0.06188369535594394
+    },
+    "srmr": NaN,
+    "aic": {
+      "Value": 141.3297655811781
+    },
+    "bic": {
+      "Value": 422.462622011257
+    }
+  },
+  "path_coefficients": {
+    "coefficients": {
+      "0": -0.971859221017049,
+      "1": 0.15741664544778294,
+      "2": -0.434969320492324,
+      "3": 1.0579024376434834,
+      "4": 0.20573490395546937,
+      "5": 0.2074031190895947,
+      "6": 1.053668181307208,
+      "7": 0.342064972243439
+    },
+    "standard_errors": {
+      "0": 0.1494978138487248,
+      "1": 0.06168123441906651,
+      "2": 0.1777570394667571,
+      "3": 0.11395349228862751,
+      "4": 0.07499686793025857,
+      "5": 0.08437737896520452,
+      "6": 0.1281832015504802,
+      "7": 0.13465551071465448
+    },
+    "z_values": {
+      "0": -6.500825637450204,
+      "1": 2.552099466358462,
+      "2": -2.4469878762310393,
+      "3": 9.283633317307096,
+      "4": 2.7432466132324893,
+      "5": 2.458041736194074,
+      "6": 8.220017666542988,
+      "7": 2.540296868843051
+    },
+    "p_values": {
+      "0": 7.988032457717509e-11,
+      "1": 0.01070759452433978,
+      "2": 0.014405568465106544,
+      "3": 0.0,
+      "4": 0.006083497844859842,
+      "5": 0.013969693813861372,
+      "6": 2.220446049250313e-16,
+      "7": 0.011075841128039388
+    },
+    "paths": [
+      "('nutrition_knowledge', 'perceived_benefit')",
+      "('health_concern', 'perceived_price')",
+      "('health_concern', 'nutrition_knowledge')",
+      "('perceived_benefit', 'nutrition_knowledge')",
+      "('health_concern', 'purchase_intention')",
+      "('nutrition_knowledge', 'purchase_intention')",
+      "('perceived_benefit', 'purchase_intention')",
+      "('nutrition_knowledge', 'health_concern')"
+    ],
+    "n_structural_paths": 8,
+    "latent_variables": [
+      "perceived_price",
+      "purchase_intention",
+      "perceived_benefit",
+      "health_concern",
+      "nutrition_knowledge"
+    ]
+  },
+  "parameter_estimates": {
+    "all_parameters": [
+      {
+        "lval": "perceived_benefit",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": -0.971859221017049,
+        "Std. Err": 0.1494978138487248,
+        "z-value": -6.500825637450204,
+        "p-value": 7.988032457717509e-11
+      },
+      {
+        "lval": "perceived_price",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 0.15741664544778294,
+        "Std. Err": 0.06168123441906651,
+        "z-value": 2.552099466358462,
+        "p-value": 0.01070759452433978
+      },
+      {
+        "lval": "nutrition_knowledge",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": -0.434969320492324,
+        "Std. Err": 0.1777570394667571,
+        "z-value": -2.4469878762310393,
+        "p-value": 0.014405568465106544
+      },
+      {
+        "lval": "nutrition_knowledge",
+        "op": "~",
+        "rval": "perceived_benefit",
+        "Estimate": 1.0579024376434834,
+        "Std. Err": 0.11395349228862751,
+        "z-value": 9.283633317307096,
+        "p-value": 0.0
+      },
+      {
+        "lval": "purchase_intention",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 0.20573490395546937,
+        "Std. Err": 0.07499686793025857,
+        "z-value": 2.7432466132324893,
+        "p-value": 0.006083497844859842
+      },
+      {
+        "lval": "purchase_intention",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.2074031190895947,
+        "Std. Err": 0.08437737896520452,
+        "z-value": 2.458041736194074,
+        "p-value": 0.013969693813861372
+      },
+      {
+        "lval": "purchase_intention",
+        "op": "~",
+        "rval": "perceived_benefit",
+        "Estimate": 1.053668181307208,
+        "Std. Err": 0.1281832015504802,
+        "z-value": 8.220017666542988,
+        "p-value": 2.220446049250313e-16
+      },
+      {
+        "lval": "health_concern",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.342064972243439,
+        "Std. Err": 0.13465551071465448,
+        "z-value": 2.540296868843051,
+        "p-value": 0.011075841128039388
+      },
+      {
+        "lval": "q6",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 1.0,
+        "Std. Err": "-",
+        "z-value": "-",
+        "p-value": "-"
+      },
+      {
+        "lval": "q7",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 1.0358102081824743,
+        "Std. Err": 0.0690722421053439,
+        "z-value": 14.996041486357669,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q8",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 0.8974575785438685,
+        "Std. Err": 0.06664954984900444,
+        "z-value": 13.465320929602779,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q9",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 0.9675335250138987,
+        "Std. Err": 0.06318506496115034,
+        "z-value": 15.312693365014008,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q10",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 0.845919465482858,
+        "Std. Err": 0.0677441785316032,
+        "z-value": 12.486969121276493,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q11",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 1.0554418695077148,
+        "Std. Err": 0.0681213579013515,
+        "z-value": 15.4935530061018,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q16",
+        "op": "~",
+        "rval": "perceived_benefit",
+        "Estimate": 1.0,
+        "Std. Err": "-",
+        "z-value": "-",
+        "p-value": "-"
+      },
+      {
+        "lval": "q17",
+        "op": "~",
+        "rval": "perceived_benefit",
+        "Estimate": 1.3106091575163614,
+        "Std. Err": 0.15642902378828832,
+        "z-value": 8.378299152986896,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q27",
+        "op": "~",
+        "rval": "perceived_price",
+        "Estimate": 1.0,
+        "Std. Err": "-",
+        "z-value": "-",
+        "p-value": "-"
+      },
+      {
+        "lval": "q28",
+        "op": "~",
+        "rval": "perceived_price",
+        "Estimate": 0.6952976893650512,
+        "Std. Err": 0.07580391047420516,
+        "z-value": 9.172319541384047,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q29",
+        "op": "~",
+        "rval": "perceived_price",
+        "Estimate": 1.0252086610492093,
+        "Std. Err": 0.08750184755888486,
+        "z-value": 11.716423020069065,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q30",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.0,
+        "Std. Err": "-",
+        "z-value": "-",
+        "p-value": "-"
+      },
+      {
+        "lval": "q31",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.6044416580566456,
+        "Std. Err": 0.0908053199243957,
+        "z-value": 6.656456456001101,
+        "p-value": 2.8050894940179205e-11
+      },
+      {
+        "lval": "q32",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.9489146296557732,
+        "Std. Err": 0.09394466091442985,
+        "z-value": 10.100782954658785,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q33",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": -0.5716043440461666,
+        "Std. Err": 0.09497559453187225,
+        "z-value": -6.01843396566817,
+        "p-value": 1.761125245636208e-09
+      },
+      {
+        "lval": "q34",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.1614221630487855,
+        "Std. Err": 0.11157700232092757,
+        "z-value": 10.409153668582993,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q35",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.054027022785057,
+        "Std. Err": 0.09841009761023896,
+        "z-value": 10.710557639612395,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q36",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.0349423063210812,
+        "Std. Err": 0.10911981709194424,
+        "z-value": 9.484457854612746,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q37",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": -0.12079871760792991,
+        "Std. Err": 0.08917324450581339,
+        "z-value": -1.354652040261921,
+        "p-value": 0.1755284448043306
+      },
+      {
+        "lval": "q38",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.2828479740580756,
+        "Std. Err": 0.11712424276032236,
+        "z-value": 10.952881690533388,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q39",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.1952494544143786,
+        "Std. Err": 0.10911822677056912,
+        "z-value": 10.953710390808899,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q40",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": -0.3443212782428402,
+        "Std. Err": 0.08675127570158596,
+        "z-value": -3.9690629959528807,
+        "p-value": 7.215580590802517e-05
+      },
+      {
+        "lval": "q41",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.2913820148085867,
+        "Std. Err": 0.08187471590380098,
+        "z-value": 3.5588766518272656,
+        "p-value": 0.0003724443862291871
+      },
+      {
+        "lval": "q42",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.1894980971070415,
+        "Std. Err": 0.10817891230967104,
+        "z-value": 10.995655915739007,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q43",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.1365892750007909,
+        "Std. Err": 0.10340277777657826,
+        "z-value": 10.991864043010724,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q44",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.1882133860869883,
+        "Std. Err": 0.10598383706360087,
+        "z-value": 11.211269746373972,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q45",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.3372143282202862,
+        "Std. Err": 0.10665227158612046,
+        "z-value": 12.538076389005584,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q46",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.0426299156736096,
+        "Std. Err": 0.100780532098373,
+        "z-value": 10.345548827282846,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q47",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": -1.0734210389078107,
+        "Std. Err": 0.10251477001230432,
+        "z-value": -10.470891548295944,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q48",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.7048120447835126,
+        "Std. Err": 0.08806809293088465,
+        "z-value": 8.003035166534628,
+        "p-value": 1.1102230246251565e-15
+      },
+      {
+        "lval": "q49",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.7395122115508983,
+        "Std. Err": 0.10617982805108904,
+        "z-value": 6.964714721407469,
+        "p-value": 3.290701044988964e-12
+      },
+      {
+        "lval": "q18",
+        "op": "~",
+        "rval": "purchase_intention",
+        "Estimate": 1.0,
+        "Std. Err": "-",
+        "z-value": "-",
+        "p-value": "-"
+      },
+      {
+        "lval": "q19",
+        "op": "~",
+        "rval": "purchase_intention",
+        "Estimate": 1.0169749095302878,
+        "Std. Err": 0.05190488699836126,
+        "z-value": 19.593047366480207,
+        "p-value": 0.0
+      },
+      {
+        "lval": "health_concern",
+        "op": "~~",
+        "rval": "health_concern",
+        "Estimate": 0.4166180469393488,
+        "Std. Err": 0.056217575864842016,
+        "z-value": 7.410814865684866,
+        "p-value": 1.254552017826427e-13
+      },
+      {
+        "lval": "nutrition_knowledge",
+        "op": "~~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.76469865361218,
+        "Std. Err": 0.11505272723949757,
+        "z-value": 6.646506101621663,
+        "p-value": 3.001310311390171e-11
+      },
+      {
+        "lval": "perceived_benefit",
+        "op": "~~",
+        "rval": "perceived_benefit",
+        "Estimate": 0.5070525236055168,
+        "Std. Err": 0.10541741080441093,
+        "z-value": 4.809950460095065,
+        "p-value": 1.5096770746847454e-06
+      },
+      {
+        "lval": "perceived_price",
+        "op": "~~",
+        "rval": "perceived_price",
+        "Estimate": 0.37545161589244413,
+        "Std. Err": 0.0459524912340399,
+        "z-value": 8.170430063781899,
+        "p-value": 2.220446049250313e-16
+      },
+      {
+        "lval": "purchase_intention",
+        "op": "~~",
+        "rval": "purchase_intention",
+        "Estimate": 0.38822416292668094,
+        "Std. Err": 0.05486215854249021,
+        "z-value": 7.076355966178924,
+        "p-value": 1.4799272918253337e-12
+      },
+      {
+        "lval": "q10",
+        "op": "~~",
+        "rval": "q10",
+        "Estimate": 0.3293727110627549,
+        "Std. Err": 0.028285156497588625,
+        "z-value": 11.644719415966108,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q11",
+        "op": "~~",
+        "rval": "q11",
+        "Estimate": 0.2133539093824609,
+        "Std. Err": 0.02149841561605329,
+        "z-value": 9.924168979839667,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q16",
+        "op": "~~",
+        "rval": "q16",
+        "Estimate": 0.47728084346154664,
+        "Std. Err": 0.048874028670155244,
+        "z-value": 9.765531028204986,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q17",
+        "op": "~~",
+        "rval": "q17",
+        "Estimate": 0.3118412994351653,
+        "Std. Err": 0.05969667069779325,
+        "z-value": 5.223763666965587,
+        "p-value": 1.753225198353192e-07
+      },
+      {
+        "lval": "q18",
+        "op": "~~",
+        "rval": "q18",
+        "Estimate": 0.08841809972720381,
+        "Std. Err": 0.03284301928087743,
+        "z-value": 2.692142855939934,
+        "p-value": 0.007099452815018115
+      },
+      {
+        "lval": "q19",
+        "op": "~~",
+        "rval": "q19",
+        "Estimate": 0.1580504926775238,
+        "Std. Err": 0.03541898148687371,
+        "z-value": 4.462310491103056,
+        "p-value": 8.108062599765375e-06
+      },
+      {
+        "lval": "q27",
+        "op": "~~",
+        "rval": "q27",
+        "Estimate": 0.10465632194736417,
+        "Std. Err": 0.029612975879720522,
+        "z-value": 3.5341372771488495,
+        "p-value": 0.00040910853537634573
+      },
+      {
+        "lval": "q28",
+        "op": "~~",
+        "rval": "q28",
+        "Estimate": 0.45827198809024733,
+        "Std. Err": 0.038354058978943395,
+        "z-value": 11.948461265335514,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q29",
+        "op": "~~",
+        "rval": "q29",
+        "Estimate": 0.18278731451898345,
+        "Std. Err": 0.03314839429480374,
+        "z-value": 5.514213234217578,
+        "p-value": 3.503436318830211e-08
+      },
+      {
+        "lval": "q30",
+        "op": "~~",
+        "rval": "q30",
+        "Estimate": 0.4124512740037353,
+        "Std. Err": 0.03412734477948153,
+        "z-value": 12.085653796296183,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q31",
+        "op": "~~",
+        "rval": "q31",
+        "Estimate": 0.5953862556306366,
+        "Std. Err": 0.04705360213277214,
+        "z-value": 12.653361881582825,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q32",
+        "op": "~~",
+        "rval": "q32",
+        "Estimate": 0.4228311317124949,
+        "Std. Err": 0.034720112995280945,
+        "z-value": 12.178276371329396,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q33",
+        "op": "~~",
+        "rval": "q33",
+        "Estimate": 0.6820038979528451,
+        "Std. Err": 0.053720309647733215,
+        "z-value": 12.695457312371012,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q34",
+        "op": "~~",
+        "rval": "q34",
+        "Estimate": 0.5632396202289637,
+        "Std. Err": 0.04656812535386511,
+        "z-value": 12.094960145740982,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q35",
+        "op": "~~",
+        "rval": "q35",
+        "Estimate": 0.41213288858398434,
+        "Std. Err": 0.03434305844538282,
+        "z-value": 12.000471339132938,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q36",
+        "op": "~~",
+        "rval": "q36",
+        "Estimate": 0.63103779073848,
+        "Std. Err": 0.051246069323602275,
+        "z-value": 12.313876928616077,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q37",
+        "op": "~~",
+        "rval": "q37",
+        "Estimate": 0.7161637536038443,
+        "Std. Err": 0.05578092165040522,
+        "z-value": 12.838865554775266,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q38",
+        "op": "~~",
+        "rval": "q38",
+        "Estimate": 0.5533673738171899,
+        "Std. Err": 0.0464507399177589,
+        "z-value": 11.912993738851407,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q39",
+        "op": "~~",
+        "rval": "q39",
+        "Estimate": 0.48021084786229884,
+        "Std. Err": 0.04031091862104309,
+        "z-value": 11.912674388911263,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q40",
+        "op": "~~",
+        "rval": "q40",
+        "Estimate": 0.6337628217195644,
+        "Std. Err": 0.049563961780223556,
+        "z-value": 12.786766814908942,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q41",
+        "op": "~~",
+        "rval": "q41",
+        "Estimate": 0.5732147331105479,
+        "Std. Err": 0.04478610222772189,
+        "z-value": 12.798942184857921,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q42",
+        "op": "~~",
+        "rval": "q42",
+        "Estimate": 0.46742608226332977,
+        "Std. Err": 0.039291665562662684,
+        "z-value": 11.896316319448927,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q43",
+        "op": "~~",
+        "rval": "q43",
+        "Estimate": 0.42743989745174743,
+        "Std. Err": 0.03592592801905079,
+        "z-value": 11.897810885029523,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q44",
+        "op": "~~",
+        "rval": "q44",
+        "Estimate": 0.4259113608972671,
+        "Std. Err": 0.0360765145093976,
+        "z-value": 11.805779096938963,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q45",
+        "op": "~~",
+        "rval": "q45",
+        "Estimate": 0.2788367560017761,
+        "Std. Err": 0.025744312722511254,
+        "z-value": 10.831004074430995,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q46",
+        "op": "~~",
+        "rval": "q46",
+        "Estimate": 0.4651683997345768,
+        "Std. Err": 0.03840191139897823,
+        "z-value": 12.113157464730794,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q47",
+        "op": "~~",
+        "rval": "q47",
+        "Estimate": 0.46974718840701246,
+        "Std. Err": 0.038896823512777436,
+        "z-value": 12.07674935822525,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q48",
+        "op": "~~",
+        "rval": "q48",
+        "Estimate": 0.4956291714722639,
+        "Std. Err": 0.03955000785420375,
+        "z-value": 12.531708546982047,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q49",
+        "op": "~~",
+        "rval": "q49",
+        "Estimate": 0.7941581385776842,
+        "Std. Err": 0.06287922940880471,
+        "z-value": 12.629896168127209,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q6",
+        "op": "~~",
+        "rval": "q6",
+        "Estimate": 0.2712114851375529,
+        "Std. Err": 0.025129915344391022,
+        "z-value": 10.792375597369242,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q7",
+        "op": "~~",
+        "rval": "q7",
+        "Estimate": 0.2424927787634366,
+        "Std. Err": 0.023373801946114093,
+        "z-value": 10.374554354148476,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q8",
+        "op": "~~",
+        "rval": "q8",
+        "Estimate": 0.28508463335080353,
+        "Std. Err": 0.02527613647907617,
+        "z-value": 11.278805745313196,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q9",
+        "op": "~~",
+        "rval": "q9",
+        "Estimate": 0.1907469501380627,
+        "Std. Err": 0.018884007987100708,
+        "z-value": 10.100978047576405,
+        "p-value": 0.0
+      }
+    ],
+    "loadings": [],
+    "regressions": [
+      {
+        "lval": "perceived_benefit",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": -0.971859221017049,
+        "Std. Err": 0.1494978138487248,
+        "z-value": -6.500825637450204,
+        "p-value": 7.988032457717509e-11
+      },
+      {
+        "lval": "perceived_price",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 0.15741664544778294,
+        "Std. Err": 0.06168123441906651,
+        "z-value": 2.552099466358462,
+        "p-value": 0.01070759452433978
+      },
+      {
+        "lval": "nutrition_knowledge",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": -0.434969320492324,
+        "Std. Err": 0.1777570394667571,
+        "z-value": -2.4469878762310393,
+        "p-value": 0.014405568465106544
+      },
+      {
+        "lval": "nutrition_knowledge",
+        "op": "~",
+        "rval": "perceived_benefit",
+        "Estimate": 1.0579024376434834,
+        "Std. Err": 0.11395349228862751,
+        "z-value": 9.283633317307096,
+        "p-value": 0.0
+      },
+      {
+        "lval": "purchase_intention",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 0.20573490395546937,
+        "Std. Err": 0.07499686793025857,
+        "z-value": 2.7432466132324893,
+        "p-value": 0.006083497844859842
+      },
+      {
+        "lval": "purchase_intention",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.2074031190895947,
+        "Std. Err": 0.08437737896520452,
+        "z-value": 2.458041736194074,
+        "p-value": 0.013969693813861372
+      },
+      {
+        "lval": "purchase_intention",
+        "op": "~",
+        "rval": "perceived_benefit",
+        "Estimate": 1.053668181307208,
+        "Std. Err": 0.1281832015504802,
+        "z-value": 8.220017666542988,
+        "p-value": 2.220446049250313e-16
+      },
+      {
+        "lval": "health_concern",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.342064972243439,
+        "Std. Err": 0.13465551071465448,
+        "z-value": 2.540296868843051,
+        "p-value": 0.011075841128039388
+      },
+      {
+        "lval": "q6",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 1.0,
+        "Std. Err": "-",
+        "z-value": "-",
+        "p-value": "-"
+      },
+      {
+        "lval": "q7",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 1.0358102081824743,
+        "Std. Err": 0.0690722421053439,
+        "z-value": 14.996041486357669,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q8",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 0.8974575785438685,
+        "Std. Err": 0.06664954984900444,
+        "z-value": 13.465320929602779,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q9",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 0.9675335250138987,
+        "Std. Err": 0.06318506496115034,
+        "z-value": 15.312693365014008,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q10",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 0.845919465482858,
+        "Std. Err": 0.0677441785316032,
+        "z-value": 12.486969121276493,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q11",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 1.0554418695077148,
+        "Std. Err": 0.0681213579013515,
+        "z-value": 15.4935530061018,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q16",
+        "op": "~",
+        "rval": "perceived_benefit",
+        "Estimate": 1.0,
+        "Std. Err": "-",
+        "z-value": "-",
+        "p-value": "-"
+      },
+      {
+        "lval": "q17",
+        "op": "~",
+        "rval": "perceived_benefit",
+        "Estimate": 1.3106091575163614,
+        "Std. Err": 0.15642902378828832,
+        "z-value": 8.378299152986896,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q27",
+        "op": "~",
+        "rval": "perceived_price",
+        "Estimate": 1.0,
+        "Std. Err": "-",
+        "z-value": "-",
+        "p-value": "-"
+      },
+      {
+        "lval": "q28",
+        "op": "~",
+        "rval": "perceived_price",
+        "Estimate": 0.6952976893650512,
+        "Std. Err": 0.07580391047420516,
+        "z-value": 9.172319541384047,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q29",
+        "op": "~",
+        "rval": "perceived_price",
+        "Estimate": 1.0252086610492093,
+        "Std. Err": 0.08750184755888486,
+        "z-value": 11.716423020069065,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q30",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.0,
+        "Std. Err": "-",
+        "z-value": "-",
+        "p-value": "-"
+      },
+      {
+        "lval": "q31",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.6044416580566456,
+        "Std. Err": 0.0908053199243957,
+        "z-value": 6.656456456001101,
+        "p-value": 2.8050894940179205e-11
+      },
+      {
+        "lval": "q32",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.9489146296557732,
+        "Std. Err": 0.09394466091442985,
+        "z-value": 10.100782954658785,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q33",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": -0.5716043440461666,
+        "Std. Err": 0.09497559453187225,
+        "z-value": -6.01843396566817,
+        "p-value": 1.761125245636208e-09
+      },
+      {
+        "lval": "q34",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.1614221630487855,
+        "Std. Err": 0.11157700232092757,
+        "z-value": 10.409153668582993,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q35",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.054027022785057,
+        "Std. Err": 0.09841009761023896,
+        "z-value": 10.710557639612395,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q36",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.0349423063210812,
+        "Std. Err": 0.10911981709194424,
+        "z-value": 9.484457854612746,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q37",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": -0.12079871760792991,
+        "Std. Err": 0.08917324450581339,
+        "z-value": -1.354652040261921,
+        "p-value": 0.1755284448043306
+      },
+      {
+        "lval": "q38",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.2828479740580756,
+        "Std. Err": 0.11712424276032236,
+        "z-value": 10.952881690533388,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q39",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.1952494544143786,
+        "Std. Err": 0.10911822677056912,
+        "z-value": 10.953710390808899,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q40",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": -0.3443212782428402,
+        "Std. Err": 0.08675127570158596,
+        "z-value": -3.9690629959528807,
+        "p-value": 7.215580590802517e-05
+      },
+      {
+        "lval": "q41",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.2913820148085867,
+        "Std. Err": 0.08187471590380098,
+        "z-value": 3.5588766518272656,
+        "p-value": 0.0003724443862291871
+      },
+      {
+        "lval": "q42",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.1894980971070415,
+        "Std. Err": 0.10817891230967104,
+        "z-value": 10.995655915739007,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q43",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.1365892750007909,
+        "Std. Err": 0.10340277777657826,
+        "z-value": 10.991864043010724,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q44",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.1882133860869883,
+        "Std. Err": 0.10598383706360087,
+        "z-value": 11.211269746373972,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q45",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.3372143282202862,
+        "Std. Err": 0.10665227158612046,
+        "z-value": 12.538076389005584,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q46",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.0426299156736096,
+        "Std. Err": 0.100780532098373,
+        "z-value": 10.345548827282846,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q47",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": -1.0734210389078107,
+        "Std. Err": 0.10251477001230432,
+        "z-value": -10.470891548295944,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q48",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.7048120447835126,
+        "Std. Err": 0.08806809293088465,
+        "z-value": 8.003035166534628,
+        "p-value": 1.1102230246251565e-15
+      },
+      {
+        "lval": "q49",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.7395122115508983,
+        "Std. Err": 0.10617982805108904,
+        "z-value": 6.964714721407469,
+        "p-value": 3.290701044988964e-12
+      },
+      {
+        "lval": "q18",
+        "op": "~",
+        "rval": "purchase_intention",
+        "Estimate": 1.0,
+        "Std. Err": "-",
+        "z-value": "-",
+        "p-value": "-"
+      },
+      {
+        "lval": "q19",
+        "op": "~",
+        "rval": "purchase_intention",
+        "Estimate": 1.0169749095302878,
+        "Std. Err": 0.05190488699836126,
+        "z-value": 19.593047366480207,
+        "p-value": 0.0
+      }
+    ],
+    "covariances": [
+      {
+        "lval": "health_concern",
+        "op": "~~",
+        "rval": "health_concern",
+        "Estimate": 0.4166180469393488,
+        "Std. Err": 0.056217575864842016,
+        "z-value": 7.410814865684866,
+        "p-value": 1.254552017826427e-13
+      },
+      {
+        "lval": "nutrition_knowledge",
+        "op": "~~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.76469865361218,
+        "Std. Err": 0.11505272723949757,
+        "z-value": 6.646506101621663,
+        "p-value": 3.001310311390171e-11
+      },
+      {
+        "lval": "perceived_benefit",
+        "op": "~~",
+        "rval": "perceived_benefit",
+        "Estimate": 0.5070525236055168,
+        "Std. Err": 0.10541741080441093,
+        "z-value": 4.809950460095065,
+        "p-value": 1.5096770746847454e-06
+      },
+      {
+        "lval": "perceived_price",
+        "op": "~~",
+        "rval": "perceived_price",
+        "Estimate": 0.37545161589244413,
+        "Std. Err": 0.0459524912340399,
+        "z-value": 8.170430063781899,
+        "p-value": 2.220446049250313e-16
+      },
+      {
+        "lval": "purchase_intention",
+        "op": "~~",
+        "rval": "purchase_intention",
+        "Estimate": 0.38822416292668094,
+        "Std. Err": 0.05486215854249021,
+        "z-value": 7.076355966178924,
+        "p-value": 1.4799272918253337e-12
+      },
+      {
+        "lval": "q10",
+        "op": "~~",
+        "rval": "q10",
+        "Estimate": 0.3293727110627549,
+        "Std. Err": 0.028285156497588625,
+        "z-value": 11.644719415966108,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q11",
+        "op": "~~",
+        "rval": "q11",
+        "Estimate": 0.2133539093824609,
+        "Std. Err": 0.02149841561605329,
+        "z-value": 9.924168979839667,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q16",
+        "op": "~~",
+        "rval": "q16",
+        "Estimate": 0.47728084346154664,
+        "Std. Err": 0.048874028670155244,
+        "z-value": 9.765531028204986,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q17",
+        "op": "~~",
+        "rval": "q17",
+        "Estimate": 0.3118412994351653,
+        "Std. Err": 0.05969667069779325,
+        "z-value": 5.223763666965587,
+        "p-value": 1.753225198353192e-07
+      },
+      {
+        "lval": "q18",
+        "op": "~~",
+        "rval": "q18",
+        "Estimate": 0.08841809972720381,
+        "Std. Err": 0.03284301928087743,
+        "z-value": 2.692142855939934,
+        "p-value": 0.007099452815018115
+      },
+      {
+        "lval": "q19",
+        "op": "~~",
+        "rval": "q19",
+        "Estimate": 0.1580504926775238,
+        "Std. Err": 0.03541898148687371,
+        "z-value": 4.462310491103056,
+        "p-value": 8.108062599765375e-06
+      },
+      {
+        "lval": "q27",
+        "op": "~~",
+        "rval": "q27",
+        "Estimate": 0.10465632194736417,
+        "Std. Err": 0.029612975879720522,
+        "z-value": 3.5341372771488495,
+        "p-value": 0.00040910853537634573
+      },
+      {
+        "lval": "q28",
+        "op": "~~",
+        "rval": "q28",
+        "Estimate": 0.45827198809024733,
+        "Std. Err": 0.038354058978943395,
+        "z-value": 11.948461265335514,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q29",
+        "op": "~~",
+        "rval": "q29",
+        "Estimate": 0.18278731451898345,
+        "Std. Err": 0.03314839429480374,
+        "z-value": 5.514213234217578,
+        "p-value": 3.503436318830211e-08
+      },
+      {
+        "lval": "q30",
+        "op": "~~",
+        "rval": "q30",
+        "Estimate": 0.4124512740037353,
+        "Std. Err": 0.03412734477948153,
+        "z-value": 12.085653796296183,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q31",
+        "op": "~~",
+        "rval": "q31",
+        "Estimate": 0.5953862556306366,
+        "Std. Err": 0.04705360213277214,
+        "z-value": 12.653361881582825,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q32",
+        "op": "~~",
+        "rval": "q32",
+        "Estimate": 0.4228311317124949,
+        "Std. Err": 0.034720112995280945,
+        "z-value": 12.178276371329396,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q33",
+        "op": "~~",
+        "rval": "q33",
+        "Estimate": 0.6820038979528451,
+        "Std. Err": 0.053720309647733215,
+        "z-value": 12.695457312371012,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q34",
+        "op": "~~",
+        "rval": "q34",
+        "Estimate": 0.5632396202289637,
+        "Std. Err": 0.04656812535386511,
+        "z-value": 12.094960145740982,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q35",
+        "op": "~~",
+        "rval": "q35",
+        "Estimate": 0.41213288858398434,
+        "Std. Err": 0.03434305844538282,
+        "z-value": 12.000471339132938,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q36",
+        "op": "~~",
+        "rval": "q36",
+        "Estimate": 0.63103779073848,
+        "Std. Err": 0.051246069323602275,
+        "z-value": 12.313876928616077,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q37",
+        "op": "~~",
+        "rval": "q37",
+        "Estimate": 0.7161637536038443,
+        "Std. Err": 0.05578092165040522,
+        "z-value": 12.838865554775266,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q38",
+        "op": "~~",
+        "rval": "q38",
+        "Estimate": 0.5533673738171899,
+        "Std. Err": 0.0464507399177589,
+        "z-value": 11.912993738851407,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q39",
+        "op": "~~",
+        "rval": "q39",
+        "Estimate": 0.48021084786229884,
+        "Std. Err": 0.04031091862104309,
+        "z-value": 11.912674388911263,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q40",
+        "op": "~~",
+        "rval": "q40",
+        "Estimate": 0.6337628217195644,
+        "Std. Err": 0.049563961780223556,
+        "z-value": 12.786766814908942,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q41",
+        "op": "~~",
+        "rval": "q41",
+        "Estimate": 0.5732147331105479,
+        "Std. Err": 0.04478610222772189,
+        "z-value": 12.798942184857921,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q42",
+        "op": "~~",
+        "rval": "q42",
+        "Estimate": 0.46742608226332977,
+        "Std. Err": 0.039291665562662684,
+        "z-value": 11.896316319448927,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q43",
+        "op": "~~",
+        "rval": "q43",
+        "Estimate": 0.42743989745174743,
+        "Std. Err": 0.03592592801905079,
+        "z-value": 11.897810885029523,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q44",
+        "op": "~~",
+        "rval": "q44",
+        "Estimate": 0.4259113608972671,
+        "Std. Err": 0.0360765145093976,
+        "z-value": 11.805779096938963,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q45",
+        "op": "~~",
+        "rval": "q45",
+        "Estimate": 0.2788367560017761,
+        "Std. Err": 0.025744312722511254,
+        "z-value": 10.831004074430995,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q46",
+        "op": "~~",
+        "rval": "q46",
+        "Estimate": 0.4651683997345768,
+        "Std. Err": 0.03840191139897823,
+        "z-value": 12.113157464730794,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q47",
+        "op": "~~",
+        "rval": "q47",
+        "Estimate": 0.46974718840701246,
+        "Std. Err": 0.038896823512777436,
+        "z-value": 12.07674935822525,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q48",
+        "op": "~~",
+        "rval": "q48",
+        "Estimate": 0.4956291714722639,
+        "Std. Err": 0.03955000785420375,
+        "z-value": 12.531708546982047,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q49",
+        "op": "~~",
+        "rval": "q49",
+        "Estimate": 0.7941581385776842,
+        "Std. Err": 0.06287922940880471,
+        "z-value": 12.629896168127209,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q6",
+        "op": "~~",
+        "rval": "q6",
+        "Estimate": 0.2712114851375529,
+        "Std. Err": 0.025129915344391022,
+        "z-value": 10.792375597369242,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q7",
+        "op": "~~",
+        "rval": "q7",
+        "Estimate": 0.2424927787634366,
+        "Std. Err": 0.023373801946114093,
+        "z-value": 10.374554354148476,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q8",
+        "op": "~~",
+        "rval": "q8",
+        "Estimate": 0.28508463335080353,
+        "Std. Err": 0.02527613647907617,
+        "z-value": 11.278805745313196,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q9",
+        "op": "~~",
+        "rval": "q9",
+        "Estimate": 0.1907469501380627,
+        "Std. Err": 0.018884007987100708,
+        "z-value": 10.100978047576405,
+        "p-value": 0.0
+      }
+    ]
+  },
+  "standardized_results": {
+    "standardized_coefficients": {},
+    "standardized_paths": [
+      {
+        "lval": "perceived_benefit",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": -0.971859221017049,
+        "Est. Std": -0.9534914369225572,
+        "Std. Err": 0.1494978138487248,
+        "z-value": -6.500825637450204,
+        "p-value": 7.988032457717509e-11
+      },
+      {
+        "lval": "perceived_price",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 0.15741664544778294,
+        "Est. Std": 0.15930121904615926,
+        "Std. Err": 0.06168123441906651,
+        "z-value": 2.552099466358462,
+        "p-value": 0.01070759452433978
+      },
+      {
+        "lval": "nutrition_knowledge",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": -0.434969320492324,
+        "Est. Std": -0.5006862112582351,
+        "Std. Err": 0.1777570394667571,
+        "z-value": -2.4469878762310393,
+        "p-value": 0.014405568465106544
+      },
+      {
+        "lval": "nutrition_knowledge",
+        "op": "~",
+        "rval": "perceived_benefit",
+        "Estimate": 1.0579024376434834,
+        "Est. Std": 1.0782815651481703,
+        "Std. Err": 0.11395349228862751,
+        "z-value": 9.283633317307096,
+        "p-value": 0.0
+      },
+      {
+        "lval": "purchase_intention",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 0.20573490395546937,
+        "Est. Std": 0.14700750394594292,
+        "Std. Err": 0.07499686793025857,
+        "z-value": 2.7432466132324893,
+        "p-value": 0.006083497844859842
+      },
+      {
+        "lval": "purchase_intention",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.2074031190895947,
+        "Est. Std": 0.1287477961776693,
+        "Std. Err": 0.08437737896520452,
+        "z-value": 2.458041736194074,
+        "p-value": 0.013969693813861372
+      },
+      {
+        "lval": "purchase_intention",
+        "op": "~",
+        "rval": "perceived_benefit",
+        "Estimate": 1.053668181307208,
+        "Est. Std": 0.6666761954789279,
+        "Std. Err": 0.1281832015504802,
+        "z-value": 8.220017666542988,
+        "p-value": 2.220446049250313e-16
+      },
+      {
+        "lval": "health_concern",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.342064972243439,
+        "Est. Std": 0.29716769744277066,
+        "Std. Err": 0.13465551071465448,
+        "z-value": 2.540296868843051,
+        "p-value": 0.011075841128039388
+      },
+      {
+        "lval": "q6",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 1.0,
+        "Est. Std": 0.7698071415892491,
+        "Std. Err": "-",
+        "z-value": "-",
+        "p-value": "-"
+      },
+      {
+        "lval": "q7",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 1.0358102081824743,
+        "Est. Std": 0.7973489934863477,
+        "Std. Err": 0.0690722421053439,
+        "z-value": 14.996041486357669,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q8",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 0.8974575785438685,
+        "Est. Std": 0.726010404765699,
+        "Std. Err": 0.06664954984900444,
+        "z-value": 13.465320929602779,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q9",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 0.9675335250138987,
+        "Est. Std": 0.8120422202373908,
+        "Std. Err": 0.06318506496115034,
+        "z-value": 15.312693365014008,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q10",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 0.845919465482858,
+        "Est. Std": 0.6793541634446633,
+        "Std. Err": 0.0677441785316032,
+        "z-value": 12.486969121276493,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q11",
+        "op": "~",
+        "rval": "health_concern",
+        "Estimate": 1.0554418695077148,
+        "Est. Std": 0.8204753523355581,
+        "Std. Err": 0.0681213579013515,
+        "z-value": 15.4935530061018,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q16",
+        "op": "~",
+        "rval": "perceived_benefit",
+        "Estimate": 1.0,
+        "Est. Std": 0.6270878647701457,
+        "Std. Err": "-",
+        "z-value": "-",
+        "p-value": "-"
+      },
+      {
+        "lval": "q17",
+        "op": "~",
+        "rval": "perceived_benefit",
+        "Estimate": 1.3106091575163614,
+        "Est. Std": 0.7938224887589387,
+        "Std. Err": 0.15642902378828832,
+        "z-value": 8.378299152986896,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q27",
+        "op": "~",
+        "rval": "perceived_price",
+        "Estimate": 1.0,
+        "Est. Std": 0.8867722432376086,
+        "Std. Err": "-",
+        "z-value": "-",
+        "p-value": "-"
+      },
+      {
+        "lval": "q28",
+        "op": "~",
+        "rval": "perceived_price",
+        "Estimate": 0.6952976893650512,
+        "Est. Std": 0.5375464035396503,
+        "Std. Err": 0.07580391047420516,
+        "z-value": 9.172319541384047,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q29",
+        "op": "~",
+        "rval": "perceived_price",
+        "Estimate": 1.0252086610492093,
+        "Est. Std": 0.8300414890040133,
+        "Std. Err": 0.08750184755888486,
+        "z-value": 11.716423020069065,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q30",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.0,
+        "Est. Std": 0.6474880940941987,
+        "Std. Err": "-",
+        "z-value": "-",
+        "p-value": "-"
+      },
+      {
+        "lval": "q31",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.6044416580566456,
+        "Est. Std": 0.3930401058419234,
+        "Std. Err": 0.0908053199243957,
+        "z-value": 6.656456456001101,
+        "p-value": 2.8050894940179205e-11
+      },
+      {
+        "lval": "q32",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.9489146296557732,
+        "Est. Std": 0.6229171644386909,
+        "Std. Err": 0.09394466091442985,
+        "z-value": 10.100782954658785,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q33",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": -0.5716043440461666,
+        "Est. Std": -0.35331922387705084,
+        "Std. Err": 0.09497559453187225,
+        "z-value": -6.01843396566817,
+        "p-value": 1.761125245636208e-09
+      },
+      {
+        "lval": "q34",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.1614221630487855,
+        "Est. Std": 0.6451743160354598,
+        "Std. Err": 0.11157700232092757,
+        "z-value": 10.409153668582993,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q35",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.054027022785057,
+        "Est. Std": 0.6672704530958656,
+        "Std. Err": 0.09841009761023896,
+        "z-value": 10.710557639612395,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q36",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.0349423063210812,
+        "Est. Std": 0.5794095190961074,
+        "Std. Err": 0.10911981709194424,
+        "z-value": 9.484457854612746,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q37",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": -0.12079871760792991,
+        "Est. Std": -0.07765382327794905,
+        "Std. Err": 0.08917324450581339,
+        "z-value": -1.354652040261921,
+        "p-value": 0.1755284448043306
+      },
+      {
+        "lval": "q38",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.2828479740580756,
+        "Est. Std": 0.6852955999138721,
+        "Std. Err": 0.11712424276032236,
+        "z-value": 10.952881690533388,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q39",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.1952494544143786,
+        "Est. Std": 0.6853576563758992,
+        "Std. Err": 0.10911822677056912,
+        "z-value": 10.953710390808899,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q40",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": -0.3443212782428402,
+        "Est. Std": -0.229694537887544,
+        "Std. Err": 0.08675127570158596,
+        "z-value": -3.9690629959528807,
+        "p-value": 7.215580590802517e-05
+      },
+      {
+        "lval": "q41",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.2913820148085867,
+        "Est. Std": 0.2055194323221287,
+        "Std. Err": 0.08187471590380098,
+        "z-value": 3.5588766518272656,
+        "p-value": 0.0003724443862291871
+      },
+      {
+        "lval": "q42",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.1894980971070415,
+        "Est. Std": 0.6885024752025882,
+        "Std. Err": 0.10817891230967104,
+        "z-value": 10.995655915739007,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q43",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.1365892750007909,
+        "Est. Std": 0.6882178791549685,
+        "Std. Err": 0.10340277777657826,
+        "z-value": 10.991864043010724,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q44",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.1882133860869883,
+        "Est. Std": 0.7047868527541014,
+        "Std. Err": 0.10598383706360087,
+        "z-value": 11.211269746373972,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q45",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.3372143282202862,
+        "Est. Std": 0.8101136053422826,
+        "Std. Err": 0.10665227158612046,
+        "z-value": 12.538076389005584,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q46",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 1.0426299156736096,
+        "Est. Std": 0.6405553040352205,
+        "Std. Err": 0.100780532098373,
+        "z-value": 10.345548827282846,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q47",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": -1.0734210389078107,
+        "Est. Std": -0.6496721381888688,
+        "Std. Err": 0.10251477001230432,
+        "z-value": -10.470891548295944,
+        "p-value": 0.0
+      },
+      {
+        "lval": "q48",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.7048120447835126,
+        "Est. Std": 0.4794100500920815,
+        "Std. Err": 0.08806809293088465,
+        "z-value": 8.003035166534628,
+        "p-value": 1.1102230246251565e-15
+      },
+      {
+        "lval": "q49",
+        "op": "~",
+        "rval": "nutrition_knowledge",
+        "Estimate": 0.7395122115508983,
+        "Est. Std": 0.4124890755265885,
+        "Std. Err": 0.10617982805108904,
+        "z-value": 6.964714721407469,
+        "p-value": 3.290701044988964e-12
+      },
+      {
+        "lval": "q18",
+        "op": "~",
+        "rval": "purchase_intention",
+        "Estimate": 1.0,
+        "Est. Std": 0.9472684668502482,
+        "Std. Err": "-",
+        "z-value": "-",
+        "p-value": "-"
+      },
+      {
+        "lval": "q19",
+        "op": "~",
+        "rval": "purchase_intention",
+        "Estimate": 1.0169749095302878,
+        "Est. Std": 0.913716178776271,
+        "Std. Err": 0.05190488699836126,
+        "z-value": 19.593047366480207,
+        "p-value": 0.0
+      }
+    ]
+  },
+  "path_analysis": {
+    "latent_variables": [
+      "perceived_price",
+      "purchase_intention",
+      "perceived_benefit",
+      "health_concern",
+      "nutrition_knowledge"
+    ],
+    "n_latent_variables": 5,
+    "all_possible_paths": [
+      "('perceived_price', 'purchase_intention')",
+      "('perceived_price', 'perceived_benefit')",
+      "('perceived_price', 'health_concern')",
+      "('perceived_price', 'nutrition_knowledge')",
+      "('purchase_intention', 'perceived_price')",
+      "('purchase_intention', 'perceived_benefit')",
+      "('purchase_intention', 'health_concern')",
+      "('purchase_intention', 'nutrition_knowledge')",
+      "('perceived_benefit', 'perceived_price')",
+      "('perceived_benefit', 'purchase_intention')",
+      "('perceived_benefit', 'health_concern')",
+      "('perceived_benefit', 'nutrition_knowledge')",
+      "('health_concern', 'perceived_price')",
+      "('health_concern', 'purchase_intention')",
+      "('health_concern', 'perceived_benefit')",
+      "('health_concern', 'nutrition_knowledge')",
+      "('nutrition_knowledge', 'perceived_price')",
+      "('nutrition_knowledge', 'purchase_intention')",
+      "('nutrition_knowledge', 'perceived_benefit')",
+      "('nutrition_knowledge', 'health_concern')"
+    ],
+    "n_possible_paths": 20,
+    "current_paths": [
+      "('nutrition_knowledge', 'perceived_benefit')",
+      "('health_concern', 'perceived_price')",
+      "('health_concern', 'nutrition_knowledge')",
+      "('perceived_benefit', 'nutrition_knowledge')",
+      "('health_concern', 'purchase_intention')",
+      "('nutrition_knowledge', 'purchase_intention')",
+      "('perceived_benefit', 'purchase_intention')",
+      "('nutrition_knowledge', 'health_concern')"
+    ],
+    "n_current_paths": 8,
+    "missing_paths": [
+      "('perceived_price', 'purchase_intention')",
+      "('perceived_price', 'perceived_benefit')",
+      "('perceived_price', 'health_concern')",
+      "('perceived_price', 'nutrition_knowledge')",
+      "('purchase_intention', 'perceived_price')",
+      "('purchase_intention', 'perceived_benefit')",
+      "('purchase_intention', 'health_concern')",
+      "('purchase_intention', 'nutrition_knowledge')",
+      "('perceived_benefit', 'perceived_price')",
+      "('perceived_benefit', 'health_concern')",
+      "('health_concern', 'perceived_benefit')",
+      "('nutrition_knowledge', 'perceived_price')"
+    ],
+    "n_missing_paths": 12,
+    "coverage_ratio": 0.4
+  }
+}

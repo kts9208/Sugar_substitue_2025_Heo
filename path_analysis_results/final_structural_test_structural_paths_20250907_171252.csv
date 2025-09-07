@@ -1,0 +1,11 @@
+﻿From_Variable,To_Variable,Path,Coefficient,Standard_Error,Z_Value,P_Value,Significance
+health_concern,perceived_benefit,health_concern -> perceived_benefit,0.17549914883892725,0.06269707618153851,2.799160017095099,0.005123573997347641,**
+nutrition_knowledge,perceived_benefit,nutrition_knowledge -> perceived_benefit,-0.15438381622955163,0.07063320139387512,-2.185711721694001,0.028836702776258605,*
+health_concern,perceived_price,health_concern -> perceived_price,0.1574156625184934,0.061684088864106146,2.5519654324916408,0.01071171457865061,*
+health_concern,nutrition_knowledge,health_concern -> nutrition_knowledge,0.04720642315391571,0.05242623461711133,0.900435125615671,0.36788873501969777,
+perceived_benefit,purchase_intention,perceived_benefit -> purchase_intention,1.0529388792559315,0.12810113600565645,8.219590489823744,2.220446049250313e-16,***
+perceived_price,purchase_intention,perceived_price -> purchase_intention,-0.0050491160720749365,0.07180598226663934,-0.07031609223386964,0.9439420744595222,
+nutrition_knowledge,purchase_intention,nutrition_knowledge -> purchase_intention,0.2073689797365025,0.0843732268944354,2.4577580752422445,0.013980731907898392,*
+health_concern,purchase_intention,health_concern -> purchase_intention,0.20603379644542436,0.07600829931048748,2.7106749961748653,0.0067146405916815866,**
+METADATA,INFO,Total Structural Paths: 8,8.0,,,,
+LATENT_VARS,LIST,"Variables: purchase_intention, nutrition_knowledge, health_concern, perceived_price, perceived_benefit",5.0,,,,

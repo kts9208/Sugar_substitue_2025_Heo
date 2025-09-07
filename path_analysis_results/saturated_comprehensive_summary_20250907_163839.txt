@@ -1,0 +1,34 @@
+SATURATED 모델 종합 분석 결과
+==================================================
+분석 일시: 2025-09-07 16:38:39
+관측치 수: 330
+변수 수: 33
+
+구조적 경로: 20개
+  health_concern → perceived_benefit: -0.1722
+  perceived_price → perceived_benefit: 0.0456
+  nutrition_knowledge → perceived_benefit: -0.6609
+  purchase_intention → perceived_benefit: 0.3601
+  health_concern → perceived_price: 0.1273
+  perceived_benefit → perceived_price: 0.0139
+  nutrition_knowledge → perceived_price: -0.0473
+  purchase_intention → perceived_price: 0.0129
+  health_concern → nutrition_knowledge: -0.4933
+  perceived_benefit → nutrition_knowledge: 1.2615
+  perceived_price → nutrition_knowledge: 0.0219
+  purchase_intention → nutrition_knowledge: -0.2989
+  health_concern → purchase_intention: 0.1262
+  perceived_benefit → purchase_intention: 0.4381
+  perceived_price → purchase_intention: -0.0140
+  nutrition_knowledge → purchase_intention: 0.0462
+  perceived_benefit → health_concern: 0.0166
+  perceived_price → health_concern: 0.0089
+  nutrition_knowledge → health_concern: 0.5116
+  purchase_intention → health_concern: 0.0993
+
+측정모델: 33개 경로
+  health_concern: 6개 문항
+  perceived_benefit: 2개 문항
+  perceived_price: 3개 문항
+  nutrition_knowledge: 20개 문항
+  purchase_intention: 2개 문항
