@@ -1,18 +1,14 @@
 """
-Path Analysis Visualization Module
+Path Analysis Visualization Module (semopy 전용)
 
-경로분석 결과를 시각화하는 모듈입니다.
-경로 다이어그램, 효과 차트, 적합도 지수 시각화 등을 제공합니다.
+semopy를 사용한 경로분석 결과의 시각화를 제공합니다.
+semopy의 내장 semplot 기능을 활용하여 다양한 경로 다이어그램을 생성합니다.
 """
 
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from typing import Dict, List, Optional, Any, Tuple, Union
+from typing import Dict, List, Optional, Any, Union
 import logging
 from pathlib import Path
-import warnings
+import pandas as pd
 
 # semopy 가시화 관련 임포트
 try:
@@ -31,10 +27,6 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# 한글 폰트 설정
-plt.rcParams['font.family'] = ['DejaVu Sans', 'Malgun Gothic', 'AppleGothic']
-plt.rcParams['axes.unicode_minus'] = False
-
 
 class PathAnalysisVisualizer:
     """경로분석 시각화 클래스"""
@@ -49,9 +41,7 @@ class PathAnalysisVisualizer:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
-        # 시각화 스타일 설정
-        plt.style.use('default')
-        sns.set_palette("husl")
+        # semopy 시각화 전용 (matplotlib 불필요)
         
         logger.info(f"PathAnalysisVisualizer 초기화 완료: {self.output_dir}")
     
@@ -121,376 +111,476 @@ class PathAnalysisVisualizer:
             logger.error(f"시각화 중 오류: {e}")
             raise
     
-    def create_path_diagram(self, 
+    def create_path_diagram(self,
                           model: Model,
                           filename: str,
-                          format: str = 'png') -> Optional[Path]:
+                          plot_covs: bool = True,
+                          plot_exos: bool = True,
+                          plot_ests: bool = True,
+                          std_ests: bool = True,
+                          engine: str = 'dot',
+                          latshape: str = 'circle',
+                          show: bool = False,
+                          structural_only: bool = False) -> Optional[Path]:
         """
         경로 다이어그램 생성 (semopy 사용)
-        
+
         Args:
             model (Model): 적합된 semopy 모델
-            filename (str): 파일명
-            format (str): 파일 형식
-            
+            filename (str): 파일명 (확장자 제외)
+            plot_covs (bool): 공분산 표시 여부 (기본값: True)
+            plot_exos (bool): 외생변수 표시 여부
+            plot_ests (bool): 추정값 표시 여부
+            std_ests (bool): 표준화 추정값 사용 여부
+            engine (str): Graphviz 엔진 ('dot', 'circo', 'neato' 등)
+            latshape (str): 잠재변수 모양 ('circle', 'ellipse', 'box')
+            show (bool): 즉시 표시 여부
+            structural_only (bool): True면 경로계수만 표시 (요인적재량 제외)
+
         Returns:
             Optional[Path]: 생성된 파일 경로
         """
         if not SEMOPY_AVAILABLE:
             logger.warning("semopy를 사용할 수 없어 경로 다이어그램을 생성할 수 없습니다.")
             return None
-        
+
         try:
-            file_path = self.output_dir / f"{filename}.{format}"
-            
+            # semplot은 filename에 확장자가 포함되어야 함
+            file_path = self.output_dir / f"{filename}.png"
+
+            # 경로계수만 표시하는 경우 inspection 데이터 필터링
+            inspection = None
+            observed_vars_to_hide = set()
+
+            if structural_only and plot_ests:
+                try:
+                    # 모델의 전체 추정치 가져오기
+                    full_inspection = model.inspect()
+
+                    # 잠재변수와 관측변수 구분
+                    all_vars = set(full_inspection['lval'].unique()) | set(full_inspection['rval'].unique())
+                    latent_vars = {var for var in all_vars if not var.startswith('q')}
+                    observed_vars = {var for var in all_vars if var.startswith('q')}
+                    observed_vars_to_hide = observed_vars.copy()
+
+                    logger.info(f"잠재변수: {sorted(latent_vars)}")
+                    logger.info(f"관측변수 (숨김): {sorted(observed_vars)}")
+
+                    # 구조적 경로계수만 필터링 (잠재변수 간 관계)
+                    structural_paths = full_inspection[
+                        (full_inspection['op'] == '~') &  # 회귀 관계
+                        (full_inspection['lval'].isin(latent_vars)) &  # 종속변수가 잠재변수
+                        (full_inspection['rval'].isin(latent_vars))    # 독립변수가 잠재변수
+                    ].copy()
+
+                    # 공분산도 포함 (잠재변수 간)
+                    if plot_covs:
+                        covariances = full_inspection[
+                            (full_inspection['op'] == '~~') &  # 공분산
+                            (full_inspection['lval'].isin(latent_vars)) &  # 첫 번째 변수가 잠재변수
+                            (full_inspection['rval'].isin(latent_vars)) &  # 두 번째 변수가 잠재변수
+                            (full_inspection['lval'] != full_inspection['rval'])  # 분산 제외
+                        ].copy()
+
+                        structural_paths = pd.concat([structural_paths, covariances], ignore_index=True)
+
+                    # semplot이 요구하는 컬럼 구조 확인 및 조정
+                    if std_ests and 'Est. Std' not in structural_paths.columns:
+                        # 표준화 추정값이 없으면 비표준화 추정값 사용
+                        logger.warning("표준화 추정값이 없어 비표준화 추정값을 사용합니다.")
+                        std_ests = False
+
+                    inspection = structural_paths
+                    logger.info(f"구조적 경로계수만 표시: {len(structural_paths)}개 경로")
+
+                except Exception as e:
+                    logger.warning(f"구조적 경로계수 필터링 실패, 전체 모델 표시: {e}")
+                    inspection = None
+                    observed_vars_to_hide = set()
+
             # semplot을 사용한 다이어그램 생성
             graph = semplot(
                 mod=model,
                 filename=str(file_path),
-                std_ests=True,
-                plot_covs=False,
-                title="Path Analysis Diagram"
+                inspection=inspection,
+                plot_covs=plot_covs,
+                plot_exos=plot_exos,
+                plot_ests=plot_ests,
+                std_ests=std_ests,
+                engine=engine,
+                latshape=latshape,
+                show=show
             )
-            
+
+            # 관찰변수를 숨기기 위해 graphviz 객체 수정
+            if structural_only and observed_vars_to_hide:
+                try:
+                    # graphviz 소스 코드 가져오기
+                    dot_source = str(graph)
+
+                    # 관찰변수 노드와 관련 엣지 제거
+                    lines = dot_source.split('\n')
+                    filtered_lines = []
+
+                    for line in lines:
+                        line = line.strip()
+                        should_keep = True
+
+                        # 관찰변수 노드 정의 제거
+                        for obs_var in observed_vars_to_hide:
+                            if f'{obs_var} [' in line or f'"{obs_var}" [' in line:
+                                should_keep = False
+                                break
+                            # 관찰변수와 관련된 엣지 제거
+                            if (f'{obs_var} ->' in line or f'-> {obs_var}' in line or
+                                f'"{obs_var}" ->' in line or f'-> "{obs_var}"' in line):
+                                should_keep = False
+                                break
+
+                        if should_keep:
+                            filtered_lines.append(line)
+
+                    # 수정된 dot 소스로 새로운 그래프 생성
+                    modified_dot_source = '\n'.join(filtered_lines)
+
+                    # graphviz로 직접 렌더링
+                    import graphviz
+                    modified_graph = graphviz.Source(modified_dot_source)
+                    modified_graph.render(str(file_path.with_suffix('')), format='png', cleanup=True)
+
+                    logger.info(f"관찰변수 제거된 경로 다이어그램 생성 완료: {file_path}")
+
+                except Exception as e:
+                    logger.warning(f"관찰변수 제거 실패, 원본 다이어그램 사용: {e}")
+                    # 원본 그래프 사용
+
             logger.info(f"경로 다이어그램 생성 완료: {file_path}")
             return file_path
-            
+
         except Exception as e:
             logger.error(f"경로 다이어그램 생성 오류: {e}")
             return None
-    
-    def plot_fit_indices(self, 
-                        fit_indices: Dict[str, float],
-                        filename: str) -> Path:
+
+    def create_multiple_path_diagrams(self,
+                                    model: Model,
+                                    base_filename: str) -> Dict[str, Optional[Path]]:
         """
-        적합도 지수 시각화
-        
+        다양한 옵션으로 여러 경로 다이어그램 생성
+
         Args:
-            fit_indices (Dict[str, float]): 적합도 지수들
-            filename (str): 파일명
-            
+            model (Model): 적합된 semopy 모델
+            base_filename (str): 기본 파일명
+
         Returns:
-            Path: 생성된 파일 경로
+            Dict[str, Optional[Path]]: 생성된 다이어그램들의 파일 경로
         """
+        diagrams = {}
+
+        # 1. 기본 다이어그램 (공분산 포함, 표준화 추정값)
+        diagrams['basic'] = self.create_path_diagram(
+            model=model,
+            filename=f"{base_filename}_basic",
+            plot_covs=True,
+            plot_ests=True,
+            std_ests=True,
+            engine='dot'
+        )
+
+        # 2. 상세 다이어그램 (모든 요소 포함)
+        diagrams['detailed'] = self.create_path_diagram(
+            model=model,
+            filename=f"{base_filename}_detailed",
+            plot_covs=True,
+            plot_exos=True,
+            plot_ests=True,
+            std_ests=True,
+            engine='dot'
+        )
+
+        # 3. 간단한 다이어그램 (구조만)
+        diagrams['simple'] = self.create_path_diagram(
+            model=model,
+            filename=f"{base_filename}_simple",
+            plot_covs=False,
+            plot_ests=False,
+            std_ests=False,
+            engine='dot'
+        )
+
+        # 4. 원형 레이아웃
+        diagrams['circular'] = self.create_path_diagram(
+            model=model,
+            filename=f"{base_filename}_circular",
+            plot_covs=True,
+            plot_ests=True,
+            std_ests=True,
+            engine='circo'
+        )
+
+        # 5. 비표준화 다이어그램
+        diagrams['unstandardized'] = self.create_path_diagram(
+            model=model,
+            filename=f"{base_filename}_unstandardized",
+            plot_covs=True,
+            plot_ests=True,
+            std_ests=False,
+            engine='dot'
+        )
+
+        # 6. 경로계수만 표시 (구조적 경로만)
+        diagrams['structural_only'] = self.create_path_diagram(
+            model=model,
+            filename=f"{base_filename}_structural_only",
+            plot_covs=True,
+            plot_ests=True,
+            std_ests=True,
+            engine='dot',
+            structural_only=True  # 경로계수만 표시
+        )
+
+        return diagrams
+
+    def create_advanced_path_diagrams(self,
+                                    model: Model,
+                                    base_filename: str) -> Dict[str, Optional[Path]]:
+        """
+        고급 semopy 시각화 기능을 활용한 다이어그램 생성
+
+        Args:
+            model (Model): 적합된 semopy 모델
+            base_filename (str): 기본 파일명
+
+        Returns:
+            Dict[str, Optional[Path]]: 생성된 다이어그램들의 파일 경로
+        """
+        advanced_diagrams = {}
+
+        # 1. 네트워크 레이아웃 (neato 엔진)
+        advanced_diagrams['network'] = self.create_path_diagram(
+            model=model,
+            filename=f"{base_filename}_network",
+            plot_covs=True,
+            plot_ests=True,
+            std_ests=True,
+            engine='neato',
+            latshape='ellipse'
+        )
+
+        # 2. 계층적 레이아웃 (fdp 엔진)
+        advanced_diagrams['hierarchical'] = self.create_path_diagram(
+            model=model,
+            filename=f"{base_filename}_hierarchical",
+            plot_covs=True,
+            plot_ests=True,
+            std_ests=True,
+            engine='fdp',
+            latshape='box'
+        )
+
+        # 3. 스프링 레이아웃 (sfdp 엔진)
+        advanced_diagrams['spring'] = self.create_path_diagram(
+            model=model,
+            filename=f"{base_filename}_spring",
+            plot_covs=True,
+            plot_ests=True,
+            std_ests=True,
+            engine='sfdp',
+            latshape='circle'
+        )
+
+        # 4. 방사형 레이아웃 (twopi 엔진)
+        advanced_diagrams['radial'] = self.create_path_diagram(
+            model=model,
+            filename=f"{base_filename}_radial",
+            plot_covs=True,
+            plot_ests=True,
+            std_ests=True,
+            engine='twopi',
+            latshape='circle'
+        )
+
+        # 5. 공분산 강조 다이어그램
+        advanced_diagrams['covariance_focus'] = self.create_path_diagram(
+            model=model,
+            filename=f"{base_filename}_covariance_focus",
+            plot_covs=True,
+            plot_exos=True,
+            plot_ests=False,  # 추정값 숨기고 공분산만 강조
+            std_ests=False,
+            engine='dot',
+            latshape='ellipse'
+        )
+
+        # 6. 경로계수 강조 다이어그램
+        advanced_diagrams['path_focus'] = self.create_path_diagram(
+            model=model,
+            filename=f"{base_filename}_path_focus",
+            plot_covs=False,  # 공분산 숨기고 경로계수만 강조
+            plot_exos=False,
+            plot_ests=True,
+            std_ests=True,
+            engine='dot',
+            latshape='box'
+        )
+
+        # 7. 구조적 경로계수만 표시 (요인적재량 제외)
+        advanced_diagrams['structural_paths_only'] = self.create_path_diagram(
+            model=model,
+            filename=f"{base_filename}_structural_paths_only",
+            plot_covs=True,
+            plot_ests=True,
+            std_ests=True,
+            engine='dot',
+            latshape='circle',
+            structural_only=True  # 경로계수만 표시
+        )
+
+        return advanced_diagrams
+
+    def create_comprehensive_visualization(self,
+                                         results: Dict[str, Any],
+                                         base_filename: str = "path_analysis") -> Dict[str, Any]:
+        """
+        종합적인 경로분석 시각화 (semopy 전용)
+
+        Args:
+            results (Dict[str, Any]): 경로분석 결과
+            base_filename (str): 기본 파일명
+
+        Returns:
+            Dict[str, Any]: 시각화 결과
+        """
+        visualization_results = {
+            'basic_diagrams': {},
+            'advanced_diagrams': {},
+            'errors': [],
+            'summary': {}
+        }
+
         try:
-            # 유효한 적합도 지수만 선택
-            valid_indices = {k: v for k, v in fit_indices.items() 
-                           if not pd.isna(v) and k not in ['chi_square', 'df', 'aic', 'bic']}
-            
-            if not valid_indices:
-                logger.warning("시각화할 적합도 지수가 없습니다.")
-                return None
-            
-            fig, ax = plt.subplots(figsize=(10, 6))
-            
-            # 적합도 지수별 기준선 설정
-            cutoff_lines = {
-                'cfi': [0.90, 0.95],
-                'tli': [0.90, 0.95],
-                'rmsea': [0.08, 0.06],
-                'srmr': [0.10, 0.08],
-                'p_value': [0.05]
+            # semopy 모델 객체 추출
+            if 'model_object' not in results:
+                logger.error("semopy 모델 객체를 찾을 수 없습니다.")
+                visualization_results['errors'].append("모델 객체 없음")
+                return visualization_results
+
+            model = results['model_object']
+
+            # 1. 기본 경로 다이어그램 생성
+            basic_diagrams = self.create_multiple_path_diagrams(model, base_filename)
+            visualization_results['basic_diagrams'] = basic_diagrams
+
+            # 2. 고급 경로 다이어그램 생성
+            advanced_diagrams = self.create_advanced_path_diagrams(model, base_filename)
+            visualization_results['advanced_diagrams'] = advanced_diagrams
+
+            # 성공한 다이어그램 수 계산
+            all_diagrams = {**basic_diagrams, **advanced_diagrams}
+            successful_diagrams = sum(1 for path in all_diagrams.values() if path is not None)
+
+            visualization_results['summary'] = {
+                'basic_diagrams': len(basic_diagrams),
+                'advanced_diagrams': len(advanced_diagrams),
+                'total_diagrams': len(all_diagrams),
+                'successful_diagrams': successful_diagrams,
+                'failed_diagrams': len(all_diagrams) - successful_diagrams,
+                'success_rate': f"{successful_diagrams/len(all_diagrams)*100:.1f}%" if all_diagrams else "0%"
             }
-            
-            indices = list(valid_indices.keys())
-            values = list(valid_indices.values())
-            
-            # 막대 그래프
-            bars = ax.bar(indices, values, alpha=0.7, color='skyblue', edgecolor='navy')
-            
-            # 기준선 추가
-            for i, index_name in enumerate(indices):
-                if index_name in cutoff_lines:
-                    for cutoff in cutoff_lines[index_name]:
-                        ax.axhline(y=cutoff, color='red', linestyle='--', alpha=0.7)
-                        ax.text(i, cutoff, f'{cutoff}', ha='center', va='bottom', 
-                               color='red', fontweight='bold')
-            
-            # 값 표시
-            for bar, value in zip(bars, values):
-                height = bar.get_height()
-                ax.text(bar.get_x() + bar.get_width()/2., height,
-                       f'{value:.3f}', ha='center', va='bottom')
-            
-            ax.set_title('Model Fit Indices', fontsize=14, fontweight='bold')
-            ax.set_ylabel('Value', fontsize=12)
-            ax.set_xlabel('Fit Index', fontsize=12)
-            plt.xticks(rotation=45)
-            plt.tight_layout()
-            
-            file_path = self.output_dir / f"{filename}.png"
-            plt.savefig(file_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            logger.info(f"적합도 지수 시각화 완료: {file_path}")
-            return file_path
-            
+
+            logger.info(f"종합적인 경로분석 시각화 완료: {successful_diagrams}/{len(all_diagrams)} 성공")
+
         except Exception as e:
-            logger.error(f"적합도 지수 시각화 오류: {e}")
-            raise
-    
-    def plot_path_coefficients(self, 
-                             path_coefficients: Dict[str, Any],
-                             filename: str) -> Path:
-        """
-        경로계수 시각화
-        
-        Args:
-            path_coefficients (Dict[str, Any]): 경로계수 정보
-            filename (str): 파일명
-            
-        Returns:
-            Path: 생성된 파일 경로
-        """
-        try:
-            if 'paths' not in path_coefficients or 'coefficients' not in path_coefficients:
-                logger.warning("경로계수 데이터가 불완전합니다.")
-                return None
-            
-            paths = path_coefficients['paths']
-            coefficients = path_coefficients['coefficients']
-            p_values = path_coefficients.get('p_values', {})
-            
-            # 데이터 준비
-            path_labels = [f"{from_var} → {to_var}" for from_var, to_var in paths]
-            coeff_values = [coefficients.get(i, 0) for i in range(len(paths))]
-            p_vals = [p_values.get(i, 1) for i in range(len(paths))]
-            
-            # 유의성에 따른 색상 설정
-            colors = ['red' if p < 0.001 else 'orange' if p < 0.01 else 'yellow' if p < 0.05 
-                     else 'lightblue' for p in p_vals]
-            
-            fig, ax = plt.subplots(figsize=(12, 8))
-            
-            # 수평 막대 그래프
-            bars = ax.barh(path_labels, coeff_values, color=colors, alpha=0.7, edgecolor='black')
-            
-            # 0 기준선
-            ax.axvline(x=0, color='black', linestyle='-', alpha=0.3)
-            
-            # 계수 값 표시
-            for bar, coeff, p_val in zip(bars, coeff_values, p_vals):
-                width = bar.get_width()
-                sig_stars = self._get_significance_stars(p_val)
-                ax.text(width + (0.01 if width >= 0 else -0.01), bar.get_y() + bar.get_height()/2,
-                       f'{coeff:.3f}{sig_stars}', ha='left' if width >= 0 else 'right', 
-                       va='center', fontweight='bold')
-            
-            ax.set_title('Path Coefficients', fontsize=14, fontweight='bold')
-            ax.set_xlabel('Coefficient Value', fontsize=12)
-            ax.set_ylabel('Path', fontsize=12)
-            
-            # 범례 추가
-            legend_elements = [
-                plt.Rectangle((0,0),1,1, facecolor='red', alpha=0.7, label='p < 0.001'),
-                plt.Rectangle((0,0),1,1, facecolor='orange', alpha=0.7, label='p < 0.01'),
-                plt.Rectangle((0,0),1,1, facecolor='yellow', alpha=0.7, label='p < 0.05'),
-                plt.Rectangle((0,0),1,1, facecolor='lightblue', alpha=0.7, label='p ≥ 0.05')
-            ]
-            ax.legend(handles=legend_elements, loc='lower right')
-            
-            plt.tight_layout()
-            
-            file_path = self.output_dir / f"{filename}.png"
-            plt.savefig(file_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            logger.info(f"경로계수 시각화 완료: {file_path}")
-            return file_path
-            
-        except Exception as e:
-            logger.error(f"경로계수 시각화 오류: {e}")
-            raise
-    
-    def plot_effects_analysis(self, 
-                            effects_analysis: Dict[str, Any],
-                            filename: str) -> Path:
-        """
-        효과 분석 시각화
-        
-        Args:
-            effects_analysis (Dict[str, Any]): 효과 분석 결과
-            filename (str): 파일명
-            
-        Returns:
-            Path: 생성된 파일 경로
-        """
-        try:
-            effects_data = []
-            
-            # 직접효과
-            if 'direct_effects' in effects_analysis:
-                direct = effects_analysis['direct_effects']
-                effects_data.append({
-                    'Effect_Type': 'Direct',
-                    'Value': direct.get('coefficient', 0),
-                    'P_Value': direct.get('p_value', 1)
-                })
-            
-            # 간접효과
-            if 'indirect_effects' in effects_analysis:
-                indirect = effects_analysis['indirect_effects']
-                effects_data.append({
-                    'Effect_Type': 'Indirect',
-                    'Value': indirect.get('total_indirect_effect', 0),
-                    'P_Value': 1.0  # 간접효과의 p값은 별도 계산 필요
-                })
-            
-            # 총효과
-            if 'total_effects' in effects_analysis:
-                total = effects_analysis['total_effects']
-                effects_data.append({
-                    'Effect_Type': 'Total',
-                    'Value': total.get('total_effect', 0),
-                    'P_Value': 1.0
-                })
-            
-            if not effects_data:
-                logger.warning("시각화할 효과 데이터가 없습니다.")
-                return None
-            
-            df = pd.DataFrame(effects_data)
-            
-            fig, ax = plt.subplots(figsize=(10, 6))
-            
-            # 막대 그래프
-            colors = ['steelblue', 'orange', 'green'][:len(df)]
-            bars = ax.bar(df['Effect_Type'], df['Value'], color=colors, alpha=0.7, edgecolor='black')
-            
-            # 0 기준선
-            ax.axhline(y=0, color='black', linestyle='-', alpha=0.3)
-            
-            # 값 표시
-            for bar, value, p_val in zip(bars, df['Value'], df['P_Value']):
-                height = bar.get_height()
-                sig_stars = self._get_significance_stars(p_val)
-                ax.text(bar.get_x() + bar.get_width()/2., height + (0.01 if height >= 0 else -0.01),
-                       f'{value:.3f}{sig_stars}', ha='center', 
-                       va='bottom' if height >= 0 else 'top', fontweight='bold')
-            
-            ax.set_title('Effects Analysis', fontsize=14, fontweight='bold')
-            ax.set_ylabel('Effect Size', fontsize=12)
-            ax.set_xlabel('Effect Type', fontsize=12)
-            
-            plt.tight_layout()
-            
-            file_path = self.output_dir / f"{filename}.png"
-            plt.savefig(file_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            logger.info(f"효과 분석 시각화 완료: {file_path}")
-            return file_path
-            
-        except Exception as e:
-            logger.error(f"효과 분석 시각화 오류: {e}")
-            raise
-    
-    def plot_mediation_analysis(self, 
-                              mediation_analysis: Dict[str, Any],
-                              filename: str) -> Path:
-        """
-        매개효과 분석 시각화
-        
-        Args:
-            mediation_analysis (Dict[str, Any]): 매개효과 분석 결과
-            filename (str): 파일명
-            
-        Returns:
-            Path: 생성된 파일 경로
-        """
-        try:
-            if 'sobel_tests' not in mediation_analysis:
-                logger.warning("Sobel test 결과가 없습니다.")
-                return None
-            
-            sobel_tests = mediation_analysis['sobel_tests']
-            
-            # 데이터 준비
-            mediators = list(sobel_tests.keys())
-            z_scores = [sobel_tests[med].get('z_score', 0) for med in mediators]
-            p_values = [sobel_tests[med].get('p_value', 1) for med in mediators]
-            indirect_effects = [sobel_tests[med].get('indirect_effect', 0) for med in mediators]
-            
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-            
-            # 1. 간접효과 크기
-            colors1 = ['red' if p < 0.05 else 'lightblue' for p in p_values]
-            bars1 = ax1.bar(mediators, indirect_effects, color=colors1, alpha=0.7, edgecolor='black')
-            
-            ax1.axhline(y=0, color='black', linestyle='-', alpha=0.3)
-            ax1.set_title('Indirect Effects by Mediator', fontsize=12, fontweight='bold')
-            ax1.set_ylabel('Indirect Effect Size', fontsize=10)
-            ax1.set_xlabel('Mediator', fontsize=10)
-            
-            # 값 표시
-            for bar, effect, p_val in zip(bars1, indirect_effects, p_values):
-                height = bar.get_height()
-                sig_stars = self._get_significance_stars(p_val)
-                ax1.text(bar.get_x() + bar.get_width()/2., height + (0.001 if height >= 0 else -0.001),
-                        f'{effect:.3f}{sig_stars}', ha='center', 
-                        va='bottom' if height >= 0 else 'top', fontsize=9)
-            
-            # 2. Sobel test Z-scores
-            colors2 = ['red' if abs(z) > 1.96 else 'lightblue' for z in z_scores]
-            bars2 = ax2.bar(mediators, z_scores, color=colors2, alpha=0.7, edgecolor='black')
-            
-            ax2.axhline(y=1.96, color='red', linestyle='--', alpha=0.7, label='p < 0.05')
-            ax2.axhline(y=-1.96, color='red', linestyle='--', alpha=0.7)
-            ax2.axhline(y=0, color='black', linestyle='-', alpha=0.3)
-            
-            ax2.set_title('Sobel Test Z-scores', fontsize=12, fontweight='bold')
-            ax2.set_ylabel('Z-score', fontsize=10)
-            ax2.set_xlabel('Mediator', fontsize=10)
-            ax2.legend()
-            
-            # 값 표시
-            for bar, z_score in zip(bars2, z_scores):
-                height = bar.get_height()
-                ax2.text(bar.get_x() + bar.get_width()/2., height + (0.1 if height >= 0 else -0.1),
-                        f'{z_score:.2f}', ha='center', 
-                        va='bottom' if height >= 0 else 'top', fontsize=9)
-            
-            plt.tight_layout()
-            
-            file_path = self.output_dir / f"{filename}.png"
-            plt.savefig(file_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            logger.info(f"매개효과 분석 시각화 완료: {file_path}")
-            return file_path
-            
-        except Exception as e:
-            logger.error(f"매개효과 분석 시각화 오류: {e}")
-            raise
-    
-    def _get_significance_stars(self, p_value: float) -> str:
-        """유의도 별표 반환"""
-        if pd.isna(p_value):
-            return ""
-        elif p_value < 0.001:
-            return "***"
-        elif p_value < 0.01:
-            return "**"
-        elif p_value < 0.05:
-            return "*"
-        elif p_value < 0.1:
-            return "."
-        else:
-            return ""
+            logger.error(f"시각화 중 오류: {e}")
+            visualization_results['errors'].append(str(e))
+
+        return visualization_results
 
 
 # 편의 함수들
 def create_path_diagram(model: Model,
                        filename: str = "path_diagram",
-                       output_dir: str = "path_analysis_results/visualizations") -> Optional[Path]:
-    """경로 다이어그램 생성 편의 함수"""
+                       output_dir: str = "path_analysis_results/visualizations",
+                       **kwargs) -> Optional[Path]:
+    """
+    경로 다이어그램 생성 편의 함수
+
+    Args:
+        model (Model): semopy 모델
+        filename (str): 파일명
+        output_dir (str): 출력 디렉토리
+        **kwargs: semplot 추가 매개변수 (plot_covs, plot_ests, std_ests, engine, latshape, structural_only 등)
+
+    Returns:
+        Optional[Path]: 생성된 파일 경로
+    """
     visualizer = PathAnalysisVisualizer(output_dir)
-    return visualizer.create_path_diagram(model, filename)
+    return visualizer.create_path_diagram(model, filename, **kwargs)
 
 
-def visualize_effects(effects_analysis: Dict[str, Any],
-                     filename: str = "effects_analysis",
-                     output_dir: str = "path_analysis_results/visualizations") -> Path:
-    """효과 분석 시각화 편의 함수"""
+def create_multiple_diagrams(model: Model,
+                           base_filename: str = "path_analysis",
+                           output_dir: str = "path_analysis_results/visualizations") -> Dict[str, Optional[Path]]:
+    """
+    다양한 경로 다이어그램 생성 편의 함수 (기본 5가지 유형)
+
+    Args:
+        model (Model): semopy 모델
+        base_filename (str): 기본 파일명
+        output_dir (str): 출력 디렉토리
+
+    Returns:
+        Dict[str, Optional[Path]]: 생성된 다이어그램들의 파일 경로
+        - basic: 기본 다이어그램 (공분산 포함, 표준화 추정값)
+        - detailed: 상세 다이어그램 (모든 요소 포함)
+        - simple: 간단한 다이어그램 (구조만)
+        - circular: 원형 레이아웃
+        - unstandardized: 비표준화 다이어그램
+    """
     visualizer = PathAnalysisVisualizer(output_dir)
-    return visualizer.plot_effects_analysis(effects_analysis, filename)
+    return visualizer.create_multiple_path_diagrams(model, base_filename)
+
+
+def create_advanced_diagrams(model: Model,
+                           base_filename: str = "path_analysis",
+                           output_dir: str = "path_analysis_results/visualizations") -> Dict[str, Optional[Path]]:
+    """
+    고급 경로 다이어그램 생성 편의 함수 (6가지 고급 유형)
+
+    Args:
+        model (Model): semopy 모델
+        base_filename (str): 기본 파일명
+        output_dir (str): 출력 디렉토리
+
+    Returns:
+        Dict[str, Optional[Path]]: 생성된 다이어그램들의 파일 경로
+        - network: 네트워크 레이아웃 (neato 엔진)
+        - hierarchical: 계층적 레이아웃 (fdp 엔진)
+        - spring: 스프링 레이아웃 (sfdp 엔진)
+        - radial: 방사형 레이아웃 (twopi 엔진)
+        - covariance_focus: 공분산 강조 다이어그램
+        - path_focus: 경로계수 강조 다이어그램
+    """
+    visualizer = PathAnalysisVisualizer(output_dir)
+    return visualizer.create_advanced_path_diagrams(model, base_filename)
+
+
+def visualize_path_analysis(results: Dict[str, Any],
+                          base_filename: str = "path_analysis",
+                          output_dir: str = "path_analysis_results/visualizations") -> Dict[str, Any]:
+    """
+    종합적인 경로분석 시각화 편의 함수 (기본 + 고급 다이어그램 모두 생성)
+
+    Args:
+        results (Dict[str, Any]): 경로분석 결과
+        base_filename (str): 기본 파일명
+        output_dir (str): 출력 디렉토리
+
+    Returns:
+        Dict[str, Any]: 시각화 결과
+        - basic_diagrams: 기본 다이어그램들 (5가지)
+        - advanced_diagrams: 고급 다이어그램들 (6가지)
+        - summary: 생성 결과 요약
+        - errors: 발생한 오류들
+    """
+    visualizer = PathAnalysisVisualizer(output_dir)
+    return visualizer.create_comprehensive_visualization(results, base_filename)

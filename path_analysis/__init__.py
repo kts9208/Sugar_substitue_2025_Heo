@@ -43,7 +43,9 @@ from .results_exporter import (
 from .visualizer import (
     PathAnalysisVisualizer,
     create_path_diagram,
-    visualize_effects
+    create_multiple_diagrams,
+    create_advanced_diagrams,
+    visualize_path_analysis
 )
 from .config import (
     PathAnalysisConfig,
@@ -81,7 +83,9 @@ __all__ = [
     # Visualization
     'PathAnalysisVisualizer',
     'create_path_diagram',
-    'visualize_effects',
+    'create_multiple_diagrams',
+    'create_advanced_diagrams',
+    'visualize_path_analysis',
     
     # Configuration
     'PathAnalysisConfig',
