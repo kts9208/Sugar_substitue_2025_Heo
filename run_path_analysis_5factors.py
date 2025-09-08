@@ -302,11 +302,21 @@ def run_comprehensive_structural_model():
         saved_files = export_path_results(results, filename_prefix="comprehensive_structural")
         print(f"\n결과 저장 완료: {len(saved_files)}개 파일")
         
-        # 시각화
+        # semopy 시각화
         try:
             visualizer = PathAnalysisVisualizer()
-            viz_files = visualizer.create_comprehensive_visualization(results, "comprehensive_model")
-            print(f"시각화 완료: {len(viz_files)}개 파일")
+            viz_results = visualizer.create_comprehensive_visualization(results, "comprehensive_model")
+
+            if viz_results.get('summary'):
+                summary = viz_results['summary']
+                print(f"시각화 완료:")
+                print(f"  - 기본 다이어그램: {summary.get('basic_diagrams', 0)}개")
+                print(f"  - 고급 다이어그램: {summary.get('advanced_diagrams', 0)}개")
+                print(f"  - 성공률: {summary.get('success_rate', '0%')}")
+
+            if viz_results.get('errors'):
+                print(f"  - 오류: {len(viz_results['errors'])}개")
+
         except Exception as e:
             print(f"시각화 오류: {e}")
         

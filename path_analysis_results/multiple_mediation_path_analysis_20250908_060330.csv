@@ -1,0 +1,19 @@
+﻿Category,Item,Value
+Basic Info,Number of Latent Variables,4
+Basic Info,Latent Variables,"perceived_price, health_concern, perceived_benefit, purchase_intention"
+Path Coverage,Total Possible Paths,12
+Path Coverage,Current Paths in Model,5
+Path Coverage,Missing Paths,7
+Path Coverage,Coverage Ratio,41.7%
+Current Paths,Path 1,health_concern → perceived_benefit
+Current Paths,Path 2,health_concern → perceived_price
+Current Paths,Path 3,perceived_benefit → purchase_intention
+Current Paths,Path 4,perceived_price → purchase_intention
+Current Paths,Path 5,health_concern → purchase_intention
+Missing Paths,Missing Path 1,perceived_price → health_concern
+Missing Paths,Missing Path 2,perceived_price → perceived_benefit
+Missing Paths,Missing Path 3,perceived_benefit → perceived_price
+Missing Paths,Missing Path 4,perceived_benefit → health_concern
+Missing Paths,Missing Path 5,purchase_intention → perceived_price
+Missing Paths,Missing Path 6,purchase_intention → health_concern
+Missing Paths,Missing Path 7,purchase_intention → perceived_benefit
