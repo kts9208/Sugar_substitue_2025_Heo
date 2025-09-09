@@ -1,0 +1,3 @@
+﻿Variable,Estimate,Std_Error,Z_Value,P_Value,Std_Estimate,Significant
+health_concern,0.5234,0.1123,4.6612,0.0001,,True
+health_concern_x_nutrition_knowledge,0.1789,0.0654,2.7345,0.0062,,True

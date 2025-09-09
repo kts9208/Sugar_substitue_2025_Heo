@@ -25,6 +25,16 @@ try:
 except ImportError:
     GRAPHVIZ_AVAILABLE = False
 
+# 추가 시각화 라이브러리
+try:
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import numpy as np
+    import matplotlib.patches as patches
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -584,3 +594,256 @@ def visualize_path_analysis(results: Dict[str, Any],
     """
     visualizer = PathAnalysisVisualizer(output_dir)
     return visualizer.create_comprehensive_visualization(results, base_filename)
+
+    def create_bootstrap_confidence_interval_plot(self,
+                                                 bootstrap_results: Dict[str, Any],
+                                                 filename: str = "bootstrap_ci",
+                                                 figsize: Tuple[int, int] = (12, 8)) -> Optional[Path]:
+        """
+        부트스트래핑 신뢰구간 시각화
+
+        Args:
+            bootstrap_results: 부트스트래핑 결과
+            filename: 파일명
+            figsize: 그림 크기
+
+        Returns:
+            Optional[Path]: 저장된 파일 경로
+        """
+        if not MATPLOTLIB_AVAILABLE:
+            logger.warning("matplotlib이 설치되지 않아 부트스트래핑 시각화를 생성할 수 없습니다.")
+            return None
+
+        try:
+            fig, axes = plt.subplots(2, 2, figsize=figsize)
+            fig.suptitle('Bootstrap Confidence Intervals Analysis', fontsize=16, fontweight='bold')
+
+            # 데이터 준비
+            all_effects = []
+            for combination, result in bootstrap_results.items():
+                confidence_intervals = result.get('confidence_intervals', {})
+                for effect_type, ci_info in confidence_intervals.items():
+                    all_effects.append({
+                        'combination': combination,
+                        'effect_type': effect_type,
+                        'mean': ci_info.get('mean', 0),
+                        'lower_ci': ci_info.get('lower_ci', 0),
+                        'upper_ci': ci_info.get('upper_ci', 0),
+                        'significant': ci_info.get('significant', False)
+                    })
+
+            if not all_effects:
+                logger.warning("부트스트래핑 결과가 없어 시각화를 생성할 수 없습니다.")
+                plt.close(fig)
+                return None
+
+            df_effects = pd.DataFrame(all_effects)
+
+            # 1. 직접효과 신뢰구간
+            direct_effects = df_effects[df_effects['effect_type'] == 'direct_effects']
+            if not direct_effects.empty:
+                ax1 = axes[0, 0]
+                y_pos = range(len(direct_effects))
+
+                # 신뢰구간 막대
+                for i, (_, row) in enumerate(direct_effects.iterrows()):
+                    color = 'red' if row['significant'] else 'blue'
+                    ax1.barh(i, row['upper_ci'] - row['lower_ci'],
+                            left=row['lower_ci'], color=color, alpha=0.6)
+                    ax1.plot(row['mean'], i, 'ko', markersize=6)
+
+                ax1.axvline(x=0, color='black', linestyle='--', alpha=0.5)
+                ax1.set_yticks(y_pos)
+                ax1.set_yticklabels([combo.replace('_to_', ' → ') for combo in direct_effects['combination']])
+                ax1.set_xlabel('Direct Effect')
+                ax1.set_title('Direct Effects Confidence Intervals')
+                ax1.grid(True, alpha=0.3)
+
+            # 2. 간접효과 신뢰구간
+            indirect_effects = df_effects[df_effects['effect_type'] == 'indirect_effects']
+            if not indirect_effects.empty:
+                ax2 = axes[0, 1]
+                y_pos = range(len(indirect_effects))
+
+                for i, (_, row) in enumerate(indirect_effects.iterrows()):
+                    color = 'red' if row['significant'] else 'blue'
+                    ax2.barh(i, row['upper_ci'] - row['lower_ci'],
+                            left=row['lower_ci'], color=color, alpha=0.6)
+                    ax2.plot(row['mean'], i, 'ko', markersize=6)
+
+                ax2.axvline(x=0, color='black', linestyle='--', alpha=0.5)
+                ax2.set_yticks(y_pos)
+                ax2.set_yticklabels([combo.replace('_to_', ' → ') for combo in indirect_effects['combination']])
+                ax2.set_xlabel('Indirect Effect')
+                ax2.set_title('Indirect Effects Confidence Intervals')
+                ax2.grid(True, alpha=0.3)
+
+            # 3. 효과 크기 분포
+            ax3 = axes[1, 0]
+            effect_means = df_effects['mean'].values
+            ax3.hist(effect_means, bins=20, alpha=0.7, color='skyblue', edgecolor='black')
+            ax3.axvline(x=0, color='red', linestyle='--', alpha=0.7)
+            ax3.set_xlabel('Effect Size')
+            ax3.set_ylabel('Frequency')
+            ax3.set_title('Distribution of Effect Sizes')
+            ax3.grid(True, alpha=0.3)
+
+            # 4. 유의성 요약
+            ax4 = axes[1, 1]
+            significance_counts = df_effects['significant'].value_counts()
+            colors = ['lightcoral' if idx else 'lightblue' for idx in significance_counts.index]
+            labels = ['Significant' if idx else 'Non-significant' for idx in significance_counts.index]
+
+            wedges, texts, autotexts = ax4.pie(significance_counts.values, labels=labels,
+                                              colors=colors, autopct='%1.1f%%', startangle=90)
+            ax4.set_title('Significance Summary')
+
+            plt.tight_layout()
+
+            # 파일 저장
+            file_path = self.output_dir / f"{filename}.png"
+            plt.savefig(file_path, dpi=300, bbox_inches='tight')
+            plt.close(fig)
+
+            logger.info(f"부트스트래핑 신뢰구간 시각화 저장 완료: {file_path}")
+            return file_path
+
+        except Exception as e:
+            logger.error(f"부트스트래핑 시각화 생성 오류: {e}")
+            if 'fig' in locals():
+                plt.close(fig)
+            return None
+
+    def create_mediation_effects_heatmap(self,
+                                       all_mediations: Dict[str, Any],
+                                       filename: str = "mediation_heatmap",
+                                       figsize: Tuple[int, int] = (12, 10)) -> Optional[Path]:
+        """
+        매개효과 히트맵 시각화
+
+        Args:
+            all_mediations: 모든 매개효과 분석 결과
+            filename: 파일명
+            figsize: 그림 크기
+
+        Returns:
+            Optional[Path]: 저장된 파일 경로
+        """
+        if not MATPLOTLIB_AVAILABLE:
+            logger.warning("matplotlib이 설치되지 않아 매개효과 히트맵을 생성할 수 없습니다.")
+            return None
+
+        try:
+            # 데이터 준비
+            all_results = all_mediations.get('all_results', {})
+            if not all_results:
+                logger.warning("매개효과 결과가 없어 히트맵을 생성할 수 없습니다.")
+                return None
+
+            # 변수들 추출
+            variables = set()
+            for result in all_results.values():
+                variables.add(result.get('independent_var', ''))
+                variables.add(result.get('dependent_var', ''))
+                variables.add(result.get('mediator', ''))
+            variables = sorted([v for v in variables if v])
+
+            if len(variables) < 3:
+                logger.warning("히트맵 생성을 위해서는 최소 3개의 변수가 필요합니다.")
+                return None
+
+            # 매개효과 매트릭스 생성
+            n_vars = len(variables)
+            mediation_matrix = np.zeros((n_vars, n_vars))
+            significance_matrix = np.zeros((n_vars, n_vars))
+
+            var_to_idx = {var: idx for idx, var in enumerate(variables)}
+
+            for result in all_results.values():
+                independent_var = result.get('independent_var', '')
+                dependent_var = result.get('dependent_var', '')
+
+                if independent_var in var_to_idx and dependent_var in var_to_idx:
+                    i = var_to_idx[independent_var]
+                    j = var_to_idx[dependent_var]
+
+                    effect_mean = result.get('indirect_effect_mean', 0)
+                    is_significant = result.get('is_significant', False)
+
+                    mediation_matrix[i, j] = effect_mean
+                    significance_matrix[i, j] = 1 if is_significant else 0
+
+            # 히트맵 생성
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
+
+            # 매개효과 크기 히트맵
+            im1 = ax1.imshow(mediation_matrix, cmap='RdBu_r', aspect='auto')
+            ax1.set_xticks(range(n_vars))
+            ax1.set_yticks(range(n_vars))
+            ax1.set_xticklabels(variables, rotation=45, ha='right')
+            ax1.set_yticklabels(variables)
+            ax1.set_xlabel('Dependent Variable')
+            ax1.set_ylabel('Independent Variable')
+            ax1.set_title('Mediation Effect Sizes')
+
+            # 값 표시
+            for i in range(n_vars):
+                for j in range(n_vars):
+                    if mediation_matrix[i, j] != 0:
+                        text_color = 'white' if abs(mediation_matrix[i, j]) > np.max(np.abs(mediation_matrix)) * 0.5 else 'black'
+                        ax1.text(j, i, f'{mediation_matrix[i, j]:.3f}',
+                                ha='center', va='center', color=text_color, fontsize=8)
+
+            plt.colorbar(im1, ax=ax1, label='Effect Size')
+
+            # 유의성 히트맵
+            im2 = ax2.imshow(significance_matrix, cmap='Reds', aspect='auto', vmin=0, vmax=1)
+            ax2.set_xticks(range(n_vars))
+            ax2.set_yticks(range(n_vars))
+            ax2.set_xticklabels(variables, rotation=45, ha='right')
+            ax2.set_yticklabels(variables)
+            ax2.set_xlabel('Dependent Variable')
+            ax2.set_ylabel('Independent Variable')
+            ax2.set_title('Mediation Effect Significance')
+
+            # 유의성 표시
+            for i in range(n_vars):
+                for j in range(n_vars):
+                    if significance_matrix[i, j] == 1:
+                        ax2.text(j, i, '***', ha='center', va='center',
+                                color='white', fontweight='bold', fontsize=12)
+
+            plt.colorbar(im2, ax=ax2, label='Significant (1) / Non-significant (0)')
+
+            plt.tight_layout()
+
+            # 파일 저장
+            file_path = self.output_dir / f"{filename}.png"
+            plt.savefig(file_path, dpi=300, bbox_inches='tight')
+            plt.close(fig)
+
+            logger.info(f"매개효과 히트맵 저장 완료: {file_path}")
+            return file_path
+
+        except Exception as e:
+            logger.error(f"매개효과 히트맵 생성 오류: {e}")
+            if 'fig' in locals():
+                plt.close(fig)
+            return None
+
+
+# 새로운 편의 함수들
+def create_bootstrap_visualization(bootstrap_results: Dict[str, Any],
+                                 output_dir: str = "path_analysis_results/visualizations",
+                                 filename: str = "bootstrap_analysis") -> Optional[Path]:
+    """부트스트래핑 시각화 편의 함수"""
+    visualizer = PathAnalysisVisualizer(output_dir)
+    return visualizer.create_bootstrap_confidence_interval_plot(bootstrap_results, filename)
+
+
+def create_mediation_heatmap(all_mediations: Dict[str, Any],
+                           output_dir: str = "path_analysis_results/visualizations",
+                           filename: str = "mediation_heatmap") -> Optional[Path]:
+    """매개효과 히트맵 편의 함수"""
+    visualizer = PathAnalysisVisualizer(output_dir)
+    return visualizer.create_mediation_effects_heatmap(all_mediations, filename)

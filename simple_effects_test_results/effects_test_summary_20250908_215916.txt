@@ -1,0 +1,36 @@
+간단한 경로분석 효과 계산 테스트 결과
+==================================================
+실행 시간: 20250908_215916
+
+EffectsCalculator 부트스트래핑 결과:
+원본 효과:
+  direct_effect: 0.2547099030073962
+  indirect_effect: 0.4383464479869085
+  total_effect: 0.6930563509943047
+  indirect_via_M: 0.4383464479869085
+
+신뢰구간:
+  direct_effects: [0.1389, 0.3497] *
+  indirect_effects: [0.3496, 0.5614] *
+  total_effects: [0.6302, 0.7733] *
+  indirect_via_M: [0.3496, 0.5614] *
+
+PathAnalyzer 결과:
+  결과 키: ['model_info', 'fit_indices', 'path_coefficients', 'parameter_estimates', 'standardized_results', 'model_object', 'path_analysis', 'bootstrap_effects', 'all_mediations']
+  적합도 지수:
+    chi_square: Value    0.00006
+Name: chi2, dtype: float64
+    df: nan
+    p_value: nan
+    cfi: Value    1.001981
+Name: CFI, dtype: float64
+    tli: Value    1.007923
+Name: TLI, dtype: float64
+    rmsea: Value    0
+Name: RMSEA, dtype: int64
+    srmr: nan
+    aic: Value    9.999999
+Name: AIC, dtype: float64
+    bic: Value    26.491586
+Name: BIC, dtype: float64
+  부트스트래핑 결과: 없음

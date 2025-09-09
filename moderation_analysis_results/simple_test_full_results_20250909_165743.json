@@ -1,0 +1,58 @@
+{
+  "variables": {
+    "independent": "health_concern",
+    "dependent": "perceived_benefit",
+    "moderator": "nutrition_knowledge",
+    "interaction": "health_concern_x_nutrition_knowledge"
+  },
+  "model_info": {
+    "n_observations": 300,
+    "n_parameters": 4
+  },
+  "coefficients": {
+    "health_concern": {
+      "estimate": 0.5234,
+      "std_error": 0.1123,
+      "z_value": 4.6612,
+      "p_value": 0.0001,
+      "significant": true
+    },
+    "health_concern_x_nutrition_knowledge": {
+      "estimate": 0.1789,
+      "std_error": 0.0654,
+      "z_value": 2.7345,
+      "p_value": 0.0062,
+      "significant": true
+    }
+  },
+  "moderation_test": {
+    "interaction_coefficient": 0.1789,
+    "std_error": 0.0654,
+    "z_value": 2.7345,
+    "p_value": 0.0062,
+    "significant": true,
+    "effect_size": 0.1789,
+    "interpretation": "조절변수가 증가할수록 독립변수의 효과가 강화됨"
+  },
+  "simple_slopes": {
+    "low": {
+      "simple_slope": 0.3445,
+      "p_value": 0.0052,
+      "significant": true
+    },
+    "mean": {
+      "simple_slope": 0.5234,
+      "p_value": 0.0001,
+      "significant": true
+    },
+    "high": {
+      "simple_slope": 0.7023,
+      "p_value": 0.0001,
+      "significant": true
+    }
+  },
+  "fit_indices": {
+    "CFI": 0.956,
+    "RMSEA": 0.067
+  }
+}

@@ -393,6 +393,115 @@ class PathModelBuilder:
         
         return validation_results
 
+    def create_five_factor_comprehensive_model(self,
+                                             variables: List[str],
+                                             include_all_mediations: bool = True,
+                                             mediation_threshold: float = 0.01) -> str:
+        """
+        5개 요인 간 포괄적 매개모델 생성 (모든 가능한 매개경로 포함)
+
+        Args:
+            variables (List[str]): 5개 요인 변수들
+            include_all_mediations (bool): 모든 매개경로 포함 여부
+            mediation_threshold (float): 매개효과 임계값
+
+        Returns:
+            str: semopy 모델 스펙
+        """
+        if len(variables) != 5:
+            raise ValueError("정확히 5개의 변수가 필요합니다.")
+
+        logger.info(f"5개 요인 포괄적 매개모델 생성: {variables}")
+
+        # 측정모델 생성
+        measurement_models = []
+        for variable in variables:
+            items = self._get_factor_items(variable)
+            if items:
+                measurement_model = f"{variable} =~ " + " + ".join(items)
+                measurement_models.append(measurement_model)
+
+        # 구조모델 생성 - 모든 가능한 직접경로
+        structural_models = []
+
+        if include_all_mediations:
+            # 모든 가능한 X -> Y 직접경로 포함
+            for i, from_var in enumerate(variables):
+                for j, to_var in enumerate(variables):
+                    if i != j:  # 자기 자신 제외
+                        structural_models.append(f"{to_var} ~ {from_var}")
+        else:
+            # 이론적으로 타당한 경로만 포함 (예: 순차적 관계)
+            for i in range(len(variables) - 1):
+                for j in range(i + 1, len(variables)):
+                    # 양방향 경로
+                    structural_models.append(f"{variables[j]} ~ {variables[i]}")
+                    structural_models.append(f"{variables[i]} ~ {variables[j]}")
+
+        # 공분산 추가 (오차항 간)
+        covariance_models = []
+        for i in range(len(variables)):
+            for j in range(i + 1, len(variables)):
+                covariance_models.append(f"{variables[i]} ~~ {variables[j]}")
+
+        # 전체 모델 스펙 조합
+        all_models = measurement_models + structural_models + covariance_models
+        model_spec = "\n".join(all_models)
+
+        logger.info(f"5개 요인 포괄적 모델 생성 완료: {len(structural_models)}개 구조경로, {len(covariance_models)}개 공분산")
+        return model_spec
+
+    def create_mediation_focused_model(self,
+                                     variables: List[str],
+                                     primary_relationships: List[Tuple[str, str]],
+                                     include_all_possible_mediators: bool = True) -> str:
+        """
+        매개효과 중심의 모델 생성
+
+        Args:
+            variables (List[str]): 모든 변수들
+            primary_relationships (List[Tuple[str, str]]): 주요 관계 [(X, Y), ...]
+            include_all_possible_mediators (bool): 모든 가능한 매개변수 포함 여부
+
+        Returns:
+            str: semopy 모델 스펙
+        """
+        logger.info(f"매개효과 중심 모델 생성: {len(primary_relationships)}개 주요 관계")
+
+        # 측정모델 생성
+        measurement_models = []
+        for variable in variables:
+            items = self._get_factor_items(variable)
+            if items:
+                measurement_model = f"{variable} =~ " + " + ".join(items)
+                measurement_models.append(measurement_model)
+
+        structural_models = []
+
+        # 각 주요 관계에 대해 매개모델 생성
+        for independent_var, dependent_var in primary_relationships:
+            # 직접경로
+            structural_models.append(f"{dependent_var} ~ {independent_var}")
+
+            if include_all_possible_mediators:
+                # 모든 다른 변수를 매개변수로 고려
+                potential_mediators = [v for v in variables if v not in [independent_var, dependent_var]]
+
+                for mediator in potential_mediators:
+                    # X -> M 경로
+                    structural_models.append(f"{mediator} ~ {independent_var}")
+                    # M -> Y 경로
+                    structural_models.append(f"{dependent_var} ~ {mediator}")
+
+        # 중복 제거
+        structural_models = list(set(structural_models))
+
+        # 전체 모델 스펙 조합
+        model_spec = "\n".join(measurement_models + structural_models)
+
+        logger.info(f"매개효과 중심 모델 생성 완료: {len(structural_models)}개 구조경로")
+        return model_spec
+
 
 # 편의 함수들
 def create_mediation_model(independent_var: str,
@@ -441,3 +550,22 @@ def create_saturated_model(variables: List[str],
     """포화 구조모델 생성 편의 함수 (모든 가능한 경로 포함)"""
     builder = PathModelBuilder(data_dir)
     return builder.create_saturated_structural_model(variables)
+
+
+def create_five_factor_comprehensive_model(variables: List[str],
+                                         include_all_mediations: bool = True,
+                                         data_dir: str = "processed_data/survey_data") -> str:
+    """5개 요인 포괄적 매개모델 생성 편의 함수"""
+    builder = PathModelBuilder(data_dir)
+    return builder.create_five_factor_comprehensive_model(variables, include_all_mediations)
+
+
+def create_mediation_focused_model(variables: List[str],
+                                 primary_relationships: List[Tuple[str, str]],
+                                 include_all_possible_mediators: bool = True,
+                                 data_dir: str = "processed_data/survey_data") -> str:
+    """매개효과 중심 모델 생성 편의 함수"""
+    builder = PathModelBuilder(data_dir)
+    return builder.create_mediation_focused_model(
+        variables, primary_relationships, include_all_possible_mediators
+    )
