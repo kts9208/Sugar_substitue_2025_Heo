@@ -91,14 +91,30 @@ class PathResultsExporter:
                 )
                 saved_files['effects_analysis'] = str(effects_file)
             
-            # 5. 전체 결과 JSON 저장
+            # 5. 부트스트래핑 결과 저장
+            if 'bootstrap_effects' in analysis_results:
+                bootstrap_file = self._export_bootstrap_results(
+                    analysis_results['bootstrap_effects'],
+                    f"{filename_prefix}_bootstrap_{timestamp}"
+                )
+                saved_files['bootstrap_results'] = str(bootstrap_file)
+
+            # 6. 모든 매개효과 분석 결과 저장
+            if 'all_mediations' in analysis_results:
+                mediations_file = self._export_all_mediations(
+                    analysis_results['all_mediations'],
+                    f"{filename_prefix}_all_mediations_{timestamp}"
+                )
+                saved_files['all_mediations'] = str(mediations_file)
+
+            # 7. 전체 결과 JSON 저장
             json_file = self._export_full_results_json(
                 analysis_results,
                 f"{filename_prefix}_full_results_{timestamp}"
             )
             saved_files['full_results_json'] = str(json_file)
-            
-            # 6. 요약 보고서 생성
+
+            # 8. 요약 보고서 생성
             summary_file = self._create_summary_report(
                 analysis_results,
                 f"{filename_prefix}_summary_{timestamp}"
@@ -385,6 +401,130 @@ class PathResultsExporter:
         except Exception as e:
             logger.error(f"효과 분석 결과 저장 오류: {e}")
             raise
+
+    def _export_bootstrap_results(self, bootstrap_results: Dict[str, Any], filename: str) -> Path:
+        """부트스트래핑 결과 저장"""
+        try:
+            all_bootstrap_data = []
+
+            for combination_key, bootstrap_result in bootstrap_results.items():
+                # 기본 정보
+                base_info = {
+                    'Combination': combination_key,
+                    'Category': 'Settings',
+                    'Effect_Type': 'Bootstrap_Settings',
+                    'Value': '',
+                    'Lower_CI': '',
+                    'Upper_CI': '',
+                    'Significant': ''
+                }
+
+                # 설정 정보 추가
+                settings = bootstrap_result.get('settings', {})
+                for setting_key, setting_value in settings.items():
+                    setting_row = base_info.copy()
+                    setting_row['Effect_Type'] = f'Setting_{setting_key}'
+                    setting_row['Value'] = str(setting_value)
+                    all_bootstrap_data.append(setting_row)
+
+                # 신뢰구간 결과 추가
+                confidence_intervals = bootstrap_result.get('confidence_intervals', {})
+                for effect_type, ci_info in confidence_intervals.items():
+                    ci_row = base_info.copy()
+                    ci_row['Category'] = 'Confidence_Intervals'
+                    ci_row['Effect_Type'] = effect_type
+                    ci_row['Value'] = ci_info.get('mean', '')
+                    ci_row['Lower_CI'] = ci_info.get('lower_ci', '')
+                    ci_row['Upper_CI'] = ci_info.get('upper_ci', '')
+                    ci_row['Significant'] = 'Yes' if ci_info.get('significant', False) else 'No'
+                    all_bootstrap_data.append(ci_row)
+
+                # 부트스트래핑 통계 추가
+                bootstrap_stats = bootstrap_result.get('bootstrap_statistics', {})
+                for effect_type, stats_info in bootstrap_stats.items():
+                    for stat_name, stat_value in stats_info.items():
+                        stat_row = base_info.copy()
+                        stat_row['Category'] = 'Bootstrap_Statistics'
+                        stat_row['Effect_Type'] = f'{effect_type}_{stat_name}'
+                        stat_row['Value'] = stat_value
+                        all_bootstrap_data.append(stat_row)
+
+            df = pd.DataFrame(all_bootstrap_data)
+            file_path = self.output_dir / f"{filename}.csv"
+            df.to_csv(file_path, index=False, encoding='utf-8-sig')
+
+            logger.info(f"부트스트래핑 결과 저장 완료: {file_path}")
+            return file_path
+
+        except Exception as e:
+            logger.error(f"부트스트래핑 결과 저장 오류: {e}")
+            raise
+
+    def _export_all_mediations(self, all_mediations: Dict[str, Any], filename: str) -> Path:
+        """모든 매개효과 분석 결과 저장"""
+        try:
+            mediation_data = []
+
+            # 요약 정보 먼저 추가
+            summary = all_mediations.get('summary', {})
+            summary_row = {
+                'Analysis_Type': 'Summary',
+                'Independent_Var': '',
+                'Dependent_Var': '',
+                'Mediator': '',
+                'Indirect_Effect_Mean': '',
+                'Lower_CI': '',
+                'Upper_CI': '',
+                'Significant': '',
+                'Details': f"Total: {summary.get('total_combinations_tested', 0)}, "
+                          f"Significant: {summary.get('significant_mediations_count', 0)}, "
+                          f"Rate: {summary.get('significance_rate', 0):.1%}"
+            }
+            mediation_data.append(summary_row)
+
+            # 유의한 매개효과 결과 추가
+            significant_results = all_mediations.get('significant_results', {})
+            for combination_key, result in significant_results.items():
+                mediation_row = {
+                    'Analysis_Type': 'Significant_Mediation',
+                    'Independent_Var': result.get('independent_var', ''),
+                    'Dependent_Var': result.get('dependent_var', ''),
+                    'Mediator': result.get('mediator', ''),
+                    'Indirect_Effect_Mean': result.get('indirect_effect_mean', ''),
+                    'Lower_CI': result.get('indirect_effect_ci', [None, None])[0],
+                    'Upper_CI': result.get('indirect_effect_ci', [None, None])[1],
+                    'Significant': 'Yes' if result.get('is_significant', False) else 'No',
+                    'Details': combination_key
+                }
+                mediation_data.append(mediation_row)
+
+            # 모든 결과 추가 (유의하지 않은 것 포함)
+            all_results = all_mediations.get('all_results', {})
+            for combination_key, result in all_results.items():
+                if combination_key not in significant_results:  # 이미 추가된 것은 제외
+                    mediation_row = {
+                        'Analysis_Type': 'All_Mediation',
+                        'Independent_Var': result.get('independent_var', ''),
+                        'Dependent_Var': result.get('dependent_var', ''),
+                        'Mediator': result.get('mediator', ''),
+                        'Indirect_Effect_Mean': result.get('indirect_effect_mean', ''),
+                        'Lower_CI': result.get('indirect_effect_ci', [None, None])[0] if 'indirect_effect_ci' in result else '',
+                        'Upper_CI': result.get('indirect_effect_ci', [None, None])[1] if 'indirect_effect_ci' in result else '',
+                        'Significant': 'Yes' if result.get('is_significant', False) else 'No',
+                        'Details': result.get('error', combination_key)
+                    }
+                    mediation_data.append(mediation_row)
+
+            df = pd.DataFrame(mediation_data)
+            file_path = self.output_dir / f"{filename}.csv"
+            df.to_csv(file_path, index=False, encoding='utf-8-sig')
+
+            logger.info(f"모든 매개효과 분석 결과 저장 완료: {file_path}")
+            return file_path
+
+        except Exception as e:
+            logger.error(f"매개효과 분석 결과 저장 오류: {e}")
+            raise
     
     def _export_full_results_json(self, analysis_results: Dict[str, Any], filename: str) -> Path:
         """전체 결과 JSON 저장"""
@@ -493,19 +633,62 @@ class PathResultsExporter:
                 effects = analysis_results['effects_analysis']
                 report_lines.append("EFFECTS ANALYSIS SUMMARY")
                 report_lines.append("-" * 30)
-                
+
                 if 'direct_effects' in effects:
                     direct_coeff = effects['direct_effects'].get('coefficient', np.nan)
                     report_lines.append(f"Direct Effect: {direct_coeff:.4f}")
-                
+
                 if 'indirect_effects' in effects:
                     indirect_coeff = effects['indirect_effects'].get('total_indirect_effect', np.nan)
                     report_lines.append(f"Indirect Effect: {indirect_coeff:.4f}")
-                
+
                 if 'total_effects' in effects:
                     total_coeff = effects['total_effects'].get('total_effect', np.nan)
                     report_lines.append(f"Total Effect: {total_coeff:.4f}")
-                
+
+                report_lines.append("")
+
+            # 부트스트래핑 결과 요약
+            if 'bootstrap_effects' in analysis_results:
+                bootstrap_effects = analysis_results['bootstrap_effects']
+                report_lines.append("BOOTSTRAP ANALYSIS SUMMARY")
+                report_lines.append("-" * 30)
+                report_lines.append(f"Bootstrap Combinations Analyzed: {len(bootstrap_effects)}")
+
+                significant_count = 0
+                for combination, result in bootstrap_effects.items():
+                    ci_results = result.get('confidence_intervals', {})
+                    for effect_type, ci_info in ci_results.items():
+                        if ci_info.get('significant', False):
+                            significant_count += 1
+
+                report_lines.append(f"Significant Bootstrap Effects: {significant_count}")
+                report_lines.append("")
+
+            # 모든 매개효과 분석 요약
+            if 'all_mediations' in analysis_results:
+                all_mediations = analysis_results['all_mediations']
+                summary = all_mediations.get('summary', {})
+                report_lines.append("ALL MEDIATIONS ANALYSIS SUMMARY")
+                report_lines.append("-" * 30)
+                report_lines.append(f"Total Combinations Tested: {summary.get('total_combinations_tested', 0)}")
+                report_lines.append(f"Significant Mediations: {summary.get('significant_mediations_count', 0)}")
+                report_lines.append(f"Significance Rate: {summary.get('significance_rate', 0):.1%}")
+
+                # 유의한 매개효과 상위 5개 표시
+                significant_results = all_mediations.get('significant_results', {})
+                if significant_results:
+                    report_lines.append("\nTop Significant Mediations:")
+                    sorted_mediations = sorted(
+                        significant_results.items(),
+                        key=lambda x: abs(x[1].get('indirect_effect_mean', 0)),
+                        reverse=True
+                    )[:5]
+
+                    for combination_key, result in sorted_mediations:
+                        effect_mean = result.get('indirect_effect_mean', 0)
+                        report_lines.append(f"  {combination_key}: {effect_mean:.4f}")
+
                 report_lines.append("")
             
             report_lines.append("=" * 60)

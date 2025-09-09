@@ -24,6 +24,7 @@ except ImportError as e:
 
 from .config import PathAnalysisConfig, create_default_path_config
 from .model_builder import PathModelBuilder
+from .effects_calculator import EffectsCalculator
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,8 @@ class PathAnalyzer:
             
             # 모델 생성
             self.model = Model(model_spec)
-            
+            self.model_spec = model_spec  # 모델 스펙 저장
+
             # 모델 추정
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -201,11 +203,146 @@ class PathAnalyzer:
             # 표준화 결과 (요청시)
             if self.config.standardized:
                 results['standardized_results'] = self._extract_standardized_results()
-            
+
+            # 부트스트래핑 효과 분석 (요청시)
+            if self.config.include_bootstrap_ci and self.config.calculate_effects:
+                try:
+                    results['bootstrap_effects'] = self._perform_bootstrap_analysis()
+                except Exception as e:
+                    logger.warning(f"부트스트래핑 분석 오류: {e}")
+
+            # 5요인 전체 매개효과 분석 (요청시)
+            if self.config.all_possible_mediations and hasattr(self.config, 'analyze_all_paths') and self.config.analyze_all_paths:
+                try:
+                    results['all_mediations'] = self._analyze_all_possible_mediations()
+                except Exception as e:
+                    logger.warning(f"매개효과 분석 오류: {e}")
+
         except Exception as e:
             logger.warning(f"결과 처리 중 일부 오류 발생: {e}")
-        
+
         return results
+
+    def _perform_bootstrap_analysis(self) -> Dict[str, Any]:
+        """부트스트래핑 분석 수행"""
+        try:
+            logger.info("부트스트래핑 분석 시작")
+
+            # EffectsCalculator 초기화
+            effects_calculator = EffectsCalculator(self.model)
+            effects_calculator.set_data(self.data)
+            effects_calculator.model_spec = getattr(self, 'model_spec', None)  # 모델 스펙 전달
+
+            # 잠재변수 추출
+            latent_vars = self._get_latent_variables()
+
+            if len(latent_vars) < 2:
+                logger.warning("부트스트래핑 분석을 위해서는 최소 2개의 잠재변수가 필요합니다.")
+                return {}
+
+            bootstrap_results = {}
+
+            # 모든 가능한 X -> Y 조합에 대해 부트스트래핑 수행
+            for i, independent_var in enumerate(latent_vars):
+                for j, dependent_var in enumerate(latent_vars):
+                    if i == j:
+                        continue
+
+                    # 나머지 변수들을 매개변수로 고려
+                    potential_mediators = [v for k, v in enumerate(latent_vars) if k != i and k != j]
+
+                    if potential_mediators:
+                        combination_key = f"{independent_var}_to_{dependent_var}"
+
+                        try:
+                            bootstrap_result = effects_calculator.calculate_bootstrap_effects(
+                                independent_var=independent_var,
+                                dependent_var=dependent_var,
+                                mediator_vars=potential_mediators,
+                                n_bootstrap=self.config.bootstrap_samples,
+                                confidence_level=self.config.confidence_level,
+                                method=self.config.bootstrap_percentile_method,
+                                parallel=self.config.bootstrap_parallel,
+                                n_jobs=self.config.bootstrap_n_jobs,
+                                random_seed=self.config.bootstrap_random_seed,
+                                show_progress=self.config.bootstrap_progress_bar
+                            )
+
+                            bootstrap_results[combination_key] = bootstrap_result
+
+                        except Exception as e:
+                            logger.warning(f"부트스트래핑 실패: {combination_key} - {e}")
+
+            logger.info(f"부트스트래핑 분석 완료: {len(bootstrap_results)}개 조합")
+            return bootstrap_results
+
+        except Exception as e:
+            logger.error(f"부트스트래핑 분석 오류: {e}")
+            return {}
+
+    def _analyze_all_possible_mediations(self) -> Dict[str, Any]:
+        """5개 요인 간 모든 가능한 매개효과 분석"""
+        try:
+            logger.info("모든 가능한 매개효과 분석 시작")
+
+            # EffectsCalculator 초기화
+            effects_calculator = EffectsCalculator(self.model)
+            effects_calculator.set_data(self.data)
+
+            # 잠재변수 추출
+            latent_vars = self._get_latent_variables()
+
+            if len(latent_vars) < 3:
+                logger.warning("매개효과 분석을 위해서는 최소 3개의 잠재변수가 필요합니다.")
+                return {}
+
+            # 5개 요인으로 제한 (설정에 따라 조정 가능)
+            if len(latent_vars) > 5:
+                logger.info(f"변수가 {len(latent_vars)}개입니다. 처음 5개만 사용합니다.")
+                latent_vars = latent_vars[:5]
+
+            mediation_results = effects_calculator.analyze_all_possible_mediations(
+                variables=latent_vars,
+                bootstrap_samples=self.config.mediation_bootstrap_samples,
+                confidence_level=self.config.confidence_level,
+                parallel=self.config.bootstrap_parallel,
+                show_progress=self.config.bootstrap_progress_bar
+            )
+
+            logger.info("모든 가능한 매개효과 분석 완료")
+            return mediation_results
+
+        except Exception as e:
+            logger.error(f"매개효과 분석 오류: {e}")
+            return {}
+
+    def _get_latent_variables(self) -> List[str]:
+        """모델에서 잠재변수 추출"""
+        try:
+            if self.model is None:
+                return []
+
+            # semopy 모델에서 잠재변수 추출
+            params = self.model.inspect()
+
+            # 측정모델에서 잠재변수 찾기 (=~ 연산자)
+            measurement_params = params[params['op'] == '=~']
+            latent_vars = measurement_params['lval'].unique().tolist()
+
+            # 구조모델에서 추가 잠재변수 찾기 (~ 연산자)
+            structural_params = params[params['op'] == '~']
+            additional_latent = set(structural_params['lval'].tolist() + structural_params['rval'].tolist())
+
+            # 관측변수 제외 (일반적으로 소문자로 시작하거나 숫자 포함)
+            for var in additional_latent:
+                if var not in latent_vars and not any(char.islower() or char.isdigit() for char in var):
+                    latent_vars.append(var)
+
+            return sorted(list(set(latent_vars)))
+
+        except Exception as e:
+            logger.warning(f"잠재변수 추출 오류: {e}")
+            return []
     
     def _calculate_fit_indices(self) -> Dict[str, float]:
         """모델 적합도 지수 계산"""
@@ -455,3 +592,80 @@ def create_path_model(model_type: str, **kwargs) -> str:
     # - 'custom': 사용자 정의 경로
     # - 'comprehensive': 이론적으로 타당한 모든 경로
     # - 'saturated': 모든 가능한 경로 (완전 포화 모델)
+
+
+# 편의 함수들
+def analyze_path_model(model_spec: str,
+                      variables: List[str],
+                      config: Optional[PathAnalysisConfig] = None) -> Dict[str, Any]:
+    """
+    경로분석 실행 편의 함수
+
+    Args:
+        model_spec (str): semopy 모델 스펙
+        variables (List[str]): 분석할 변수들
+        config (Optional[PathAnalysisConfig]): 분석 설정
+
+    Returns:
+        Dict[str, Any]: 분석 결과
+    """
+    analyzer = PathAnalyzer(config)
+    data = analyzer.load_data(variables)
+    return analyzer.fit_model(model_spec, data)
+
+
+def create_path_model(model_type: str, **kwargs) -> str:
+    """
+    경로모델 생성 편의 함수
+
+    Args:
+        model_type (str): 모델 유형
+            - 'simple_mediation': 단순 매개모델 (X -> M -> Y)
+            - 'multiple_mediation': 다중 매개모델 (X -> M1,M2,... -> Y)
+            - 'serial_mediation': 순차 매개모델 (X -> M1 -> M2 -> Y)
+            - 'custom': 사용자 정의 경로
+            - 'comprehensive': 이론적으로 타당한 모든 경로
+            - 'saturated': 모든 가능한 경로 (완전 포화 모델)
+        **kwargs: 모델별 매개변수
+
+    Returns:
+        str: semopy 모델 스펙
+    """
+    builder = PathModelBuilder(kwargs.get('data_dir', 'processed_data/survey_data'))
+
+    if model_type == 'simple_mediation':
+        return builder.create_simple_mediation_model(
+            kwargs['independent_var'],
+            kwargs['mediator_var'],
+            kwargs['dependent_var']
+        )
+    elif model_type == 'multiple_mediation':
+        return builder.create_multiple_mediation_model(
+            kwargs['independent_var'],
+            kwargs['mediator_vars'],
+            kwargs['dependent_var']
+        )
+    elif model_type == 'serial_mediation':
+        return builder.create_serial_mediation_model(
+            kwargs['independent_var'],
+            kwargs['mediator_vars'],
+            kwargs['dependent_var']
+        )
+    elif model_type == 'custom':
+        return builder.create_custom_structural_model(
+            kwargs['variables'],
+            kwargs['paths'],
+            kwargs.get('correlations', None)
+        )
+    elif model_type == 'comprehensive':
+        return builder.create_comprehensive_structural_model(
+            kwargs['variables'],
+            kwargs.get('include_bidirectional', True),
+            kwargs.get('include_feedback', True)
+        )
+    elif model_type == 'saturated':
+        return builder.create_saturated_structural_model(
+            kwargs['variables']
+        )
+    else:
+        raise ValueError(f"지원하지 않는 모델 유형: {model_type}")

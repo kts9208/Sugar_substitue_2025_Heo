@@ -1,0 +1,4 @@
+﻿Moderator_Level,Moderator_Value,Simple_Slope,Std_Error,T_Value,P_Value,Significant
+low,,0.3445,,,0.0052,True
+mean,,0.5234,,,0.0001,True
+high,,0.7023,,,0.0001,True

@@ -27,14 +27,18 @@ from .model_builder import (
     create_mediation_model,
     create_structural_model,
     create_comprehensive_model,
-    create_saturated_model
+    create_saturated_model,
+    create_five_factor_comprehensive_model,
+    create_mediation_focused_model
 )
 from .effects_calculator import (
     EffectsCalculator,
     calculate_direct_effects,
     calculate_indirect_effects,
     calculate_total_effects,
-    analyze_mediation_effects
+    analyze_mediation_effects,
+    calculate_bootstrap_effects,
+    analyze_all_possible_mediations
 )
 from .results_exporter import (
     PathResultsExporter,
@@ -45,13 +49,16 @@ from .visualizer import (
     create_path_diagram,
     create_multiple_diagrams,
     create_advanced_diagrams,
-    visualize_path_analysis
+    visualize_path_analysis,
+    create_bootstrap_visualization,
+    create_mediation_heatmap
 )
 from .config import (
     PathAnalysisConfig,
     create_default_path_config,
     create_mediation_config,
-    create_exploratory_config
+    create_exploratory_config,
+    create_comprehensive_bootstrap_config
 )
 
 __version__ = "1.0.0"
@@ -68,13 +75,17 @@ __all__ = [
     'create_structural_model',
     'create_comprehensive_model',
     'create_saturated_model',
+    'create_five_factor_comprehensive_model',
+    'create_mediation_focused_model',
     
     # Effects calculation
     'EffectsCalculator',
     'calculate_direct_effects',
-    'calculate_indirect_effects', 
+    'calculate_indirect_effects',
     'calculate_total_effects',
     'analyze_mediation_effects',
+    'calculate_bootstrap_effects',
+    'analyze_all_possible_mediations',
     
     # Results export
     'PathResultsExporter',
@@ -86,10 +97,13 @@ __all__ = [
     'create_multiple_diagrams',
     'create_advanced_diagrams',
     'visualize_path_analysis',
+    'create_bootstrap_visualization',
+    'create_mediation_heatmap',
     
     # Configuration
     'PathAnalysisConfig',
     'create_default_path_config',
     'create_mediation_config',
-    'create_exploratory_config'
+    'create_exploratory_config',
+    'create_comprehensive_bootstrap_config'
 ]

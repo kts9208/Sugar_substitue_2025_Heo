@@ -11,6 +11,17 @@ from typing import Dict, List, Optional, Any, Tuple, Union
 import logging
 from pathlib import Path
 import warnings
+# 기존 복잡한 병렬 처리 임포트 제거됨 - semopy 내장 기능 사용
+import scipy.stats as stats
+
+# tqdm 임포트 (선택적)
+try:
+    from tqdm import tqdm
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
+    def tqdm(iterable, *args, **kwargs):
+        return iterable
 from itertools import combinations
 
 # semopy 임포트
@@ -42,9 +53,37 @@ class EffectsCalculator:
             raise ImportError("semopy 라이브러리가 필요합니다.")
         
         self.model = model
+        self.data = None
+        self.model_spec = None  # 모델 스펙 저장용
         self.bootstrap_samples = bootstrap_samples
         self.confidence_level = confidence_level
         self.alpha = 1 - confidence_level
+
+    def set_data(self, data):
+        """
+        분석에 사용할 데이터 설정
+
+        Args:
+            data: pandas DataFrame
+        """
+        self.data = data
+
+    def set_model(self, model):
+        """
+        분석에 사용할 모델 설정
+
+        Args:
+            model: semopy Model 객체 또는 모델 스펙 문자열
+        """
+        if isinstance(model, str):
+            # 모델 스펙 문자열인 경우 새 모델 생성
+            self.model = Model(model)
+            if self.data is not None:
+                # 데이터가 있으면 즉시 적합
+                self.model.fit(self.data)
+        else:
+            # 이미 적합된 모델 객체인 경우
+            self.model = model
         
         logger.info("EffectsCalculator 초기화 완료")
     
@@ -108,6 +147,91 @@ class EffectsCalculator:
         except Exception as e:
             logger.error(f"효과 계산 중 오류: {e}")
             raise
+
+    def calculate_bootstrap_effects(self,
+                                  independent_var: str,
+                                  dependent_var: str,
+                                  mediator_vars: Optional[List[str]] = None,
+                                  n_bootstrap: int = 5000,
+                                  confidence_level: float = 0.95,
+                                  method: str = 'percentile',
+                                  parallel: bool = True,
+                                  n_jobs: int = -1,
+                                  random_seed: Optional[int] = None,
+                                  show_progress: bool = True) -> Dict[str, Any]:
+        """
+        semopy 기반 부트스트래핑을 사용한 효과 분석 및 신뢰구간 계산
+
+        Args:
+            independent_var (str): 독립변수
+            dependent_var (str): 종속변수
+            mediator_vars (Optional[List[str]]): 매개변수들
+            n_bootstrap (int): 부트스트래핑 샘플 수
+            confidence_level (float): 신뢰수준
+            method (str): 신뢰구간 계산 방법 ('percentile', 'bias-corrected')
+            parallel (bool): 병렬 처리 사용 여부 (현재 미구현)
+            n_jobs (int): 병렬 처리 작업 수 (현재 미구현)
+            random_seed (Optional[int]): 랜덤 시드
+            show_progress (bool): 진행 상황 표시 여부
+
+        Returns:
+            Dict[str, Any]: 부트스트래핑 효과 분석 결과
+        """
+        if self.model is None or self.model_spec is None:
+            raise ValueError("모델과 모델 스펙이 설정되지 않았습니다.")
+
+        if self.data is None:
+            raise ValueError("데이터가 설정되지 않았습니다.")
+
+        logger.info(f"semopy 기반 부트스트래핑 효과 분석 시작: {independent_var} -> {dependent_var}")
+        logger.info(f"부트스트래핑 샘플 수: {n_bootstrap}, 신뢰수준: {confidence_level}")
+
+        # 랜덤 시드 설정
+        if random_seed is not None:
+            np.random.seed(random_seed)
+
+        # 원본 효과 계산
+        original_effects = self._calculate_path_effects_from_model(
+            self.model, independent_var, dependent_var, mediator_vars
+        )
+
+        # semopy 내장 부트스트래핑 실행 (우선 시도)
+        try:
+            bootstrap_results = self._run_semopy_native_bootstrap_sampling(
+                independent_var, dependent_var, mediator_vars,
+                n_bootstrap, show_progress
+            )
+            logger.info("semopy 내장 부트스트래핑 사용")
+        except Exception as e:
+            logger.warning(f"semopy 내장 부트스트래핑 실패: {e}")
+            logger.info("수동 semopy 부트스트래핑으로 전환")
+            # 대안: 수동 semopy 부트스트래핑
+            bootstrap_results = self._run_semopy_bootstrap_sampling(
+                independent_var, dependent_var, mediator_vars,
+                n_bootstrap, show_progress
+            )
+
+        # 신뢰구간 계산
+        confidence_intervals = self._calculate_confidence_intervals(
+            bootstrap_results, confidence_level, method
+        )
+
+        # 결과 통합
+        results = {
+            'original_effects': original_effects,
+            'bootstrap_results': bootstrap_results,
+            'confidence_intervals': confidence_intervals,
+            'bootstrap_statistics': self._calculate_bootstrap_statistics(bootstrap_results),
+            'settings': {
+                'n_bootstrap': n_bootstrap,
+                'confidence_level': confidence_level,
+                'method': method,
+                'random_seed': random_seed
+            }
+        }
+
+        logger.info("부트스트래핑 효과 분석 완료")
+        return results
     
     def calculate_direct_effects(self, 
                                independent_var: str,
@@ -319,10 +443,599 @@ class EffectsCalculator:
             
             logger.info(f"총효과 계산 완료: {total_effect:.4f}")
             return total_effects
-            
+
         except Exception as e:
             logger.error(f"총효과 계산 오류: {e}")
             return {}
+
+    # 기존 복잡한 부트스트래핑 메서드 제거됨 - semopy 내장 기능으로 대체
+
+    def _run_bootstrap_sampling_legacy(self,
+                               independent_var: str,
+                               dependent_var: str,
+                               mediator_vars: Optional[List[str]],
+                               n_bootstrap: int,
+                               parallel: bool,
+                               n_jobs: int,
+                               show_progress: bool) -> Dict[str, List[float]]:
+        """
+        부트스트래핑 샘플링 실행
+
+        Returns:
+            Dict[str, List[float]]: 부트스트래핑 결과
+        """
+        logger.info("부트스트래핑 샘플링 시작")
+
+        # 원본 데이터 준비
+        original_data = self.data.copy()
+        n_obs = len(original_data)
+
+        # 결과 저장용 딕셔너리
+        bootstrap_effects = {
+            'direct_effects': [],
+            'indirect_effects': [],
+            'total_effects': []
+        }
+
+        if mediator_vars:
+            for mediator in mediator_vars:
+                bootstrap_effects[f'indirect_via_{mediator}'] = []
+
+        # 부트스트래핑 함수 정의
+        def single_bootstrap(seed_offset: int) -> Dict[str, float]:
+            """단일 부트스트래핑 샘플 처리"""
+            try:
+                # 시드 설정 (각 샘플마다 다른 시드)
+                np.random.seed(seed_offset)
+
+                # 부트스트래핑 샘플 생성
+                bootstrap_indices = np.random.choice(n_obs, size=n_obs, replace=True)
+                bootstrap_data = original_data.iloc[bootstrap_indices].reset_index(drop=True)
+
+                # 임시 계산기 생성
+                temp_calculator = EffectsCalculator()
+                temp_calculator.set_data(bootstrap_data)
+
+                # 모델 재추정 (저장된 모델 스펙 사용)
+                if self.model_spec is not None:
+                    model_spec = self.model_spec
+                else:
+                    # 대안: 기본 모델 스펙 (오류 방지용)
+                    logger.warning("모델 스펙이 없어 부트스트래핑을 건너뜁니다.")
+                    return {'direct_effect': 0.0, 'total_effect': 0.0}
+
+                temp_calculator.set_model(model_spec)
+
+                # 효과 계산
+                effects = temp_calculator.calculate_all_effects(
+                    independent_var, dependent_var, mediator_vars
+                )
+
+                # 결과 추출
+                result = {
+                    'direct_effect': effects.get('direct_effects', {}).get('coefficient', 0.0),
+                    'total_effect': effects.get('total_effects', {}).get('total_effect', 0.0)
+                }
+
+                # 간접효과 추출
+                indirect_effects = effects.get('indirect_effects', {})
+                result['indirect_effect'] = indirect_effects.get('total_indirect_effect', 0.0)
+
+                if mediator_vars:
+                    individual_paths = indirect_effects.get('individual_paths', {})
+                    for mediator in mediator_vars:
+                        if mediator in individual_paths:
+                            result[f'indirect_via_{mediator}'] = individual_paths[mediator].get('indirect_effect', 0.0)
+                        else:
+                            result[f'indirect_via_{mediator}'] = 0.0
+
+                return result
+
+            except Exception as e:
+                logger.warning(f"부트스트래핑 샘플 {seed_offset} 처리 중 오류: {e}")
+                # 오류 발생 시 0으로 반환
+                result = {'direct_effect': 0.0, 'indirect_effect': 0.0, 'total_effect': 0.0}
+                if mediator_vars:
+                    for mediator in mediator_vars:
+                        result[f'indirect_via_{mediator}'] = 0.0
+                return result
+
+        # 병렬 처리 또는 순차 처리
+        if parallel and n_jobs != 1:
+            # 병렬 처리
+            if n_jobs == -1:
+                n_jobs = mp.cpu_count()
+
+            logger.info(f"병렬 처리로 부트스트래핑 실행 (작업 수: {n_jobs})")
+
+            with ProcessPoolExecutor(max_workers=n_jobs) as executor:
+                # 진행 상황 표시
+                if show_progress:
+                    futures = [executor.submit(single_bootstrap, i) for i in range(n_bootstrap)]
+                    results = []
+                    for future in tqdm(as_completed(futures), total=n_bootstrap, desc="Bootstrap"):
+                        results.append(future.result())
+                else:
+                    futures = [executor.submit(single_bootstrap, i) for i in range(n_bootstrap)]
+                    results = [future.result() for future in as_completed(futures)]
+        else:
+            # 순차 처리
+            logger.info("순차 처리로 부트스트래핑 실행")
+            results = []
+            iterator = tqdm(range(n_bootstrap), desc="Bootstrap") if show_progress else range(n_bootstrap)
+            for i in iterator:
+                results.append(single_bootstrap(i))
+
+        # 결과 정리
+        for result in results:
+            bootstrap_effects['direct_effects'].append(result['direct_effect'])
+            bootstrap_effects['indirect_effects'].append(result['indirect_effect'])
+            bootstrap_effects['total_effects'].append(result['total_effect'])
+
+            if mediator_vars:
+                for mediator in mediator_vars:
+                    bootstrap_effects[f'indirect_via_{mediator}'].append(
+                        result.get(f'indirect_via_{mediator}', 0.0)
+                    )
+
+        logger.info(f"부트스트래핑 샘플링 완료: {len(results)}개 샘플")
+        return bootstrap_effects
+
+    def _run_semopy_bootstrap_sampling(self,
+                                     independent_var: str,
+                                     dependent_var: str,
+                                     mediator_vars: Optional[List[str]],
+                                     n_bootstrap: int,
+                                     show_progress: bool) -> Dict[str, List[float]]:
+        """
+        semopy 기반 효율적인 부트스트래핑 샘플링 실행
+
+        Args:
+            independent_var: 독립변수
+            dependent_var: 종속변수
+            mediator_vars: 매개변수들
+            n_bootstrap: 부트스트래핑 샘플 수
+            show_progress: 진행 상황 표시 여부
+
+        Returns:
+            Dict[str, List[float]]: 부트스트래핑 결과
+        """
+        from semopy import Model
+
+        logger.info("semopy 기반 부트스트래핑 샘플링 시작")
+
+        # 원본 데이터 준비
+        original_data = self.data.copy()
+        n_obs = len(original_data)
+
+        # 결과 저장용 딕셔너리
+        bootstrap_effects = {
+            'direct_effects': [],
+            'indirect_effects': [],
+            'total_effects': []
+        }
+
+        if mediator_vars:
+            for mediator in mediator_vars:
+                bootstrap_effects[f'indirect_via_{mediator}'] = []
+
+        # 진행 상황 표시
+        iterator = tqdm(range(n_bootstrap), desc="semopy Bootstrap") if show_progress else range(n_bootstrap)
+
+        successful_samples = 0
+
+        for i in iterator:
+            try:
+                # 부트스트래핑 샘플 생성
+                bootstrap_indices = np.random.choice(n_obs, size=n_obs, replace=True)
+                bootstrap_data = original_data.iloc[bootstrap_indices].reset_index(drop=True)
+
+                # semopy 모델 재적합
+                bootstrap_model = Model(self.model_spec)
+                bootstrap_model.fit(bootstrap_data)
+
+                # 효과 계산
+                effects = self._calculate_path_effects_from_model(
+                    bootstrap_model, independent_var, dependent_var, mediator_vars
+                )
+
+                # 결과 저장
+                bootstrap_effects['direct_effects'].append(effects.get('direct_effect', 0.0))
+                bootstrap_effects['indirect_effects'].append(effects.get('indirect_effect', 0.0))
+                bootstrap_effects['total_effects'].append(effects.get('total_effect', 0.0))
+
+                if mediator_vars:
+                    for mediator in mediator_vars:
+                        bootstrap_effects[f'indirect_via_{mediator}'].append(
+                            effects.get(f'indirect_via_{mediator}', 0.0)
+                        )
+
+                successful_samples += 1
+
+            except Exception as e:
+                logger.warning(f"부트스트래핑 샘플 {i} 처리 중 오류: {e}")
+                # 실패한 샘플에 대해 0 값 추가
+                bootstrap_effects['direct_effects'].append(0.0)
+                bootstrap_effects['indirect_effects'].append(0.0)
+                bootstrap_effects['total_effects'].append(0.0)
+
+                if mediator_vars:
+                    for mediator in mediator_vars:
+                        bootstrap_effects[f'indirect_via_{mediator}'].append(0.0)
+
+        logger.info(f"semopy 부트스트래핑 샘플링 완료: {successful_samples}/{n_bootstrap}개 성공")
+        return bootstrap_effects
+
+    def _run_semopy_native_bootstrap_sampling(self,
+                                            independent_var: str,
+                                            dependent_var: str,
+                                            mediator_vars: Optional[List[str]],
+                                            n_bootstrap: int,
+                                            show_progress: bool) -> Dict[str, List[float]]:
+        """
+        semopy 내장 부트스트래핑 기능을 활용한 효율적인 샘플링
+
+        Args:
+            independent_var: 독립변수
+            dependent_var: 종속변수
+            mediator_vars: 매개변수들
+            n_bootstrap: 부트스트래핑 샘플 수
+            show_progress: 진행 상황 표시 여부
+
+        Returns:
+            Dict[str, List[float]]: 부트스트래핑 결과
+        """
+        from semopy import Model, bias_correction
+        from semopy.model_generation import generate_data
+        from copy import deepcopy
+
+        logger.info("semopy 내장 부트스트래핑 기능 활용 시작")
+
+        # 결과 저장용 딕셔너리
+        bootstrap_effects = {
+            'direct_effects': [],
+            'indirect_effects': [],
+            'total_effects': []
+        }
+
+        if mediator_vars:
+            for mediator in mediator_vars:
+                bootstrap_effects[f'indirect_via_{mediator}'] = []
+
+        # 원본 모델 복사
+        original_model = deepcopy(self.model)
+
+        # 진행 상황 표시
+        iterator = tqdm(range(n_bootstrap), desc="semopy Native Bootstrap") if show_progress else range(n_bootstrap)
+
+        successful_samples = 0
+
+        for i in iterator:
+            try:
+                # semopy의 generate_data 함수를 사용하여 부트스트래핑 데이터 생성
+                bootstrap_data = generate_data(original_model, n=len(self.data))
+
+                # 새 모델로 재적합
+                bootstrap_model = Model(self.model_spec)
+                bootstrap_model.fit(bootstrap_data)
+
+                # 효과 계산
+                effects = self._calculate_path_effects_from_model(
+                    bootstrap_model, independent_var, dependent_var, mediator_vars
+                )
+
+                # 결과 저장
+                bootstrap_effects['direct_effects'].append(effects.get('direct_effect', 0.0))
+                bootstrap_effects['indirect_effects'].append(effects.get('indirect_effect', 0.0))
+                bootstrap_effects['total_effects'].append(effects.get('total_effect', 0.0))
+
+                if mediator_vars:
+                    for mediator in mediator_vars:
+                        bootstrap_effects[f'indirect_via_{mediator}'].append(
+                            effects.get(f'indirect_via_{mediator}', 0.0)
+                        )
+
+                successful_samples += 1
+
+            except Exception as e:
+                logger.warning(f"semopy 내장 부트스트래핑 샘플 {i} 처리 중 오류: {e}")
+                # 실패한 샘플에 대해 0 값 추가
+                bootstrap_effects['direct_effects'].append(0.0)
+                bootstrap_effects['indirect_effects'].append(0.0)
+                bootstrap_effects['total_effects'].append(0.0)
+
+                if mediator_vars:
+                    for mediator in mediator_vars:
+                        bootstrap_effects[f'indirect_via_{mediator}'].append(0.0)
+
+        logger.info(f"semopy 내장 부트스트래핑 완료: {successful_samples}/{n_bootstrap}개 성공")
+        return bootstrap_effects
+
+    def _calculate_path_effects_from_model(self,
+                                         model,
+                                         independent_var: str,
+                                         dependent_var: str,
+                                         mediator_vars: Optional[List[str]] = None) -> Dict[str, float]:
+        """
+        semopy 모델에서 경로 효과 추출
+
+        Args:
+            model: 적합된 semopy 모델
+            independent_var: 독립변수
+            dependent_var: 종속변수
+            mediator_vars: 매개변수들
+
+        Returns:
+            Dict[str, float]: 계산된 효과들
+        """
+        try:
+            # 모델 파라미터 추출
+            params = model.inspect()
+
+            # 직접효과 계산 (independent_var -> dependent_var)
+            direct_effect = 0.0
+            direct_path = params[
+                (params['lval'] == dependent_var) &
+                (params['op'] == '~') &
+                (params['rval'] == independent_var)
+            ]
+
+            if len(direct_path) > 0:
+                direct_effect = float(direct_path['Estimate'].iloc[0])
+
+            # 간접효과 계산 (매개변수를 통한 효과)
+            indirect_effect = 0.0
+            indirect_effects_by_mediator = {}
+
+            if mediator_vars:
+                for mediator in mediator_vars:
+                    # independent_var -> mediator 경로
+                    path_a = params[
+                        (params['lval'] == mediator) &
+                        (params['op'] == '~') &
+                        (params['rval'] == independent_var)
+                    ]
+
+                    # mediator -> dependent_var 경로
+                    path_b = params[
+                        (params['lval'] == dependent_var) &
+                        (params['op'] == '~') &
+                        (params['rval'] == mediator)
+                    ]
+
+                    if len(path_a) > 0 and len(path_b) > 0:
+                        a_coef = float(path_a['Estimate'].iloc[0])
+                        b_coef = float(path_b['Estimate'].iloc[0])
+                        mediator_effect = a_coef * b_coef
+
+                        indirect_effects_by_mediator[f'indirect_via_{mediator}'] = mediator_effect
+                        indirect_effect += mediator_effect
+
+            # 총효과 계산
+            total_effect = direct_effect + indirect_effect
+
+            # 결과 반환
+            result = {
+                'direct_effect': direct_effect,
+                'indirect_effect': indirect_effect,
+                'total_effect': total_effect
+            }
+
+            # 매개변수별 간접효과 추가
+            result.update(indirect_effects_by_mediator)
+
+            return result
+
+        except Exception as e:
+            logger.error(f"모델에서 효과 계산 오류: {e}")
+            return {
+                'direct_effect': 0.0,
+                'indirect_effect': 0.0,
+                'total_effect': 0.0
+            }
+
+    def _calculate_confidence_intervals(self,
+                                      bootstrap_results: Dict[str, List[float]],
+                                      confidence_level: float,
+                                      method: str) -> Dict[str, Dict[str, float]]:
+        """
+        부트스트래핑 결과로부터 신뢰구간 계산
+
+        Args:
+            bootstrap_results: 부트스트래핑 결과
+            confidence_level: 신뢰수준
+            method: 신뢰구간 계산 방법
+
+        Returns:
+            Dict[str, Dict[str, float]]: 신뢰구간 결과
+        """
+        alpha = 1 - confidence_level
+        lower_percentile = (alpha / 2) * 100
+        upper_percentile = (1 - alpha / 2) * 100
+
+        confidence_intervals = {}
+
+        for effect_type, values in bootstrap_results.items():
+            if not values:
+                continue
+
+            values_array = np.array(values)
+
+            if method == 'percentile':
+                # 백분위수 방법
+                lower_ci = np.percentile(values_array, lower_percentile)
+                upper_ci = np.percentile(values_array, upper_percentile)
+
+            elif method == 'bias-corrected' or method == 'bias_corrected':
+                # 편향 보정 방법 (BCa의 간단한 버전)
+                # 편향 보정 계수 계산
+                original_estimate = np.mean(values_array)  # 원본 추정치 대신 평균 사용
+                bias_correction = stats.norm.ppf((np.sum(values_array < original_estimate)) / len(values_array))
+
+                # 보정된 백분위수 계산
+                z_alpha_2 = stats.norm.ppf(alpha / 2)
+                z_1_alpha_2 = stats.norm.ppf(1 - alpha / 2)
+
+                corrected_lower = stats.norm.cdf(2 * bias_correction + z_alpha_2)
+                corrected_upper = stats.norm.cdf(2 * bias_correction + z_1_alpha_2)
+
+                # 백분위수로 변환
+                corrected_lower = max(0, min(100, corrected_lower * 100))
+                corrected_upper = max(0, min(100, corrected_upper * 100))
+
+                lower_ci = np.percentile(values_array, corrected_lower)
+                upper_ci = np.percentile(values_array, corrected_upper)
+
+            else:  # 기본값: percentile
+                lower_ci = np.percentile(values_array, lower_percentile)
+                upper_ci = np.percentile(values_array, upper_percentile)
+
+            confidence_intervals[effect_type] = {
+                'lower': lower_ci,
+                'upper': upper_ci,
+                'mean': np.mean(values_array),
+                'std': np.std(values_array),
+                'significant': not (lower_ci <= 0 <= upper_ci)  # 0을 포함하지 않으면 유의함
+            }
+
+        return confidence_intervals
+
+    def _calculate_bootstrap_statistics(self,
+                                      bootstrap_results: Dict[str, List[float]]) -> Dict[str, Dict[str, float]]:
+        """
+        부트스트래핑 결과의 기술통계 계산
+
+        Args:
+            bootstrap_results: 부트스트래핑 결과
+
+        Returns:
+            Dict[str, Dict[str, float]]: 기술통계 결과
+        """
+        statistics = {}
+
+        for effect_type, values in bootstrap_results.items():
+            if not values:
+                continue
+
+            values_array = np.array(values)
+
+            statistics[effect_type] = {
+                'mean': np.mean(values_array),
+                'std': np.std(values_array),
+                'min': np.min(values_array),
+                'max': np.max(values_array),
+                'median': np.median(values_array),
+                'q25': np.percentile(values_array, 25),
+                'q75': np.percentile(values_array, 75),
+                'skewness': stats.skew(values_array),
+                'kurtosis': stats.kurtosis(values_array)
+            }
+
+        return statistics
+
+    def analyze_all_possible_mediations(self,
+                                      variables: List[str],
+                                      bootstrap_samples: int = 5000,
+                                      confidence_level: float = 0.95,
+                                      parallel: bool = True,
+                                      show_progress: bool = True) -> Dict[str, Any]:
+        """
+        5개 요인 간 모든 가능한 매개효과 분석
+
+        Args:
+            variables (List[str]): 분석할 변수들 (5개)
+            bootstrap_samples (int): 부트스트래핑 샘플 수
+            confidence_level (float): 신뢰수준
+            parallel (bool): 병렬 처리 사용 여부
+            show_progress (bool): 진행 상황 표시 여부
+
+        Returns:
+            Dict[str, Any]: 모든 매개효과 분석 결과
+        """
+        if len(variables) != 5:
+            raise ValueError("정확히 5개의 변수가 필요합니다.")
+
+        logger.info(f"5개 요인 간 모든 가능한 매개효과 분석 시작: {variables}")
+
+        all_mediation_results = {}
+        total_combinations = 0
+
+        # 모든 가능한 X -> M -> Y 조합 생성
+        for i, independent_var in enumerate(variables):
+            for j, dependent_var in enumerate(variables):
+                if i == j:  # 같은 변수는 제외
+                    continue
+
+                # 나머지 변수들을 매개변수로 사용
+                potential_mediators = [v for k, v in enumerate(variables) if k != i and k != j]
+
+                for mediator in potential_mediators:
+                    total_combinations += 1
+
+                    combination_key = f"{independent_var}_to_{dependent_var}_via_{mediator}"
+
+                    try:
+                        # 매개효과 분석
+                        mediation_result = self.calculate_bootstrap_effects(
+                            independent_var=independent_var,
+                            dependent_var=dependent_var,
+                            mediator_vars=[mediator],
+                            n_bootstrap=bootstrap_samples,
+                            confidence_level=confidence_level,
+                            parallel=parallel,
+                            show_progress=False  # 개별 진행 상황은 표시하지 않음
+                        )
+
+                        # 매개효과 유의성 판단
+                        indirect_ci = mediation_result['confidence_intervals'].get('indirect_effects', {})
+                        is_significant = indirect_ci.get('significant', False)
+
+                        all_mediation_results[combination_key] = {
+                            'independent_var': independent_var,
+                            'dependent_var': dependent_var,
+                            'mediator': mediator,
+                            'mediation_result': mediation_result,
+                            'is_significant': is_significant,
+                            'indirect_effect_mean': indirect_ci.get('mean', 0.0),
+                            'indirect_effect_ci': [indirect_ci.get('lower_ci', 0.0), indirect_ci.get('upper_ci', 0.0)]
+                        }
+
+                        if show_progress:
+                            logger.info(f"완료: {combination_key} (유의함: {is_significant})")
+
+                    except Exception as e:
+                        logger.warning(f"매개효과 분석 실패: {combination_key} - {e}")
+                        all_mediation_results[combination_key] = {
+                            'independent_var': independent_var,
+                            'dependent_var': dependent_var,
+                            'mediator': mediator,
+                            'error': str(e),
+                            'is_significant': False
+                        }
+
+        # 결과 요약
+        significant_mediations = {k: v for k, v in all_mediation_results.items()
+                                if v.get('is_significant', False)}
+
+        summary = {
+            'total_combinations_tested': total_combinations,
+            'significant_mediations_count': len(significant_mediations),
+            'significance_rate': len(significant_mediations) / total_combinations if total_combinations > 0 else 0,
+            'variables_analyzed': variables,
+            'settings': {
+                'bootstrap_samples': bootstrap_samples,
+                'confidence_level': confidence_level,
+                'parallel': parallel
+            }
+        }
+
+        logger.info(f"모든 매개효과 분석 완료: {total_combinations}개 조합 중 {len(significant_mediations)}개 유의함")
+
+        return {
+            'all_results': all_mediation_results,
+            'significant_results': significant_mediations,
+            'summary': summary
+        }
     
     def analyze_mediation_effects(self,
                                 independent_var: str,
@@ -481,3 +1194,34 @@ def analyze_mediation_effects(model: Model,
     """매개효과 분석 편의 함수"""
     calculator = EffectsCalculator(model)
     return calculator.analyze_mediation_effects(independent_var, dependent_var, mediator_vars)
+
+
+def calculate_bootstrap_effects(model: Model, data: pd.DataFrame,
+                              independent_var: str, dependent_var: str,
+                              mediator_vars: Optional[List[str]] = None,
+                              n_bootstrap: int = 5000,
+                              confidence_level: float = 0.95,
+                              method: str = 'bias-corrected',
+                              parallel: bool = True,
+                              random_seed: Optional[int] = None) -> Dict[str, Any]:
+    """부트스트래핑 효과 분석 편의 함수"""
+    calculator = EffectsCalculator(model)
+    calculator.set_data(data)
+    return calculator.calculate_bootstrap_effects(
+        independent_var, dependent_var, mediator_vars,
+        n_bootstrap, confidence_level, method, parallel,
+        n_jobs=-1, random_seed=random_seed, show_progress=True
+    )
+
+
+def analyze_all_possible_mediations(model: Model, data: pd.DataFrame,
+                                  variables: List[str],
+                                  bootstrap_samples: int = 5000,
+                                  confidence_level: float = 0.95,
+                                  parallel: bool = True) -> Dict[str, Any]:
+    """5개 요인 간 모든 가능한 매개효과 분석 편의 함수"""
+    calculator = EffectsCalculator(model)
+    calculator.set_data(data)
+    return calculator.analyze_all_possible_mediations(
+        variables, bootstrap_samples, confidence_level, parallel, show_progress=True
+    )
