@@ -1,0 +1,44 @@
+{
+  "variables": {
+    "independent": "health_concern",
+    "dependent": "perceived_benefit",
+    "moderator": "perceived_price",
+    "interaction": "health_concern_x_perceived_price"
+  },
+  "model_info": {
+    "n_observations": 300,
+    "n_parameters": 4,
+    "model_specification": "perceived_benefit ~ health_concern + perceived_price + health_concern_x_perceived_price\n# health_concern_x_perceived_price := health_concern * perceived_price"
+  },
+  "coefficients": {
+    "health_concern": {
+      "estimate": 0.30106237814481146,
+      "std_error": 0.052908150784959945,
+      "z_value": 5.690283513456368,
+      "p_value": 1.2682861427748549e-08,
+      "std_estimate": null,
+      "significant": true
+    },
+    "perceived_price": {
+      "estimate": 0.4002380818971137,
+      "std_error": 0.030343048112438677,
+      "z_value": 13.19043757241553,
+      "p_value": 0.0,
+      "std_estimate": null,
+      "significant": true
+    },
+    "health_concern_x_perceived_price": {
+      "estimate": 0.00010193402408130034,
+      "std_error": 8.503766705669605e-05,
+      "z_value": 1.1986926077669393,
+      "p_value": 0.230647493487796,
+      "std_estimate": null,
+      "significant": false
+    }
+  },
+  "moderation_test": {
+    "interaction_coefficient": 0.00010193402408130034,
+    "std_error": 8.503766705669605e-05,
+    "z_value": 1.1986926077669393,
+    "p_value": 0.230647493487796,
+    "significant": 
