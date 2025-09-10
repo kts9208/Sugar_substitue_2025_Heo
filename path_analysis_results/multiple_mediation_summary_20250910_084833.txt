@@ -1,0 +1,40 @@
+============================================================
+PATH ANALYSIS SUMMARY REPORT
+============================================================
+Generated: 2025-09-10 08:48:33
+
+MODEL INFORMATION
+------------------------------
+Sample Size: 314
+Variables: 18
+Estimator: MLW
+
+MODEL FIT INDICES
+------------------------------
+CHI_SQUARE: 315.8456
+CFI: 0.9437
+TLI: 0.9332
+RMSEA: 0.0680
+AIC: 81.9882
+BIC: 239.4628
+
+PATH COEFFICIENTS SUMMARY
+------------------------------
+health_concern -> perceived_benefit: 0.2742***
+health_concern -> perceived_price: 0.1516*
+perceived_benefit -> purchase_intention: 1.2652***
+perceived_price -> purchase_intention: -0.1412*
+health_concern -> purchase_intention: 0.0720
+
+BOOTSTRAP ANALYSIS SUMMARY
+------------------------------
+Bootstrap Combinations Analyzed: 0
+Significant Bootstrap Effects: 0
+
+ALL MEDIATIONS ANALYSIS SUMMARY
+------------------------------
+Total Combinations Tested: 0
+Significant Mediations: 0
+Significance Rate: 0.0%
+
+============================================================

@@ -1,0 +1,55 @@
+============================================================
+PATH ANALYSIS SUMMARY REPORT
+============================================================
+Generated: 2025-09-10 08:48:33
+
+MODEL INFORMATION
+------------------------------
+Sample Size: 330
+Variables: 38
+Estimator: MLW
+
+MODEL FIT INDICES
+------------------------------
+CHI_SQUARE: 1420.7093
+CFI: 0.8722
+TLI: 0.8607
+RMSEA: 0.0605
+AIC: 183.3896
+BIC: 548.1025
+
+PATH COEFFICIENTS SUMMARY
+------------------------------
+health_concern -> perceived_benefit: 0.4114***
+nutrition_knowledge -> perceived_benefit: 0.6147***
+perceived_price -> perceived_benefit: 0.0771*
+purchase_intention -> perceived_benefit: 0.2252***
+health_concern -> perceived_price: 0.2029***
+nutrition_knowledge -> perceived_price: -0.0390
+perceived_benefit -> perceived_price: 0.2337***
+purchase_intention -> perceived_price: -0.1755***
+health_concern -> nutrition_knowledge: -0.8449***
+perceived_benefit -> nutrition_knowledge: -0.2573***
+perceived_price -> nutrition_knowledge: 0.0502***
+purchase_intention -> nutrition_knowledge: -0.9647***
+health_concern -> purchase_intention: 0.1320*
+nutrition_knowledge -> purchase_intention: 0.2437***
+perceived_benefit -> purchase_intention: 1.3164***
+perceived_price -> purchase_intention: -0.0708
+nutrition_knowledge -> health_concern: 0.8853***
+perceived_benefit -> health_concern: 0.1441***
+purchase_intention -> health_concern: 0.1474**
+perceived_price -> health_concern: -0.0919**
+
+BOOTSTRAP ANALYSIS SUMMARY
+------------------------------
+Bootstrap Combinations Analyzed: 0
+Significant Bootstrap Effects: 0
+
+ALL MEDIATIONS ANALYSIS SUMMARY
+------------------------------
+Total Combinations Tested: 0
+Significant Mediations: 0
+Significance Rate: 0.0%
+
+============================================================

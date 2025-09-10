@@ -1,0 +1,8 @@
+﻿From_Variable,To_Variable,Path,Coefficient,Standard_Error,Z_Value,P_Value,Significance
+health_concern,perceived_benefit,health_concern -> perceived_benefit,0.27424270075662127,0.061639518378048645,4.4491376306703385,8.621575805500825e-06,***
+health_concern,perceived_price,health_concern -> perceived_price,0.15158365485300168,0.06057063182286543,2.502593258293803,0.012328713989925522,*
+perceived_benefit,purchase_intention,perceived_benefit -> purchase_intention,1.2652201473482125,0.08066407208522892,15.685051778637053,0.0,***
+perceived_price,purchase_intention,perceived_price -> purchase_intention,-0.14115732725712235,0.05664563986845638,-2.491936318177864,0.012704881416459868,*
+health_concern,purchase_intention,health_concern -> purchase_intention,0.07201231535427088,0.05360057090873033,1.343499036149225,0.17911043792167658,
+METADATA,INFO,Total Structural Paths: 5,5.0,,,,
+LATENT_VARS,LIST,"Variables: perceived_price, health_concern, purchase_intention, perceived_benefit",4.0,,,,

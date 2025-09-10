@@ -1,0 +1,10 @@
+﻿Fit_Index,Value,Interpretation
+chi_square,315.8455512391656,Lower is better (non-significant preferred)
+df,,N/A
+p_value,,N/A
+cfi,0.9437066989216811,"Good: >0.95, Acceptable: >0.90 - Acceptable fit"
+tli,0.9332335266280404,"Good: >0.95, Acceptable: >0.90 - Acceptable fit"
+rmsea,0.06802590950402541,"Good: <0.06, Acceptable: <0.08 - Acceptable fit"
+srmr,,N/A
+aic,81.98824489656582,Lower is better (for model comparison)
+bic,239.46275030471244,Lower is better (for model comparison)
