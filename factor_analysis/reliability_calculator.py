@@ -520,7 +520,7 @@ class IndependentReliabilityCalculator:
                                      survey_data: Dict[str, pd.DataFrame],
                                      analysis_results: Dict[str, Any] = None) -> pd.DataFrame:
         """
-        요인간 상관관계 계산 (semopy 모델 우선, 실패시 원본 데이터 기반)
+        요인간 상관관계 계산 (기존 상관관계 분석 결과 활용)
 
         Args:
             loadings_df (pd.DataFrame): 요인부하량 데이터프레임
@@ -531,22 +531,77 @@ class IndependentReliabilityCalculator:
             pd.DataFrame: 요인간 상관관계 매트릭스
         """
         try:
-            # 종합적인 상관계수 계산 기능은 별도 모듈로 분리됨
-            # results = self.correlation_calculator.calculate_comprehensive(
-            #     loadings_df, survey_data, analysis_results
-            # )
-            results = {'correlations': pd.DataFrame()}
+            # 1. 기존 상관관계 분석 결과 파일 찾기
+            correlations = self._load_existing_correlation_results()
 
-            correlations = results.get('correlations', pd.DataFrame())
+            if not correlations.empty:
+                logger.info("기존 상관관계 분석 결과를 성공적으로 로드했습니다.")
+                return correlations
 
-            if correlations.empty:
-                logger.warning("요인간 상관계수 계산에 실패했습니다.")
-                return pd.DataFrame()
+            # 2. 기존 결과가 없으면 원본 데이터로 간단한 상관관계 계산
+            logger.info("기존 상관관계 결과가 없어 원본 데이터로 계산합니다.")
+            correlations = self._calculate_simple_correlations(survey_data)
 
             return correlations
 
         except Exception as e:
             logger.error(f"요인간 상관관계 계산 중 오류: {e}")
+            return pd.DataFrame()
+
+    def _load_existing_correlation_results(self) -> pd.DataFrame:
+        """기존 상관관계 분석 결과 로드"""
+        try:
+            # factor_correlations_results 디렉토리에서 최신 파일 찾기
+            correlation_dir = Path("factor_correlations_results")
+            if not correlation_dir.exists():
+                return pd.DataFrame()
+
+            # semopy_correlations_*.csv 파일들 찾기
+            correlation_files = list(correlation_dir.glob("semopy_correlations_*.csv"))
+            if not correlation_files:
+                return pd.DataFrame()
+
+            # 가장 최신 파일 선택
+            latest_file = max(correlation_files, key=lambda x: x.stat().st_mtime)
+
+            # 상관관계 매트릭스 로드
+            correlations = pd.read_csv(latest_file, index_col=0)
+            logger.info(f"상관관계 데이터 로드 완료: {latest_file.name}")
+
+            return correlations
+
+        except Exception as e:
+            logger.warning(f"기존 상관관계 결과 로드 실패: {e}")
+            return pd.DataFrame()
+
+    def _calculate_simple_correlations(self, survey_data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+        """원본 데이터로 간단한 요인간 상관관계 계산"""
+        try:
+            if not survey_data:
+                return pd.DataFrame()
+
+            # 각 요인의 평균 점수 계산
+            factor_scores = {}
+            for factor_name, factor_data in survey_data.items():
+                # 'no' 컬럼 제외하고 문항 컬럼들만 사용
+                item_columns = [col for col in factor_data.columns if col != 'no']
+                if item_columns:
+                    factor_scores[factor_name] = factor_data[item_columns].mean(axis=1)
+
+            if not factor_scores:
+                return pd.DataFrame()
+
+            # 요인 점수들을 DataFrame으로 결합
+            scores_df = pd.DataFrame(factor_scores)
+
+            # 상관관계 계산
+            correlations = scores_df.corr()
+
+            logger.info("원본 데이터 기반 상관관계 계산 완료")
+            return correlations
+
+        except Exception as e:
+            logger.error(f"간단한 상관관계 계산 실패: {e}")
             return pd.DataFrame()
 
     def run_complete_reliability_analysis(self) -> Dict[str, Any]:

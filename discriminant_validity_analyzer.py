@@ -213,23 +213,23 @@ class DiscriminantValidityAnalyzer:
         return comparison_matrix
 
     def visualize_discriminant_validity(self):
-        """판별타당도 검증 결과 시각화"""
-        print("판별타당도 시각화 생성 중...")
+        """Discriminant validity verification result visualization"""
+        print("Creating discriminant validity visualizations...")
 
-        # 1. 상관계수 vs AVE 제곱근 비교 히트맵
+        # 1. Correlation vs AVE square root comparison heatmap
         self._create_comparison_heatmap()
 
-        # 2. 판별타당도 검증 결과 매트릭스
+        # 2. Discriminant validity verification result matrix
         self._create_validity_matrix()
 
-        # 3. 위반 사항 시각화
+        # 3. Violations visualization
         if self.discriminant_validity_results['violations']:
             self._create_violations_plot()
 
-        # 4. 요약 대시보드
+        # 4. Summary dashboard
         self._create_summary_dashboard()
 
-        print("시각화 생성 완료!")
+        print("Visualization creation completed!")
 
     def _create_comparison_heatmap(self):
         """상관계수와 AVE 제곱근 비교 히트맵 생성"""

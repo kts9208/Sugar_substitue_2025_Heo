@@ -1,0 +1,44 @@
+{
+  "variables": {
+    "independent": "health_concern",
+    "dependent": "purchase_intention",
+    "moderator": "nutrition_knowledge",
+    "interaction": "health_concern_x_nutrition_knowledge"
+  },
+  "model_info": {
+    "n_observations": 300,
+    "n_parameters": 4,
+    "model_specification": "purchase_intention ~ health_concern + nutrition_knowledge + health_concern_x_nutrition_knowledge\n# health_concern_x_nutrition_knowledge := health_concern * nutrition_knowledge"
+  },
+  "coefficients": {
+    "health_concern": {
+      "estimate": 1.5272811363250507,
+      "std_error": 0.045266566345103676,
+      "z_value": 33.73971696124708,
+      "p_value": 0.0,
+      "std_estimate": null,
+      "significant": true
+    },
+    "nutrition_knowledge": {
+      "estimate": 0.6727743088339,
+      "std_error": 0.1361518900120549,
+      "z_value": 4.941351227437174,
+      "p_value": 7.758300395455109e-07,
+      "std_estimate": null,
+      "significant": true
+    },
+    "health_concern_x_nutrition_knowledge": {
+      "estimate": 0.0005866530045152303,
+      "std_error": 0.0008077259234690004,
+      "z_value": 0.7263020620526652,
+      "p_value": 0.4676536155266038,
+      "std_estimate": null,
+      "significant": false
+    }
+  },
+  "moderation_test": {
+    "interaction_coefficient": 0.0005866530045152303,
+    "std_error": 0.0008077259234690004,
+    "z_value": 0.7263020620526652,
+    "p_value": 0.4676536155266038,
+    "significant": 

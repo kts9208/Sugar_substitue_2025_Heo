@@ -172,7 +172,7 @@ class CorrelationVisualizer:
         """
         fig, ax = plt.subplots(figsize=self.figsize)
         
-        # 한국어 라벨 적용
+        # English labels applied
         corr_labeled = correlations.copy()
         corr_labeled.index = [self.factor_labels.get(idx, idx) for idx in correlations.index]
         corr_labeled.columns = [self.factor_labels.get(col, col) for col in correlations.columns]
@@ -217,7 +217,7 @@ class CorrelationVisualizer:
         
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            print(f"📊 히트맵 저장: {save_path}")
+            print(f"📊 Heatmap saved: {save_path}")
         
         return fig
     
