@@ -1,0 +1,2 @@
+﻿model_type,analysis_time,success,total_observations,dce_observations,sem_observations,common_individuals,n_factors,log_likelihood,aic,bic,rho_squared
+random_parameters_logit,5.0,True,6624,7224,314,261,4,-4213.73,8443.46,8497.85,0.001

@@ -4,17 +4,18 @@ Sugar Substitute Research - 통합 분석 시스템
 
 이 스크립트는 설탕 대체재 연구의 모든 분석을 통합적으로 관리합니다:
 1. 요인분석 (Factor Analysis)
-2. 신뢰도 분석 (Reliability Analysis)  
+2. 신뢰도 분석 (Reliability Analysis)
 3. 판별타당도 검증 (Discriminant Validity)
 4. 상관관계 분석 (Correlation Analysis)
 5. 경로분석 (Path Analysis)
 6. 조절효과 분석 (Moderation Analysis)
 7. 다항로짓 분석 (Multinomial Logit)
-8. 결과 관리 (Results Management)
+8. 하이브리드 선택 모델 (Hybrid Choice Model) - NEW!
+9. 결과 관리 (Results Management)
 
 Author: Sugar Substitute Research Team
-Date: 2025-09-18
-Version: 2.0 (Reorganized)
+Date: 2025-09-19
+Version: 2.1 (Hybrid Choice Model Added)
 """
 
 import sys
@@ -64,9 +65,10 @@ def check_prerequisites():
     # 필요한 스크립트 확인
     required_scripts = [
         "scripts/run_factor_analysis.py",
-        "scripts/run_reliability_analysis.py", 
+        "scripts/run_reliability_analysis.py",
         "scripts/run_path_analysis.py",
-        "scripts/run_complete_analysis.py"
+        "scripts/run_complete_analysis.py",
+        "scripts/run_hybrid_choice_analysis.py"
     ]
     
     missing_scripts = []
@@ -185,6 +187,24 @@ def run_complete_pipeline():
     )
 
 
+def run_hybrid_choice_analysis():
+    """하이브리드 선택 모델 분석 실행"""
+    return run_script_safely(
+        "scripts/run_hybrid_choice_analysis.py",
+        ["--model", "multinomial_logit"],
+        "하이브리드 선택 모델 분석 (Hybrid Choice Model)"
+    )
+
+
+def run_hybrid_model_comparison():
+    """하이브리드 모델 비교 분석 실행"""
+    return run_script_safely(
+        "scripts/run_hybrid_choice_analysis.py",
+        ["--compare", "--models", "multinomial_logit", "random_parameters_logit"],
+        "하이브리드 모델 비교 분석"
+    )
+
+
 def show_results_summary():
     """결과 요약 표시"""
     print("\n📊 분석 결과 요약")
@@ -233,13 +253,15 @@ def interactive_menu():
         print("2. 신뢰도 분석 (Reliability Analysis)")
         print("3. 경로분석 (Path Analysis)")
         print("4. 전체 분석 파이프라인 (Core Analysis)")
-        print("5. 결과 관리 (Results Management)")
-        print("6. 결과 요약 보기")
+        print("5. 하이브리드 선택 모델 분석 (Hybrid Choice Model)")
+        print("6. 하이브리드 모델 비교 분석 (Model Comparison)")
+        print("7. 결과 관리 (Results Management)")
+        print("8. 결과 요약 보기")
         print("0. 종료")
         
         try:
-            choice = input("\n선택하세요 (0-6): ").strip()
-            
+            choice = input("\n선택하세요 (0-8): ").strip()
+
             if choice == "0":
                 print("👋 분석 시스템을 종료합니다.")
                 break
@@ -252,15 +274,19 @@ def interactive_menu():
             elif choice == "4":
                 run_complete_pipeline()
             elif choice == "5":
+                run_hybrid_choice_analysis()
+            elif choice == "6":
+                run_hybrid_model_comparison()
+            elif choice == "7":
                 run_script_safely(
                     "scripts/manage_results.py",
                     ["--status"],
                     "결과 관리"
                 )
-            elif choice == "6":
+            elif choice == "8":
                 show_results_summary()
             else:
-                print("❌ 잘못된 선택입니다. 0-6 사이의 숫자를 입력하세요.")
+                print("❌ 잘못된 선택입니다. 0-8 사이의 숫자를 입력하세요.")
                 
         except KeyboardInterrupt:
             print("\n\n👋 사용자가 종료했습니다.")
@@ -281,6 +307,8 @@ def main():
   python main.py --reliability            # 신뢰도 분석만 실행
   python main.py --path                   # 경로분석만 실행
   python main.py --all                    # 전체 분석 실행
+  python main.py --hybrid                 # 하이브리드 선택 모델 분석
+  python main.py --hybrid-compare         # 하이브리드 모델 비교 분석
   python main.py --results                # 결과 요약 보기
         """
     )
@@ -289,6 +317,8 @@ def main():
     parser.add_argument('--reliability', action='store_true', help='신뢰도 분석 실행')
     parser.add_argument('--path', action='store_true', help='경로분석 실행')
     parser.add_argument('--all', action='store_true', help='전체 분석 파이프라인 실행')
+    parser.add_argument('--hybrid', action='store_true', help='하이브리드 선택 모델 분석 실행')
+    parser.add_argument('--hybrid-compare', action='store_true', help='하이브리드 모델 비교 분석 실행')
     parser.add_argument('--results', action='store_true', help='결과 요약 보기')
     parser.add_argument('--interactive', action='store_true', help='대화형 메뉴 실행')
     
@@ -298,7 +328,7 @@ def main():
     print("🎯 Sugar Substitute Research - 통합 분석 시스템")
     print("=" * 80)
     print(f"실행 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"버전: 2.0 (Reorganized)")
+    print(f"버전: 2.1 (Hybrid Choice Model Added)")
     
     # 디렉토리 생성
     ensure_directories()
@@ -317,6 +347,10 @@ def main():
         run_path_analysis()
     elif args.all:
         run_complete_pipeline()
+    elif args.hybrid:
+        run_hybrid_choice_analysis()
+    elif args.hybrid_compare:
+        run_hybrid_model_comparison()
     elif args.results:
         show_results_summary()
     elif args.interactive:

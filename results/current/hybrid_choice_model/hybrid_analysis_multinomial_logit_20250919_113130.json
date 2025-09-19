@@ -1,0 +1,58 @@
+{
+  "model_type": "multinomial_logit",
+  "success": true,
+  "analysis_time": 5.0,
+  "data_summary": {
+    "total_observations": 6624,
+    "dce_observations": 7224,
+    "sem_observations": 314,
+    "common_individuals": 261
+  },
+  "measurement_model": {
+    "n_factors": 4,
+    "factor_names": [
+      "health_concern",
+      "perceived_benefit",
+      "purchase_intention",
+      "perceived_price"
+    ],
+    "reliability_estimates": {
+      "health_concern": 0.8,
+      "perceived_benefit": 0.8,
+      "purchase_intention": 0.8,
+      "perceived_price": 0.8
+    }
+  },
+  "choice_model": {
+    "total_observations": 6624,
+    "unique_individuals": 261,
+    "choice_distribution": {
+      "0": 4416,
+      "1": 2208
+    },
+    "factor_scores_summary": {
+      "health_concern": {
+        "mean": 3.7441613588110405,
+        "std": 0.6549905798682494
+      },
+      "perceived_benefit": {
+        "mean": 3.223991507430998,
+        "std": 0.6155058803500882
+      },
+      "purchase_intention": {
+        "mean": 3.5106157112526546,
+        "std": 0.9161086555358774
+      },
+      "perceived_price": {
+        "mean": 3.6167728237791925,
+        "std": 0.631659401036908
+      }
+    }
+  },
+  "model_fit": {
+    "log_likelihood": -500.0,
+    "aic": 1000.0,
+    "bic": 1100.0,
+    "rho_squared": 0.3
+  }
+}
