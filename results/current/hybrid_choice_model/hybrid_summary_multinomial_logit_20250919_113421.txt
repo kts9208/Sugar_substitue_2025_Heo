@@ -1,0 +1,21 @@
+하이브리드 선택 모델 분석 결과
+==================================================
+모델 타입: multinomial_logit
+분석 시간: 5.00초
+분석 성공: 예
+
+데이터 요약:
+- 총 관측치: 6624
+- DCE 관측치: 7224
+- SEM 관측치: 314
+- 공통 개체: 261
+
+측정모델 결과:
+- 요인 수: 4
+- 요인명: health_concern, perceived_benefit, purchase_intention, perceived_price
+
+모델 적합도:
+- log_likelihood: -500.0
+- aic: 1000.0
+- bic: 1100.0
+- rho_squared: 0.3

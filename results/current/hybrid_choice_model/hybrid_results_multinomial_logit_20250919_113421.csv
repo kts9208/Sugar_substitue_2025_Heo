@@ -1,0 +1,2 @@
+﻿model_type,analysis_time,success,total_observations,dce_observations,sem_observations,common_individuals,n_factors,log_likelihood,aic,bic,rho_squared
+multinomial_logit,5.0,True,6624,7224,314,261,4,-500.0,1000.0,1100.0,0.3
