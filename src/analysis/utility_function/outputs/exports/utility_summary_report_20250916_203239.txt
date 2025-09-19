@@ -1,0 +1,42 @@
+UTILITY FUNCTION CALCULATION SUMMARY REPORT
+==================================================
+
+Report Generated: 2025-09-16 20:32:39
+
+DATA SUMMARY
+--------------------
+Number of observations: 1699
+Number of variables: 32
+
+UTILITY SUMMARY
+--------------------
+Mean utility: 6.5218
+Standard deviation: 1.8048
+Minimum utility: 1.2154
+Maximum utility: 12.9857
+Range: 11.7703
+
+COMPONENT IMPORTANCE
+--------------------
+sugar_component: 0.0439
+health_label_component: 0.0062
+price_component: 0.0214
+interaction_sugar_health: 0.0281
+sem_utility_component: 0.3611
+error_component: 0.0702
+
+DETAILED ANALYSIS
+--------------------
+Utility Distribution:
+  Skewness: 0.3454
+  Kurtosis: -0.0698
+  Normal distribution: False
+
+Prediction Accuracy:
+  Overall accuracy: 0.5650
+  AUC: 0.5802
+
+Key Findings:
+  - Strong sugar preference effect detected (Cohen's d = 0.879)
+  - Moderate health label effect detected (Cohen's d = 0.583)
+

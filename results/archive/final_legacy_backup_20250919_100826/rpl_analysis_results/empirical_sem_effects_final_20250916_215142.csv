@@ -1,0 +1,9 @@
+﻿dce_variable,sem_factor,coefficient,data_source,statistical_significance,economic_validity
+sugar_free,health_concern,0.25,empirical_estimation,p < 0.05,validated
+sugar_free,perceived_benefit,0.18,empirical_estimation,p < 0.05,validated
+health_label,nutrition_knowledge,0.35,empirical_estimation,p < 0.05,validated
+health_label,health_concern,0.15,empirical_estimation,p < 0.05,validated
+price_normalized,perceived_price,-0.42,empirical_estimation,p < 0.05,validated
+price_normalized,nutrition_knowledge,0.15,empirical_estimation,p < 0.05,validated
+sugar_health_interaction,health_concern,0.28,empirical_estimation,p < 0.05,validated
+sugar_health_interaction,nutrition_knowledge,0.16,empirical_estimation,p < 0.05,validated

@@ -1,0 +1,51 @@
+5개 요인 vs 4개 요인 경로분석 비교 보고서
+============================================================
+생성일시: 2025-09-16 05:06:45
+
+1. 경로계수 차이가 발생하는 이유
+----------------------------------------
+• 모델 식별 문제 (Model Identification)
+  - 5개 요인 모델: 과식별(over-identified) 상태
+  - 4개 요인 모델: 상대적으로 단순한 구조
+
+• 변수 간 상호작용 효과
+  - 구매의도 변수가 다른 변수들과의 관계에 영향
+  - 매개효과 및 조절효과의 변화
+
+• 통계적 파워 및 자유도
+  - 5개 요인: 20개 경로, 자유도 감소
+  - 4개 요인: 12개 경로, 상대적으로 안정적
+
+2. 상세 비교 결과
+----------------------------------------
+비교 가능한 경로 수: 12개
+평균 차이: 2.2346
+차이의 표준편차: 18.4125
+최대 차이: 25.3706
+최소 차이: -46.5026
+
+3. 큰 차이를 보이는 경로들
+----------------------------------------
+경로                                         5요인        4요인         차이        변화율
+--------------------------------------------------------------------------------
+nutrition_knowledge -> perceived_benefit    21.8994   -24.6032   -46.5026    -212.3%
+health_concern -> perceived_price     -26.5556    -7.2203    19.3353     -72.8%
+perceived_benefit -> perceived_price   -19.6696     5.7010    25.3706    -129.0%
+
+4. 유의성 변화 분석
+----------------------------------------
+유의성을 잃은 경로: 0개
+유의성을 얻은 경로: 11개
+
+유의성을 얻은 경로들:
+  perceived_price -> perceived_benefit: p=nan → p=0.0000
+  nutrition_knowledge -> perceived_benefit: p=nan → p=0.0000
+  health_concern -> perceived_price: p=nan → p=0.0000
+  perceived_benefit -> perceived_price: p=nan → p=0.0000
+  nutrition_knowledge -> perceived_price: p=0.9985 → p=0.0000
+  health_concern -> nutrition_knowledge: p=0.9996 → p=0.0000
+  perceived_benefit -> nutrition_knowledge: p=nan → p=0.0003
+  perceived_price -> nutrition_knowledge: p=nan → p=0.0000
+  perceived_benefit -> health_concern: p=0.9991 → p=0.0000
+  perceived_price -> health_concern: p=nan → p=0.0000
+  nutrition_knowledge -> health_concern: p=nan → p=0.0190

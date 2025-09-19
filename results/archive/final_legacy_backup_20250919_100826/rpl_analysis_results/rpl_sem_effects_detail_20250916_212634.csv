@@ -1,0 +1,9 @@
+﻿dce_variable,sem_factor,base_coefficient,sem_effect_size,effect_direction,effect_magnitude,adjusted_coefficient_example,interpretation
+sugar_free,health_concern,0.8701,0.3,increase,medium,1.1701,health_concern 1 std increase → coefficient 0.30 increase
+sugar_free,perceived_benefit,0.8701,0.2,increase,medium,1.0701,perceived_benefit 1 std increase → coefficient 0.20 increase
+health_label,nutrition_knowledge,0.1448,0.4,increase,strong,0.5448000000000001,nutrition_knowledge 1 std increase → coefficient 0.40 increase
+health_label,health_concern,0.1448,0.2,increase,medium,0.3448,health_concern 1 std increase → coefficient 0.20 increase
+price_normalized,perceived_price,-0.3145,0.5,increase,strong,0.1855,perceived_price 1 std increase → coefficient 0.50 increase
+price_normalized,nutrition_knowledge,-0.3145,-0.2,decrease,medium,-0.5145,nutrition_knowledge 1 std increase → coefficient 0.20 decrease
+sugar_health_interaction,health_concern,1.2494,0.3,increase,medium,1.5494,health_concern 1 std increase → coefficient 0.30 increase
+sugar_health_interaction,nutrition_knowledge,1.2494,0.2,increase,medium,1.4494,nutrition_knowledge 1 std increase → coefficient 0.20 increase

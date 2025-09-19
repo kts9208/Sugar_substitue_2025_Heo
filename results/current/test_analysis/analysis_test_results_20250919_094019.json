@@ -1,0 +1,117 @@
+{
+  "timestamp": "20250919_094019",
+  "factor_analysis": {
+    "health_concern": {
+      "n_observations": 300,
+      "n_variables": 7,
+      "missing_values": "0",
+      "mean": 28.273809523809522,
+      "std": 15.319167028568737,
+      "avg_correlation": 0.44062773614646505,
+      "cronbach_alpha": 0.0038092256057793246
+    },
+    "perceived_benefit": {
+      "n_observations": 300,
+      "n_variables": 7,
+      "missing_values": "0",
+      "mean": 27.81047619047619,
+      "std": 15.3735610418247,
+      "avg_correlation": 0.3011218468312894,
+      "cronbach_alpha": 0.0036863110417588536
+    },
+    "purchase_intention": {
+      "n_observations": 300,
+      "n_variables": 4,
+      "missing_values": "0",
+      "mean": 46.4675,
+      "std": 26.3280916383207,
+      "avg_correlation": 0.46776499088714196,
+      "cronbach_alpha": 0.007751453622193723
+    },
+    "perceived_price": {
+      "n_observations": 300,
+      "n_variables": 4,
+      "missing_values": "0",
+      "mean": 46.5625,
+      "std": 26.15889866708834,
+      "avg_correlation": 0.22857023669205892,
+      "cronbach_alpha": -0.004494861023459269
+    },
+    "nutrition_knowledge": {
+      "n_observations": 300,
+      "n_variables": 21,
+      "missing_values": "0",
+      "mean": 11.6684126984127,
+      "std": 5.753273606773571,
+      "avg_correlation": 0.15088603633240769,
+      "cronbach_alpha": -0.0014968510846850359
+    }
+  },
+  "path_analysis": {
+    "correlations": {
+      "health_concern": {
+        "health_concern": 1.0,
+        "perceived_benefit": 0.9988859906081001,
+        "purchase_intention": 0.9991651150022822
+      },
+      "perceived_benefit": {
+        "health_concern": 0.9988859906081001,
+        "perceived_benefit": 1.0,
+        "purchase_intention": 0.9997397623392537
+      },
+      "purchase_intention": {
+        "health_concern": 0.9991651150022822,
+        "perceived_benefit": 0.9997397623392537,
+        "purchase_intention": 1.0
+      }
+    },
+    "path_coefficients": {
+      "health_to_benefit": 0.9988642397730756,
+      "benefit_to_purchase": 1.7517350760623172,
+      "health_to_purchase": 1.7506900618661068
+    },
+    "indirect_effect": 1.749745525034817,
+    "p_values": {
+      "health_to_benefit": 0.0,
+      "benefit_to_purchase": 0.0,
+      "health_to_purchase": 0.0
+    }
+  },
+  "reliability_analysis": {
+    "health_concern": {
+      "n_items": 7,
+      "cronbach_alpha": 0.0038092256057793246,
+      "avg_inter_item_correlation": 0.44062773614646505,
+      "avg_item_total_correlation": 0.04395233083801397,
+      "reliability_level": "개선 필요"
+    },
+    "perceived_benefit": {
+      "n_items": 7,
+      "cronbach_alpha": 0.0036863110417588536,
+      "avg_inter_item_correlation": 0.3011218468312894,
+      "avg_item_total_correlation": 0.03713104405502595,
+      "reliability_level": "개선 필요"
+    },
+    "purchase_intention": {
+      "n_items": 4,
+      "cronbach_alpha": 0.007751453622193723,
+      "avg_inter_item_correlation": 0.46776499088714196,
+      "avg_item_total_correlation": 0.1066215899155932,
+      "reliability_level": "개선 필요"
+    },
+    "perceived_price": {
+      "n_items": 4,
+      "cronbach_alpha": -0.004494861023459269,
+      "avg_inter_item_correlation": 0.22857023669205892,
+      "avg_item_total_correlation": -0.07699375743636629,
+      "reliability_level": "개선 필요"
+    },
+    "nutrition_knowledge": {
+      "n_items": 21,
+      "cronbach_alpha": -0.0014968510846850359,
+      "avg_inter_item_correlation": 0.15088603633240769,
+      "avg_item_total_correlation": 0.009353806221170397,
+      "reliability_level": "개선 필요"
+    }
+  }
+}

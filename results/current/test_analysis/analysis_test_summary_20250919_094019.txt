@@ -1,0 +1,59 @@
+Sugar Substitute Research - 분석 기능 테스트 결과
+============================================================
+실행 시간: 20250919_094019
+
+1. 요인분석 결과:
+------------------------------
+health_concern:
+  - 관측치: 300
+  - 변수: 7
+  - 신뢰도: 0.004
+
+perceived_benefit:
+  - 관측치: 300
+  - 변수: 7
+  - 신뢰도: 0.004
+
+purchase_intention:
+  - 관측치: 300
+  - 변수: 4
+  - 신뢰도: 0.008
+
+perceived_price:
+  - 관측치: 300
+  - 변수: 4
+  - 신뢰도: -0.004
+
+nutrition_knowledge:
+  - 관측치: 300
+  - 변수: 21
+  - 신뢰도: -0.001
+
+2. 신뢰도 분석 결과:
+------------------------------
+health_concern:
+  - Alpha: 0.004
+  - 수준: 개선 필요
+
+perceived_benefit:
+  - Alpha: 0.004
+  - 수준: 개선 필요
+
+purchase_intention:
+  - Alpha: 0.008
+  - 수준: 개선 필요
+
+perceived_price:
+  - Alpha: -0.004
+  - 수준: 개선 필요
+
+nutrition_knowledge:
+  - Alpha: -0.001
+  - 수준: 개선 필요
+
+3. 경로분석 결과:
+------------------------------
+health_to_benefit: 0.999
+benefit_to_purchase: 1.752
+health_to_purchase: 1.751
+간접효과: 1.750

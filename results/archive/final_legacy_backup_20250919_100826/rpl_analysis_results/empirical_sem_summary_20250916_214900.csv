@@ -1,0 +1,17 @@
+﻿dce_variable,sem_factor,coefficient,p_value,significant,r_squared,data_source
+sugar_free,health_concern,0.25,0.001,True,0.15,simulated
+sugar_free,perceived_benefit,0.18,0.005,True,0.15,simulated
+sugar_free,nutrition_knowledge,0.12,0.08,False,0.15,simulated
+sugar_free,perceived_price,-0.05,0.45,False,0.15,simulated
+health_label,nutrition_knowledge,0.35,0.0,True,0.22,simulated
+health_label,health_concern,0.15,0.02,True,0.22,simulated
+health_label,perceived_benefit,0.08,0.25,False,0.22,simulated
+health_label,perceived_price,0.02,0.78,False,0.22,simulated
+price_normalized,perceived_price,-0.42,0.0,True,0.18,simulated
+price_normalized,nutrition_knowledge,0.15,0.03,True,0.18,simulated
+price_normalized,health_concern,0.08,0.18,False,0.18,simulated
+price_normalized,perceived_benefit,0.05,0.52,False,0.18,simulated
+sugar_health_interaction,health_concern,0.28,0.002,True,0.12,simulated
+sugar_health_interaction,nutrition_knowledge,0.16,0.04,True,0.12,simulated
+sugar_health_interaction,perceived_benefit,0.1,0.15,False,0.12,simulated
+sugar_health_interaction,perceived_price,-0.03,0.68,False,0.12,simulated
