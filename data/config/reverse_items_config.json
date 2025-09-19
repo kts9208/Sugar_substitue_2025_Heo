@@ -1,0 +1,62 @@
+{
+  "description": "역문항(역코딩) 문항 정보 설정 파일",
+  "version": "1.0.0",
+  "created_date": "2025-09-05",
+  "scale_range": {
+    "min": 1,
+    "max": 5,
+    "description": "5점 리커트 척도 (1=전혀 그렇지 않다, 5=매우 그렇다)"
+  },
+  "reverse_items": {
+    "health_concern": {
+      "description": "건강관심도",
+      "total_items": 6,
+      "items": ["q6", "q7", "q8", "q9", "q10", "q11"],
+      "reverse_positions": [],
+      "reverse_items": [],
+      "note": "역문항 없음"
+    },
+    "perceived_benefit": {
+      "description": "건강유익성 (지각된 유익성)",
+      "total_items": 6,
+      "items": ["q12", "q13", "q14", "q15", "q16", "q17"],
+      "reverse_positions": [2],
+      "reverse_items": ["q13"],
+      "note": "두번째 문항(q13)이 역문항"
+    },
+    "purchase_intention": {
+      "description": "구매의도",
+      "total_items": 3,
+      "items": ["q18", "q19", "q20"],
+      "reverse_positions": [],
+      "reverse_items": [],
+      "note": "역문항 없음"
+    },
+    "perceived_price": {
+      "description": "인지된가격수준",
+      "total_items": 3,
+      "items": ["q27", "q28", "q29"],
+      "reverse_positions": [2],
+      "reverse_items": ["q28"],
+      "note": "두번째 문항(q28)이 역문항"
+    },
+    "nutrition_knowledge": {
+      "description": "영양지식 수준",
+      "total_items": 20,
+      "items": ["q30", "q31", "q32", "q33", "q34", "q35", "q36", "q37", "q38", "q39", "q40", "q41", "q42", "q43", "q44", "q45", "q46", "q47", "q48", "q49"],
+      "reverse_positions": [1, 2, 3, 5, 6, 7, 9, 10, 13, 14, 15, 16, 17, 19, 20],
+      "reverse_items": ["q30", "q31", "q32", "q34", "q35", "q36", "q38", "q39", "q42", "q43", "q44", "q45", "q46", "q48", "q49"],
+      "note": "총 15개 문항이 역문항 (1,2,3,5,6,7,9,10,13,14,15,16,17,19,20번째)"
+    }
+  },
+  "reverse_coding_formula": {
+    "description": "역코딩 공식",
+    "formula": "reversed_value = (scale_max + scale_min) - original_value",
+    "example": "5점 척도에서 원점수 1 → 역코딩 5, 원점수 5 → 역코딩 1"
+  },
+  "validation_rules": {
+    "check_scale_range": "모든 값이 1-5 범위 내에 있는지 확인",
+    "check_missing_values": "결측값(NaN) 처리 방법",
+    "backup_original": "원본 데이터 백업 필수"
+  }
+}

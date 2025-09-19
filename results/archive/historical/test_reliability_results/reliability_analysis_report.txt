@@ -1,0 +1,122 @@
+================================================================================
+Reliability and Validity Analysis Report
+================================================================================
+
+Analysis Date: 2025-09-10T08:11:43.244251
+Sample Size: 300
+Number of Factors: 5
+Number of Items: 38
+
+1. Reliability Indicators Summary
+----------------------------------------
+
+[health_concern]
+  - Number of Items: 6
+  - Items: q6, q7, q8, q9, q10, q11
+  - Cronbach's Alpha: 0.9027
+  - Composite Reliability: 0.9373
+  - AVE: 0.7164
+  - √AVE: 0.8464
+  - Item Loadings:
+    * q6: 1.0000 (High)
+    * q7: 0.9196 (High)
+    * q8: 0.7321 (High)
+    * q9: 0.7948 (High)
+    * q10: 0.7222 (High)
+    * q11: 0.8738 (High)
+  - Reliability Acceptability: Alpha(O), CR(O), AVE(O)
+
+[perceived_benefit]
+  - Number of Items: 6
+  - Items: q12, q13, q14, q15, q16, q17
+  - Cronbach's Alpha: 0.8067
+  - Composite Reliability: 0.8975
+  - AVE: 0.6083
+  - √AVE: 0.7799
+  - Item Loadings:
+    * q12: 1.0000 (High)
+    * q13: 0.4058 (Low)
+    * q14: 0.9053 (High)
+    * q15: 0.7992 (High)
+    * q16: 0.6380 (Medium)
+    * q17: 0.7871 (High)
+  - Reliability Acceptability: Alpha(O), CR(O), AVE(O)
+
+[purchase_intention]
+  - Number of Items: 3
+  - Items: q18, q19, q20
+  - Cronbach's Alpha: 0.9410
+  - Composite Reliability: 1.0167
+  - AVE: 1.0517
+  - √AVE: 1.0255
+  - Item Loadings:
+    * q18: 1.0000 (High)
+    * q19: 1.0667 (High)
+    * q20: 1.0086 (High)
+  - Reliability Acceptability: Alpha(O), CR(O), AVE(O)
+
+[perceived_price]
+  - Number of Items: 3
+  - Items: q27, q28, q29
+  - Cronbach's Alpha: 0.7734
+  - Composite Reliability: 0.8486
+  - AVE: 0.6648
+  - √AVE: 0.8154
+  - Item Loadings:
+    * q27: 1.0000 (High)
+    * q28: 0.5286 (Medium)
+    * q29: 0.8456 (High)
+  - Reliability Acceptability: Alpha(O), CR(O), AVE(O)
+
+[nutrition_knowledge]
+  - Number of Items: 20
+  - Items: q30, q31, q32, q33, q34, q35, q36, q37, q38, q39, q40, q41, q42, q43, q44, q45, q46, q47, q48, q49
+  - Cronbach's Alpha: 0.8101
+  - Composite Reliability: 0.9156
+  - AVE: 0.5122
+  - √AVE: 0.7157
+  - Item Loadings:
+    * q30: 1.0000 (High)
+    * q31: 0.4658 (Low)
+    * q32: 0.6810 (Medium)
+    * q33: -0.4137 (Low)
+    * q34: 0.8605 (High)
+    * q35: 0.7620 (High)
+    * q36: 0.7449 (High)
+    * q37: -0.0938 (Low)
+    * q38: 0.9173 (High)
+    * q39: 0.8586 (High)
+    * q40: -0.2466 (Low)
+    * q41: 0.2077 (Low)
+    * q42: 0.8514 (High)
+    * q43: 0.8169 (High)
+    * q44: 0.8740 (High)
+    * q45: 0.9637 (High)
+    * q46: 0.7710 (High)
+    * q47: -0.7764 (High)
+    * q48: 0.5187 (Medium)
+    * q49: 0.5238 (Medium)
+  - Reliability Acceptability: Alpha(O), CR(O), AVE(O)
+
+
+2. Discriminant Validity Verification
+----------------------------------------
+Discriminant Validity Pass Rate: 9/10 (90.0%)
+
+
+3. Item Loading Summary
+----------------------------------------
+Total Items: 38
+High Loadings (≥0.7): 27 items (71.1%)
+Medium Loadings (0.5-0.7): 5 items (13.2%)
+Low Loadings (<0.5): 6 items (15.8%)
+Acceptable Items (≥0.5): 32/38 (84.2%)
+
+
+4. Factor Correlation Information
+----------------------------------------
+※ Note: Current correlations are calculated based on factor mean scores from original survey data.
+※ Future versions will use factor correlations directly extracted from semopy models.
+Average Correlation: 0.197
+Maximum Correlation: 0.892
+Minimum Correlation: 0.007

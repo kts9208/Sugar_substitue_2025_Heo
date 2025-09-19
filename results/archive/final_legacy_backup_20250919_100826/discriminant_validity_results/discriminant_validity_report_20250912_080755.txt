@@ -1,0 +1,113 @@
+================================================================================
+판별타당도 분석 보고서 (Discriminant Validity Analysis Report)
+================================================================================
+분석 일시: 2025-09-12 08:07:55
+상관관계 데이터: factor_correlations_results\semopy_correlations_20250910_084523.csv
+신뢰도 데이터: integrated_reliability_results_20250905_143318\reliability_summary_table.csv
+
+1. 분석 개요
+----------------------------------------
+판별타당도(Discriminant Validity)는 서로 다른 구성개념들이 실제로 구별되는지를
+검증하는 측정모형의 타당도 평가 기준입니다.
+
+검증 기준:
+- Fornell-Larcker 기준: 각 요인의 AVE 제곱근 > 다른 요인들과의 상관계수
+- 이는 각 요인이 자신의 측정항목들과 더 많은 분산을 공유함을 의미합니다.
+
+2. 요인별 AVE 제곱근
+----------------------------------------
+health_concern: 0.8464
+perceived_benefit: 0.7799
+purchase_intention: 1.0255
+perceived_price: 0.8154
+nutrition_knowledge: 0.7157
+
+3. 요인간 상관계수 매트릭스
+----------------------------------------
+                     health_concern  perceived_benefit  purchase_intention  perceived_price  nutrition_knowledge
+health_concern               1.0000             0.2939              0.3015           0.1614               0.0607
+perceived_benefit            0.2939             1.0000              0.8919           0.1642              -0.0116
+purchase_intention           0.3015             0.8919              1.0000           0.0571               0.0217
+perceived_price              0.1614             0.1642              0.0571           1.0000               0.0067
+nutrition_knowledge          0.0607            -0.0116              0.0217           0.0067               1.0000
+
+4. 판별타당도 검증 결과 (Fornell-Larcker 기준)
+----------------------------------------
+health_concern vs perceived_benefit: ✓ 유효
+  - 상관계수: 0.2939
+  - 최소 AVE 제곱근: 0.7799
+  - 차이: 0.4860
+
+health_concern vs purchase_intention: ✓ 유효
+  - 상관계수: 0.3015
+  - 최소 AVE 제곱근: 0.8464
+  - 차이: 0.5449
+
+health_concern vs perceived_price: ✓ 유효
+  - 상관계수: 0.1614
+  - 최소 AVE 제곱근: 0.8154
+  - 차이: 0.6540
+
+health_concern vs nutrition_knowledge: ✓ 유효
+  - 상관계수: 0.0607
+  - 최소 AVE 제곱근: 0.7157
+  - 차이: 0.6550
+
+perceived_benefit vs purchase_intention: ✗ 위반
+  - 상관계수: 0.8919
+  - 최소 AVE 제곱근: 0.7799
+  - 차이: -0.1120
+
+perceived_benefit vs perceived_price: ✓ 유효
+  - 상관계수: 0.1642
+  - 최소 AVE 제곱근: 0.7799
+  - 차이: 0.6157
+
+perceived_benefit vs nutrition_knowledge: ✓ 유효
+  - 상관계수: 0.0116
+  - 최소 AVE 제곱근: 0.7157
+  - 차이: 0.7041
+
+purchase_intention vs perceived_price: ✓ 유효
+  - 상관계수: 0.0571
+  - 최소 AVE 제곱근: 0.8154
+  - 차이: 0.7583
+
+purchase_intention vs nutrition_knowledge: ✓ 유효
+  - 상관계수: 0.0217
+  - 최소 AVE 제곱근: 0.7157
+  - 차이: 0.6940
+
+perceived_price vs nutrition_knowledge: ✓ 유효
+  - 상관계수: 0.0067
+  - 최소 AVE 제곱근: 0.7157
+  - 차이: 0.7090
+
+5. 판별타당도 위반 사항
+----------------------------------------
+위반: perceived_benefit vs purchase_intention
+  - 상관계수: 0.8919
+  - 최소 AVE 제곱근: 0.7799
+  - 위반 크기: 0.1120
+
+6. 종합 결과
+----------------------------------------
+전체 검증 쌍 수: 10
+유효한 쌍 수: 9
+위반 쌍 수: 1
+유효율: 90.0%
+전체 판별타당도: 미달성
+
+7. 해석 및 권고사항
+----------------------------------------
+✗ 일부 요인 쌍이 판별타당도 기준을 위반하였습니다.
+✗ 해당 요인들 간의 개념적 구별성을 재검토할 필요가 있습니다.
+
+권고사항:
+- 위반된 요인들의 측정항목을 재검토하여 개념적 중복을 제거
+- 요인 구조의 재정의 또는 측정모형의 수정 고려
+- 추가적인 타당도 검증 (HTMT 비율 등) 실시
+
+================================================================================
+보고서 생성 완료
+================================================================================

@@ -1,0 +1,38 @@
+{
+  "sugar_component": {
+    "relative_importance": 0.04386443280868525,
+    "mean_contribution": 0.6135502466076436,
+    "std_contribution": 0.39688842703076893,
+    "weight": 1.0
+  },
+  "health_label_component": {
+    "relative_importance": 0.006239681496043601,
+    "mean_contribution": 0.08546961128803704,
+    "std_contribution": 0.07121864861118476,
+    "weight": 1.0
+  },
+  "price_component": {
+    "relative_importance": 0.021381696571697507,
+    "mean_contribution": 7.946034125627959e-17,
+    "std_contribution": 0.3145181323632542,
+    "weight": 1.0
+  },
+  "interaction_sugar_health": {
+    "relative_importance": 0.028069076690649758,
+    "mean_contribution": 0.44344007945890385,
+    "std_contribution": 0.5980113281044801,
+    "weight": 1.0
+  },
+  "sem_utility_component": {
+    "relative_importance": 0.3610518213500497,
+    "mean_contribution": 4.802131084517322,
+    "std_contribution": 0.7260003178692431,
+    "weight": 1.0
+  },
+  "error_component": {
+    "relative_importance": 0.07024305592671799,
+    "mean_contribution": 0.5772461608671042,
+    "std_contribution": 1.2635305279739273,
+    "weight": 1.0
+  }
+}

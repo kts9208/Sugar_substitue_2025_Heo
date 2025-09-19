@@ -1,0 +1,64 @@
+4가지 요인 간 유의한 경로 분석 보고서
+============================================================
+생성일시: 2025-09-16 05:02:41
+분석 대상: health_concern, perceived_benefit, perceived_price, nutrition_knowledge
+제외 요인: purchase_intention
+
+유의한 경로 목록
+------------------------------------------------------------
+  순번 경로                                          계수    p-value      유의성
+----------------------------------------------------------------------
+   1 perceived_price → perceived_benefit     4.7359     0.0000      ***
+   2 nutrition_knowledge → perceived_benefit   -24.6032     0.0000      ***
+   3 health_concern → perceived_price       -7.2203     0.0000      ***
+   4 perceived_benefit → perceived_price     5.7010     0.0000      ***
+   5 nutrition_knowledge → perceived_price     6.2672     0.0000      ***
+   6 health_concern → nutrition_knowledge    11.4337     0.0000      ***
+   7 perceived_benefit → nutrition_knowledge    -2.5774     0.0003      ***
+   8 perceived_price → nutrition_knowledge    -4.9383     0.0000      ***
+   9 perceived_benefit → health_concern     17.8416     0.0000      ***
+  10 perceived_price → health_concern       -8.9435     0.0000      ***
+  11 nutrition_knowledge → health_concern    -3.4611     0.0190        *
+----------------------------------------------------------------------
+총 유의한 경로: 11개
+
+요인별 유의한 관계 분석
+----------------------------------------
+
+health_concern:
+  영향을 주는 관계: 2개
+    → perceived_price: -7.2203***
+    → nutrition_knowledge: 11.4337***
+  영향을 받는 관계: 3개
+    perceived_benefit →: 17.8416***
+    perceived_price →: -8.9435***
+    nutrition_knowledge →: -3.4611*
+
+perceived_benefit:
+  영향을 주는 관계: 3개
+    → perceived_price: 5.7010***
+    → nutrition_knowledge: -2.5774***
+    → health_concern: 17.8416***
+  영향을 받는 관계: 2개
+    perceived_price →: 4.7359***
+    nutrition_knowledge →: -24.6032***
+
+perceived_price:
+  영향을 주는 관계: 3개
+    → perceived_benefit: 4.7359***
+    → nutrition_knowledge: -4.9383***
+    → health_concern: -8.9435***
+  영향을 받는 관계: 3개
+    health_concern →: -7.2203***
+    perceived_benefit →: 5.7010***
+    nutrition_knowledge →: 6.2672***
+
+nutrition_knowledge:
+  영향을 주는 관계: 3개
+    → perceived_benefit: -24.6032***
+    → perceived_price: 6.2672***
+    → health_concern: -3.4611*
+  영향을 받는 관계: 3개
+    health_concern →: 11.4337***
+    perceived_benefit →: -2.5774***
+    perceived_price →: -4.9383***

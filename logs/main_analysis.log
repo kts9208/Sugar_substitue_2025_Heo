@@ -1,0 +1,4 @@
+2025-09-19 09:32:11,989 - root - ERROR - 기존 FactorConfig 모듈을 찾을 수 없습니다: No module named 'survey_data_preprocessor'
+2025-09-19 09:32:15,193 - root - INFO - No graphviz package found, visualization method is unavailable
+2025-09-19 09:41:11,697 - root - INFO - No graphviz package found, visualization method is unavailable
+2025-09-19 09:41:11,927 - root - ERROR - 기존 FactorConfig 모듈을 찾을 수 없습니다: No module named 'survey_data_preprocessor'

@@ -1,0 +1,6 @@
+﻿,health_concern,perceived_benefit,purchase_intention,perceived_price,nutrition_knowledge
+health_concern,√AVE: 0.846,r: 0.294,r: 0.301,r: 0.161,r: 0.061
+perceived_benefit,r: 0.294,√AVE: 0.780,r: 0.892,r: 0.164,r: -0.012
+purchase_intention,r: 0.301,r: 0.892,√AVE: 1.026,r: 0.057,r: 0.022
+perceived_price,r: 0.161,r: 0.164,r: 0.057,√AVE: 0.815,r: 0.007
+nutrition_knowledge,r: 0.061,r: -0.012,r: 0.022,r: 0.007,√AVE: 0.716

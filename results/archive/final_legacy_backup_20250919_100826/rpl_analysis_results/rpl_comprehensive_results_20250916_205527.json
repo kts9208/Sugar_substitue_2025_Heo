@@ -1,0 +1,140 @@
+{
+  "analysis_info": {
+    "model_type": "Random Parameter Logit",
+    "analysis_date": "2025-09-16T20:55:27.360694",
+    "n_observations": 1789,
+    "n_individuals": 296
+  },
+  "utility_components": {
+    "sugar_free": 0.6746850802754986,
+    "health_label": 0.0848289162590915,
+    "price_normalized": 0.012750648074805946,
+    "sugar_health_interaction": 0.4793568240154026,
+    "error_term": 0.5801969682339372
+  },
+  "heterogeneity_analysis": {
+    "sugar_free": {
+      "mean": 0.8656277451877251,
+      "std": 0.4853024158576256,
+      "coefficient_of_variation": 0.5606363919774545,
+      "heterogeneity_level": "High",
+      "min": -0.36499947357038537,
+      "max": 2.6540828830031686,
+      "q25": 0.536606224066315,
+      "q75": 1.1425935533118303
+    },
+    "health_label": {
+      "mean": 0.13806310548538026,
+      "std": 0.492255909421556,
+      "coefficient_of_variation": 3.5654413805263987,
+      "heterogeneity_level": "High",
+      "min": -1.151318993403502,
+      "max": 1.2624256512506769,
+      "q25": -0.21287113126754814,
+      "q75": 0.48348388993168057
+    },
+    "price_normalized": {
+      "mean": -0.2985002383513165,
+      "std": 0.5364680247808942,
+      "coefficient_of_variation": 1.7972113782686636,
+      "heterogeneity_level": "High",
+      "min": -2.1918529586074706,
+      "max": 1.161755435945253,
+      "q25": -0.6244260242997048,
+      "q75": 0.07640893480696102
+    },
+    "sugar_health_interaction": {
+      "mean": 1.3032313867488305,
+      "std": 0.5640879453273184,
+      "coefficient_of_variation": 0.432837906654894,
+      "heterogeneity_level": "Medium",
+      "min": -0.28222723279341116,
+      "max": 2.8928659069467892,
+      "q25": 0.942352900267094,
+      "q75": 1.6260179688196938
+    },
+    "perceived_benefit": {
+      "mean": 0.41070698125565436,
+      "std": 0.193245506513739,
+      "coefficient_of_variation": 0.4705191665428466,
+      "heterogeneity_level": "Medium",
+      "min": -0.11820845842898198,
+      "max": 0.920336622836079,
+      "q25": 0.2700405235505075,
+      "q75": 0.5204462155447895
+    },
+    "nutrition_knowledge": {
+      "mean": 0.3146387153978686,
+      "std": 0.15224893941803438,
+      "coefficient_of_variation": 0.4838849511113461,
+      "heterogeneity_level": "Medium",
+      "min": -0.1382025725241911,
+      "max": 0.7789661351767291,
+      "q25": 0.2190346480623496,
+      "q75": 0.42029563140402354
+    },
+    "perceived_price": {
+      "mean": -0.2033625119600325,
+      "std": 0.09756359375814151,
+      "coefficient_of_variation": 0.4797521077892469,
+      "heterogeneity_level": "Medium",
+      "min": -0.5019512155820826,
+      "max": 0.1137748533659994,
+      "q25": -0.26509435202798,
+      "q75": -0.1363923701982891
+    },
+    "health_concern": {
+      "mean": 0.2505946822238505,
+      "std": 0.11676061072583323,
+      "coefficient_of_variation": 0.4659341119678415,
+      "heterogeneity_level": "Medium",
+      "min": -0.0625056627952561,
+      "max": 0.6231902267206433,
+      "q25": 0.17553342760012483,
+      "q75": 0.33003037474960445
+    }
+  },
+  "model_comparison": {
+    "model_comparison": {
+      "fixed_parameter_model": {
+        "description": "모든 개인이 동일한 계수를 가짐",
+        "coefficients": {
+          "sugar_component": 0.8701,
+          "health_label_component": 0.1448,
+          "price_component": 0.3145,
+          "interaction_sugar_health": 1.2494
+        },
+        "advantages": [
+          "간단한 해석",
+          "안정적 추정",
+          "계산 효율성"
+        ],
+        "limitations": [
+          "개인차 무시",
+          "IIA 가정",
+          "현실성 부족"
+        ]
+      },
+      "random_parameter_model": {
+        "description": "개인별로 다른 계수를 가지며, SEM 요인이 계수에 영향",
+        "advantages": [
+          "개인 이질성 반영",
+          "IIA 가정 완화",
+          "현실적 모델링",
+          "SEM 요인 활용"
+        ],
+        "limitations": [
+          "복잡한 추정",
+          "해석 어려움",
+          "계산 비용 증가"
+        ]
+      }
+    },
+    "key_differences": [
+      "개인 이질성: RPL은 개인별 선호 차이를 명시적으로 모델링",
+      "SEM 통합: RPL은 SEM 요인이 계수 분포에 직접 영향을 미침",
+      "예측력: RPL은 일반적으로 더 높은 예측 정확도를 보임",
+      "정책 시사점: RPL은 세분화된 타겟팅 전략 수립 가능"
+    ]
+  }
+}

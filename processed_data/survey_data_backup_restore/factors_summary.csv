@@ -1,6 +1,0 @@
-﻿Factor,Items,Item_Count,Original_Items,Removed_Items,Removed_Count,Status
-perceived_benefit,"q16, q17",2,6,"q12, q13, q14, q15",4,Optimized for Fornell-Larcker
-purchase_intention,"q18, q19",2,3,q20,1,Optimized for Fornell-Larcker
-health_concern,"q1, q2, q3, q4, q5, q6, q7",7,7,,0,Unchanged
-perceived_price,"q8, q9, q10, q11",4,4,,0,Unchanged
-nutrition_knowledge,"q21, q22, q23, q24, q25, q26, q27, q28, q29, q30, q31, q32, q33, q34, q35, q36, q37, q38, q39, q40, q41",21,21,,0,Unchanged

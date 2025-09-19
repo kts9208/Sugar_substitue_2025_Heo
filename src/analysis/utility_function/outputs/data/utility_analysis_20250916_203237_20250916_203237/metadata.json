@@ -1,0 +1,28 @@
+{
+  "experiment_id": "utility_analysis_20250916_203237_20250916_203237",
+  "experiment_name": "utility_analysis_20250916_203237",
+  "timestamp": "20250916_203237",
+  "saved_files": {
+    "total_utility": "C:\\Users\\KimTaeseok\\OneDrive - \uc81c\uc8fc\ub300\ud559\uad50\\Research\\Coding\\Sugar_substitue_2025_Heo\\utility_function\\outputs\\data\\utility_analysis_20250916_203237_20250916_203237\\total_utility.csv",
+    "decomposition": "C:\\Users\\KimTaeseok\\OneDrive - \uc81c\uc8fc\ub300\ud559\uad50\\Research\\Coding\\Sugar_substitue_2025_Heo\\utility_function\\outputs\\data\\utility_analysis_20250916_203237_20250916_203237\\utility_decomposition.csv",
+    "importance": "C:\\Users\\KimTaeseok\\OneDrive - \uc81c\uc8fc\ub300\ud559\uad50\\Research\\Coding\\Sugar_substitue_2025_Heo\\utility_function\\outputs\\data\\utility_analysis_20250916_203237_20250916_203237\\component_importance.json",
+    "input_data": "C:\\Users\\KimTaeseok\\OneDrive - \uc81c\uc8fc\ub300\ud559\uad50\\Research\\Coding\\Sugar_substitue_2025_Heo\\utility_function\\outputs\\data\\utility_analysis_20250916_203237_20250916_203237\\input_data.csv"
+  },
+  "parameters": {
+    "random_seed": 42,
+    "experiment_name": "utility_analysis_20250916_203237"
+  },
+  "summary_stats": {
+    "utility_stats": {
+      "n_observations": 1699,
+      "mean": 6.521837182739013,
+      "std": 1.804774587083362,
+      "min": 1.2154278145061852,
+      "max": 12.985731510006552
+    },
+    "data_stats": {
+      "n_observations": 1699,
+      "n_variables": 32
+    }
+  }
+}

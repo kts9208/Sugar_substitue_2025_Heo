@@ -1,0 +1,22 @@
+digraph G {
+	overlap=scale splines=true
+	edge [fontsize=12]
+	node [fillcolor="#cae6df" shape=circle style=filled]
+	node [shape=box style=""]
+	health_concern [label=health_concern]
+	nutrition_knowledge [label=nutrition_knowledge]
+	perceived_benefit [label=perceived_benefit]
+	perceived_price [label=perceived_price]
+	health_concern -> perceived_benefit [label="0.800\np-val: 0.43"]
+	perceived_price -> perceived_benefit [label="8.260\np-val: 0.00"]
+	nutrition_knowledge -> perceived_benefit [label="-8.187\np-val: 0.00"]
+	health_concern -> perceived_price [label="-4.140\np-val: 0.00"]
+	perceived_benefit -> perceived_price [label="3.269\np-val: 0.00"]
+	nutrition_knowledge -> perceived_price [label="1.196\np-val: 0.00"]
+	health_concern -> nutrition_knowledge [label="34.360\np-val: 0.00"]
+	perceived_benefit -> nutrition_knowledge [label="-7.745\np-val: 0.00"]
+	perceived_price -> nutrition_knowledge [label="-25.882\np-val: 0.00"]
+	perceived_benefit -> health_concern [label="17.841\np-val: 0.00"]
+	perceived_price -> health_concern [label="-15.598\np-val: 0.00"]
+	nutrition_knowledge -> health_concern [label="-1.152\np-val: 0.02"]
+}
