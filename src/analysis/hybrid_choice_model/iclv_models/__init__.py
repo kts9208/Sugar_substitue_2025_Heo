@@ -6,9 +6,10 @@ ICLV (Integrated Choice and Latent Variable) Models Module
 핵심 기능:
 1. Ordered Probit 측정모델
 2. 잠재변수 구조방정식
-3. 동시 추정 (Simultaneous Estimation)
-4. Conditional/Unconditional WTP 계산
-5. Halton Draws 시뮬레이션
+3. Binary Probit 선택모델
+4. 동시 추정 (Simultaneous Estimation)
+5. Conditional/Unconditional WTP 계산
+6. Halton Draws 시뮬레이션
 
 참조:
 - King, P. M. (2022). Willingness-to-pay for precautionary control of microplastics.
@@ -25,6 +26,7 @@ from .iclv_config import (
     ICLVConfig,
     MeasurementConfig,
     StructuralConfig,
+    ChoiceConfig,
     create_iclv_config
 )
 
@@ -44,6 +46,11 @@ from .structural_equations import (
     estimate_structural_model
 )
 
+from .choice_equations import (
+    BinaryProbitChoice,
+    estimate_choice_model
+)
+
 from .simultaneous_estimator import (
     SimultaneousEstimator,
     HaltonDrawGenerator,
@@ -61,26 +68,31 @@ __all__ = [
     'ICLVConfig',
     'MeasurementConfig',
     'StructuralConfig',
+    'ChoiceConfig',
     'create_iclv_config',
-    
+
     # 메인 분석기
     'ICLVAnalyzer',
     'ICLVResults',
     'run_iclv_analysis',
-    
+
     # 측정모델
     'OrderedProbitMeasurement',
     'estimate_measurement_model',
-    
+
     # 구조모델
     'LatentVariableRegression',
     'estimate_structural_model',
-    
+
+    # 선택모델
+    'BinaryProbitChoice',
+    'estimate_choice_model',
+
     # 동시 추정
     'SimultaneousEstimator',
     'HaltonDrawGenerator',
     'estimate_iclv_simultaneous',
-    
+
     # WTP 계산
     'WTPCalculator',
     'calculate_conditional_wtp',
