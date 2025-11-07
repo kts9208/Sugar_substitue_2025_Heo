@@ -1,0 +1,418 @@
+"""
+Analytic Gradient Calculator for ICLV Models
+
+Apollo 수준의 성능을 위한 해석적 그래디언트 계산
+
+References:
+- Train (2009) - Discrete Choice Methods with Simulation
+- Ben-Akiva & Lerman (1985) - Discrete Choice Analysis
+- Apollo R package - gradient calculation
+"""
+
+import numpy as np
+import pandas as pd
+from typing import Dict, Tuple
+from scipy.stats import norm
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class MeasurementGradient:
+    """
+    측정모델 (Ordered Probit) 그래디언트 계산
+    
+    Model: P(Y=k) = Φ(τ_k - ζ*LV) - Φ(τ_{k-1} - ζ*LV)
+    
+    Parameters:
+    - ζ (zeta): 요인적재량 (factor loadings)
+    - τ (tau): 임계값 (thresholds)
+    """
+    
+    def __init__(self, n_indicators: int, n_categories: int = 5):
+        """
+        Args:
+            n_indicators: 지표 개수
+            n_categories: 범주 개수 (5점 척도 = 5)
+        """
+        self.n_indicators = n_indicators
+        self.n_categories = n_categories
+        self.n_thresholds = n_categories - 1  # 5점 척도 → 4개 임계값
+    
+    def compute_gradient(self, data: pd.DataFrame, lv: float, 
+                        params: Dict[str, np.ndarray],
+                        indicators: list) -> Dict[str, np.ndarray]:
+        """
+        측정모델 그래디언트 계산
+        
+        ∂ log L / ∂ζ_i = (φ(τ_k - ζ*LV) - φ(τ_{k-1} - ζ*LV)) / P(Y=k) * (-LV)
+        ∂ log L / ∂τ_k = φ(τ_k - ζ*LV) / P(Y=k)
+        
+        Args:
+            data: 관측 데이터
+            lv: 잠재변수 값
+            params: {'zeta': np.ndarray, 'tau': np.ndarray}
+            indicators: 지표 변수명 리스트
+            
+        Returns:
+            {'grad_zeta': np.ndarray, 'grad_tau': np.ndarray}
+        """
+        zeta = params['zeta']
+        tau = params['tau']
+        
+        grad_zeta = np.zeros(self.n_indicators)
+        grad_tau = np.zeros((self.n_indicators, self.n_thresholds))
+        
+        # 첫 번째 행만 사용 (측정모델은 개인 특성)
+        first_row = data.iloc[0]
+        
+        for i, indicator in enumerate(indicators):
+            y = first_row[indicator]
+            if pd.isna(y):
+                continue
+            
+            k = int(y) - 1  # 1-5 → 0-4
+            zeta_i = zeta[i]
+            tau_i = tau[i]
+            
+            V = zeta_i * lv
+            
+            # P(Y=k) 계산
+            if k == 0:
+                prob = norm.cdf(tau_i[0] - V)
+                phi_upper = norm.pdf(tau_i[0] - V)
+                phi_lower = 0.0
+            elif k == self.n_categories - 1:
+                prob = 1 - norm.cdf(tau_i[-1] - V)
+                phi_upper = 0.0
+                phi_lower = norm.pdf(tau_i[-1] - V)
+            else:
+                prob = norm.cdf(tau_i[k] - V) - norm.cdf(tau_i[k-1] - V)
+                phi_upper = norm.pdf(tau_i[k] - V)
+                phi_lower = norm.pdf(tau_i[k-1] - V)
+            
+            # 수치 안정성
+            prob = np.clip(prob, 1e-10, 1 - 1e-10)
+            
+            # ∂ log L / ∂ζ_i
+            grad_zeta[i] = (phi_lower - phi_upper) / prob * lv
+            
+            # ∂ log L / ∂τ
+            if k == 0:
+                grad_tau[i, 0] = phi_upper / prob
+            elif k == self.n_categories - 1:
+                grad_tau[i, -1] = -phi_lower / prob
+            else:
+                grad_tau[i, k-1] = -phi_lower / prob
+                grad_tau[i, k] = phi_upper / prob
+        
+        return {
+            'grad_zeta': grad_zeta,
+            'grad_tau': grad_tau
+        }
+
+
+class StructuralGradient:
+    """
+    구조모델 (Linear Regression) 그래디언트 계산
+    
+    Model: LV ~ N(γ*X, σ²)
+    
+    Parameters:
+    - γ (gamma): 회귀계수
+    """
+    
+    def __init__(self, n_sociodem: int, error_variance: float = 1.0):
+        """
+        Args:
+            n_sociodem: 사회인구학적 변수 개수
+            error_variance: 오차 분산
+        """
+        self.n_sociodem = n_sociodem
+        self.error_variance = error_variance
+    
+    def compute_gradient(self, data: pd.DataFrame, lv: float,
+                        params: Dict[str, np.ndarray],
+                        sociodemographics: list) -> Dict[str, np.ndarray]:
+        """
+        구조모델 그래디언트 계산
+        
+        log L = -0.5 * log(2πσ²) - 0.5 * (LV - γ*X)² / σ²
+        
+        ∂ log L / ∂γ_j = (LV - γ*X) / σ² * X_j
+        
+        Args:
+            data: 사회인구학적 데이터
+            lv: 잠재변수 값
+            params: {'gamma': np.ndarray}
+            sociodemographics: 사회인구학적 변수명 리스트
+            
+        Returns:
+            {'grad_gamma': np.ndarray}
+        """
+        gamma = params['gamma']
+        
+        # 첫 번째 행만 사용
+        first_row = data.iloc[0]
+        
+        # X 벡터 구성
+        X = np.zeros(self.n_sociodem)
+        for j, var in enumerate(sociodemographics):
+            if var in first_row.index:
+                value = first_row[var]
+                if not pd.isna(value):
+                    X[j] = value
+        
+        # 평균 계산
+        lv_mean = np.dot(gamma, X)
+        
+        # 그래디언트
+        residual = lv - lv_mean
+        grad_gamma = residual / self.error_variance * X
+        
+        return {'grad_gamma': grad_gamma}
+
+
+class ChoiceGradient:
+    """
+    선택모델 (Binary Probit) 그래디언트 계산
+    
+    Model: P(choice=1) = Φ(V), V = β*X + λ*LV
+    
+    Parameters:
+    - β (beta): 선택 속성 계수
+    - λ (lambda): 잠재변수 계수
+    - intercept: 절편
+    """
+    
+    def __init__(self, n_attributes: int):
+        """
+        Args:
+            n_attributes: 선택 속성 개수
+        """
+        self.n_attributes = n_attributes
+    
+    def compute_gradient(self, data: pd.DataFrame, lv: float,
+                        params: Dict[str, np.ndarray],
+                        choice_attributes: list) -> Dict[str, np.ndarray]:
+        """
+        선택모델 그래디언트 계산 (Panel Product 포함)
+        
+        log L = Σ_t [choice_t * log(Φ(V_t)) + (1-choice_t) * log(1-Φ(V_t))]
+        
+        ∂ log L / ∂β_j = Σ_t [(choice_t - Φ(V_t)) / (Φ(V_t) * (1-Φ(V_t)))] * φ(V_t) * X_{tj}
+        ∂ log L / ∂λ = Σ_t [(choice_t - Φ(V_t)) / (Φ(V_t) * (1-Φ(V_t)))] * φ(V_t) * LV
+        
+        Args:
+            data: 선택 데이터 (여러 선택 상황)
+            lv: 잠재변수 값
+            params: {'intercept': float, 'beta': np.ndarray, 'lambda': float}
+            choice_attributes: 선택 속성 변수명 리스트
+            
+        Returns:
+            {'grad_intercept': float, 'grad_beta': np.ndarray, 'grad_lambda': float}
+        """
+        intercept = params['intercept']
+        beta = params['beta']
+        lambda_lv = params['lambda']
+        
+        grad_intercept = 0.0
+        grad_beta = np.zeros(self.n_attributes)
+        grad_lambda = 0.0
+        
+        # Panel Product: 모든 선택 상황에 대해 합산
+        for idx in range(len(data)):
+            row = data.iloc[idx]
+            
+            # 선택 속성
+            X = np.array([row[attr] for attr in choice_attributes])
+            
+            # NaN 처리 (opt-out)
+            if np.isnan(X).any():
+                continue
+            
+            # 선택 결과
+            choice = row['choice']
+            
+            # 효용
+            V = intercept + np.dot(beta, X) + lambda_lv * lv
+            
+            # 확률
+            prob = norm.cdf(V)
+            prob = np.clip(prob, 1e-10, 1 - 1e-10)
+            
+            # φ(V)
+            phi = norm.pdf(V)
+            
+            # 그래디언트 기여분
+            # ∂ log L / ∂θ = (y - Φ(V)) / (Φ(V) * (1-Φ(V))) * φ(V) * ∂V/∂θ
+            common_term = (choice - prob) / (prob * (1 - prob)) * phi
+            
+            grad_intercept += common_term
+            grad_beta += common_term * X
+            grad_lambda += common_term * lv
+        
+        return {
+            'grad_intercept': grad_intercept,
+            'grad_beta': grad_beta,
+            'grad_lambda': grad_lambda
+        }
+
+
+class JointGradient:
+    """
+    결합 로그우도 그래디언트 계산 (Apollo 방식)
+
+    Joint LL = Σ_i log[(1/R) Σ_r P(Choice|LV_r) * P(Indicators|LV_r) * P(LV_r|X)]
+
+    Apollo의 analytic gradient 계산 방식:
+    1. 각 모델의 gradient를 개별적으로 계산
+    2. Chain rule을 사용하여 결합
+    3. 시뮬레이션 draws에 대해 평균
+
+    Reference: Apollo R package - apollo_estimate.R, apollo_gradient.R
+    """
+
+    def __init__(self, measurement_grad: MeasurementGradient,
+                 structural_grad: StructuralGradient,
+                 choice_grad: ChoiceGradient):
+        """
+        Args:
+            measurement_grad: 측정모델 그래디언트 계산기
+            structural_grad: 구조모델 그래디언트 계산기
+            choice_grad: 선택모델 그래디언트 계산기
+        """
+        self.measurement_grad = measurement_grad
+        self.structural_grad = structural_grad
+        self.choice_grad = choice_grad
+
+    def compute_gradient(self, data: pd.DataFrame, params_dict: Dict,
+                        draws: np.ndarray, individual_id_column: str,
+                        measurement_model, structural_model, choice_model,
+                        indicators: list, sociodemographics: list,
+                        choice_attributes: list) -> Dict[str, np.ndarray]:
+        """
+        결합 그래디언트 계산 (Apollo 방식)
+
+        ∂ log L / ∂θ = Σ_i [Σ_r w_ir * (∂ log P_measurement / ∂θ +
+                                          ∂ log P_choice / ∂θ +
+                                          ∂ log P_structural / ∂θ)]
+
+        where w_ir = P_ir / Σ_r P_ir (importance weight)
+
+        Args:
+            data: 전체 데이터
+            params_dict: 파라미터 딕셔너리
+            draws: Halton draws (n_individuals, n_draws)
+            individual_id_column: 개인 ID 열 이름
+            measurement_model: 측정모델 객체
+            structural_model: 구조모델 객체
+            choice_model: 선택모델 객체
+            indicators: 지표 변수명 리스트
+            sociodemographics: 사회인구학적 변수명 리스트
+            choice_attributes: 선택 속성 변수명 리스트
+
+        Returns:
+            gradient_dict: 각 파라미터 그룹별 그래디언트
+        """
+        individual_ids = data[individual_id_column].unique()
+        n_individuals = len(individual_ids)
+
+        # 그래디언트 초기화
+        n_zeta = len(indicators)
+        n_tau = len(indicators) * (measurement_model.n_categories - 1)
+        n_gamma = len(sociodemographics)
+        n_beta = len(choice_attributes)
+
+        grad_zeta_total = np.zeros(n_zeta)
+        grad_tau_total = np.zeros((len(indicators), measurement_model.n_categories - 1))
+        grad_gamma_total = np.zeros(n_gamma)
+        grad_intercept_total = 0.0
+        grad_beta_total = np.zeros(n_beta)
+        grad_lambda_total = 0.0
+
+        # 개인별 그래디언트 계산
+        for i, ind_id in enumerate(individual_ids):
+            ind_data = data[data[individual_id_column] == ind_id]
+            ind_draws = draws[i, :]
+
+            # 각 draw에 대한 likelihood와 gradient 저장
+            draw_likelihoods = []
+            draw_gradients = []
+
+            for j, draw in enumerate(ind_draws):
+                # LV 예측
+                lv = structural_model.predict(ind_data, params_dict['structural'], draw)
+
+                # 각 모델의 log-likelihood 계산
+                ll_measurement = measurement_model.log_likelihood(
+                    ind_data, lv, params_dict['measurement']
+                )
+
+                # Panel Product
+                choice_set_lls = []
+                for idx in range(len(ind_data)):
+                    ll_choice_t = choice_model.log_likelihood(
+                        ind_data.iloc[idx:idx+1], lv, params_dict['choice']
+                    )
+                    choice_set_lls.append(ll_choice_t)
+                ll_choice = sum(choice_set_lls)
+
+                ll_structural = structural_model.log_likelihood(
+                    ind_data, lv, params_dict['structural'], draw
+                )
+
+                # 결합 log-likelihood
+                joint_ll = ll_measurement + ll_choice + ll_structural
+
+                # Likelihood (not log)
+                likelihood = np.exp(joint_ll) if np.isfinite(joint_ll) else 1e-100
+                draw_likelihoods.append(likelihood)
+
+                # 각 모델의 gradient 계산
+                grad_meas = self.measurement_grad.compute_gradient(
+                    ind_data, lv, params_dict['measurement'], indicators
+                )
+                grad_struct = self.structural_grad.compute_gradient(
+                    ind_data, lv, params_dict['structural'], sociodemographics
+                )
+                grad_choice = self.choice_grad.compute_gradient(
+                    ind_data, lv, params_dict['choice'], choice_attributes
+                )
+
+                # Gradient 저장
+                draw_gradients.append({
+                    'zeta': grad_meas['grad_zeta'],
+                    'tau': grad_meas['grad_tau'],
+                    'gamma': grad_struct['grad_gamma'],
+                    'intercept': grad_choice['grad_intercept'],
+                    'beta': grad_choice['grad_beta'],
+                    'lambda': grad_choice['grad_lambda']
+                })
+
+            # Importance weights 계산 (Apollo 방식)
+            total_likelihood = sum(draw_likelihoods)
+            if total_likelihood > 0:
+                weights = np.array(draw_likelihoods) / total_likelihood
+            else:
+                weights = np.ones(len(draw_likelihoods)) / len(draw_likelihoods)
+
+            # Weighted average of gradients
+            for j, grad in enumerate(draw_gradients):
+                w = weights[j]
+                grad_zeta_total += w * grad['zeta']
+                grad_tau_total += w * grad['tau']
+                grad_gamma_total += w * grad['gamma']
+                grad_intercept_total += w * grad['intercept']
+                grad_beta_total += w * grad['beta']
+                grad_lambda_total += w * grad['lambda']
+
+        return {
+            'grad_zeta': grad_zeta_total,
+            'grad_tau': grad_tau_total,
+            'grad_gamma': grad_gamma_total,
+            'grad_intercept': grad_intercept_total,
+            'grad_beta': grad_beta_total,
+            'grad_lambda': grad_lambda_total
+        }
+

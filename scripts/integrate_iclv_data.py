@@ -106,26 +106,45 @@ def load_sociodem_data():
     df = pd.read_excel('data/raw/Sugar_substitue_Raw data_250730.xlsx', sheet_name='DATA')
 
     # 사회인구학적 변수 선택
-    sociodem_cols = ['no', 'q1', 'q2_1', 'q52', 'q53', 'q54', 'q55', 'q56']
+    # 🔴 수정: q50 (income), q52 (education) 올바른 매핑
+    sociodem_cols = ['no', 'q1', 'q3', 'q50', 'q52', 'q54', 'q55', 'q56']
     df_sociodem = df[sociodem_cols].copy()
 
     # 컬럼명 변경
+    # 🔴 수정: 올바른 매핑 적용
     df_sociodem = df_sociodem.rename(columns={
         'no': 'respondent_id',
-        'q1': 'gender',
-        'q2_1': 'age',
-        'q52': 'income',
-        'q53': 'education',
+        'q1': 'gender',           # 0: 남성, 1: 여성
+        'q3': 'age',              # 1: 20~29세, 2: 30~39세, 3: 40~49세, 4: 50~59세, 5: 60~69세
+        'q50': 'income',          # 1: 200만원 미만, 2: 200~300만, 3: 300~400만, 4: 400~500만, 5: 500~600만, 6: 600만원 이상
+        'q52': 'education',       # 1: 고졸미만, 2: 고졸, 3: 대학재학, 4: 대학졸업, 5: 대학원재학, 6: 대학원졸업
         'q54': 'diabetes',
         'q55': 'family_diabetes',
         'q56': 'sugar_substitute_usage'
     })
 
-    # 표준화
-    df_sociodem['age_std'] = (df_sociodem['age'] - df_sociodem['age'].mean()) / df_sociodem['age'].std()
+    # 연령대를 연속형으로 변환 (중간값 사용)
+    # 🔴 수정: q3 (연령대)를 연속형 나이로 변환
+    age_mapping = {
+        1: 25,  # 20~29세 → 25세
+        2: 35,  # 30~39세 → 35세
+        3: 45,  # 40~49세 → 45세
+        4: 55,  # 50~59세 → 55세
+        5: 65   # 60~69세 → 65세
+    }
+    df_sociodem['age_continuous'] = df_sociodem['age'].map(age_mapping)
+    df_sociodem['age_std'] = (df_sociodem['age_continuous'] - df_sociodem['age_continuous'].mean()) / df_sociodem['age_continuous'].std()
 
-    # 소득 연속형 변환 (중간값 사용)
-    income_mapping = {1: 2000, 2: 4000, 3: 6000, 4: 8000, 5: 10000}
+    # 소득 연속형 변환 (중간값 사용, 단위: 만원)
+    # 🔴 수정: income=6 추가 (600만원 이상 → 700만원으로 가정)
+    income_mapping = {
+        1: 150,   # 200만원 미만 → 150만원
+        2: 250,   # 200~300만원 → 250만원
+        3: 350,   # 300~400만원 → 350만원
+        4: 450,   # 400~500만원 → 450만원
+        5: 550,   # 500~600만원 → 550만원
+        6: 700    # 600만원 이상 → 700만원
+    }
     df_sociodem['income_continuous'] = df_sociodem['income'].map(income_mapping)
     df_sociodem['income_std'] = (df_sociodem['income_continuous'] - df_sociodem['income_continuous'].mean()) / df_sociodem['income_continuous'].std()
 
@@ -137,6 +156,9 @@ def load_sociodem_data():
 
     print(f"   - 로드 완료: {len(df_sociodem)}명")
     print(f"   - 변수: {df_sociodem.columns.tolist()}")
+    print(f"   - income 범위: {df_sociodem['income'].min()}~{df_sociodem['income'].max()} (1~6)")
+    print(f"   - education 범위: {df_sociodem['education'].min()}~{df_sociodem['education'].max()} (1~6)")
+    print(f"   - income_std NaN 개수: {df_sociodem['income_std'].isna().sum()}")
 
     return df_sociodem
 

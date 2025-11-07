@@ -1,0 +1,71 @@
+ERROR:root:기존 FactorConfig 모듈을 찾을 수 없습니다: No module named 'survey_data_preprocessor'
+ERROR:root:기존 FactorConfig 모듈을 찾을 수 없습니다: No module named 'survey_data_preprocessor'
+WARNING:root:기존 SEM 모듈을 찾을 수 없습니다.
+======================================================================
+ICLV 동시추정 테스트 (수정 버전 v2)
+======================================================================
+
+1. 데이터 로드 중...
+   데이터 shape: (5400, 58)
+   개인 수: 299
+
+2. 소규모 테스트 데이터 추출...
+   테스트 개인 수: 30
+   테스트 데이터 shape: (540, 58)
+
+3. ICLV 설정...
+   설정 완료
+   - 잠재변수: health_concern
+   - 지표 수: 6
+   - 사회인구학적 변수: 3
+   - 선택 속성: 2
+   - Halton draws: 50
+   - 최대 반복: 2000
+   - 테스트 개인 수: 30
+
+4. 모델 생성...
+   - 측정모델 생성 완료
+   - 구조모델 생성 완료
+   - 선택모델 생성 완료
+
+5. ICLV 동시추정 실행...
+   (수정사항: Panel Product + Nelder-Mead + bounds + 수치 안정성)
+   (로깅: 매 5회 반복마다 LL 출력, 개선 시 즉시 출력)
+
+======================================================================
+SimultaneousEstimator.estimate() 시작
+======================================================================
+데이터 shape: (540, 58)
+개인 수: 30
+Halton draws 생성 시작... (n_draws=50, n_individuals=30)
+Halton draws 생성 완료
+초기 파라미터 설정 시작...
+초기 파라미터 설정 완료 (총 37개)
+파라미터 bounds 계산 시작...
+파라미터 bounds 계산 완료 (총 37개)
+======================================================================
+최적화 시작: Nelder-Mead (gradient-free)
+초기 파라미터 개수: 37
+최대 반복 횟수: 2000
+======================================================================
+Traceback (most recent call last):
+  File "C:\Users\KimTaeseok\OneDrive - 제주대학교\Research\Coding\Sugar_substitue_2025_Heo\scripts\test_iclv_fixed_v2.py", line 141, in main
+    results = estimator.estimate(
+              ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\KimTaeseok\OneDrive - 제주대학교\Research\Coding\Sugar_substitue_2025_Heo\src\analysis\hybrid_choice_model\iclv_models\simultaneous_estimator_fixed.py", line 193, in estimate
+    result = optimize.minimize(
+             ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\KimTaeseok\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\scipy\optimize\_minimize.py", line 726, in minimize
+    res = _minimize_neldermead(fun, x0, args, callback, bounds=bounds,
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\KimTaeseok\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\scipy\optimize\_optimize.py", line 833, in _minimize_neldermead
+    fsim[k] = func(sim[k])
+              ^^^^^^^^^^^^
+  File "C:\Users\KimTaeseok\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\scipy\optimize\_optimize.py", line 542, in function_wrapper
+    fx = function(np.copy(x), *(wrapper_args + args))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\KimTaeseok\OneDrive - 제주대학교\Research\Coding\Sugar_substitue_2025_Heo\src\analysis\hybrid_choice_model\iclv_models\simultaneous_estimator_fixed.py", line 168, in negative_log_likelihood
+    print(
+UnicodeEncodeError: 'cp949' codec can't encode character '\u2713' in position 50: illegal multibyte sequence
+
+오류 발생: 'cp949' codec can't encode character '\u2713' in position 50: illegal multibyte sequence

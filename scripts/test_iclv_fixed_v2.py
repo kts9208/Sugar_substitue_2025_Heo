@@ -54,7 +54,7 @@ def main():
     
     # 2. 소규모 테스트용 데이터 추출
     print("\n2. 소규모 테스트 데이터 추출...")
-    n_test_individuals = 5  # 🔴 5명만 사용 (원래 30)
+    n_test_individuals = 30  # 🔴 30명으로 증가 (원래 5)
     test_ids = data['respondent_id'].unique()[:n_test_individuals]
     test_data = data[data['respondent_id'].isin(test_ids)].copy()
     print(f"   테스트 개인 수: {n_test_individuals}")
@@ -83,9 +83,11 @@ def main():
     
     # 추정 설정
     estimation_config = EstimationConfig(
-        n_draws=10,            # 🔴 테스트용: 10 draws로 줄임 (원래 100)
+        optimizer='BFGS',                # 🔴 BFGS 사용
+        use_analytic_gradient=True,      # 🔴 Analytic gradient 사용 (Apollo 방식)
+        n_draws=50,                      # 🔴 50 draws로 증가 (원래 10)
         draw_type='halton',
-        max_iterations=500,    # 증가
+        max_iterations=500,              # 🔴 BFGS는 빠르므로 500회로 충분
         calculate_se=False
     )
     
@@ -112,6 +114,7 @@ def main():
     print(f"   - 선택 속성: {len(choice_config.choice_attributes)}")
     print(f"   - Halton draws: {estimation_config.n_draws}")
     print(f"   - 최대 반복: {estimation_config.max_iterations}")
+    print(f"   - 테스트 개인 수: {n_test_individuals}")
     
     # 4. 모델 생성
     print("\n4. 모델 생성...")
@@ -130,7 +133,7 @@ def main():
 
     # 5. 추정
     print("\n5. ICLV 동시추정 실행...")
-    print("   (수정사항: Panel Product + Nelder-Mead + bounds + 수치 안정성)")
+    print("   (수정사항: Panel Product + BFGS + Analytic Gradient (Apollo 방식) + -inf 클리핑)")
     print("   (로깅: 매 5회 반복마다 LL 출력, 개선 시 즉시 출력)")
     print()
 

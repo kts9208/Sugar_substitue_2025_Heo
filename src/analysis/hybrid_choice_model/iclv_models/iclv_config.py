@@ -89,7 +89,10 @@ class EstimationConfig:
     optimizer: str = 'BFGS'
     max_iterations: int = 2000
     convergence_tolerance: float = 1e-6
-    
+
+    # Gradient 설정 (Apollo 방식)
+    use_analytic_gradient: bool = True  # True: analytic gradient, False: numerical gradient
+
     # 표준오차 계산
     calculate_se: bool = True
     se_method: Literal['hessian', 'bootstrap', 'robust'] = 'hessian'

@@ -17,6 +17,13 @@ from scipy.stats import norm, qmc
 from scipy.special import logsumexp
 import logging
 
+from .gradient_calculator import (
+    MeasurementGradient,
+    StructuralGradient,
+    ChoiceGradient,
+    JointGradient
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -94,10 +101,17 @@ class SimultaneousEstimator:
         """
         self.config = config
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
-        
+
         self.halton_generator = None
         self.data = None
         self.results = None
+
+        # Gradient calculators (Apollo 방식)
+        self.measurement_grad = None
+        self.structural_grad = None
+        self.choice_grad = None
+        self.joint_grad = None
+        self.use_analytic_gradient = False  # 기본값: 수치적 그래디언트
     
     def estimate(self, data: pd.DataFrame, 
                 measurement_model,
@@ -137,6 +151,33 @@ class SimultaneousEstimator:
         print("Halton draws 생성 완료", flush=True)
         self.logger.info("Halton draws 생성 완료")
 
+        # Gradient calculators 초기화 (Apollo 방식)
+        use_gradient = self.config.estimation.optimizer in ['BFGS', 'L-BFGS-B']
+        if use_gradient and hasattr(self.config.estimation, 'use_analytic_gradient'):
+            self.use_analytic_gradient = self.config.estimation.use_analytic_gradient
+        else:
+            self.use_analytic_gradient = False
+
+        if self.use_analytic_gradient:
+            print("Analytic gradient calculators 초기화 (Apollo 방식)...", flush=True)
+            self.measurement_grad = MeasurementGradient(
+                n_indicators=len(self.config.measurement.indicators),
+                n_categories=self.config.measurement.n_categories
+            )
+            self.structural_grad = StructuralGradient(
+                n_sociodem=len(self.config.structural.sociodemographics),
+                error_variance=1.0
+            )
+            self.choice_grad = ChoiceGradient(
+                n_attributes=len(self.config.choice.choice_attributes)
+            )
+            self.joint_grad = JointGradient(
+                self.measurement_grad,
+                self.structural_grad,
+                self.choice_grad
+            )
+            print("Analytic gradient calculators 초기화 완료", flush=True)
+
         # 초기 파라미터 설정
         print("초기 파라미터 설정 시작...", flush=True)
         self.logger.info("초기 파라미터 설정 중...")
@@ -159,7 +200,7 @@ class SimultaneousEstimator:
             # Track best value
             if ll > best_ll[0]:
                 best_ll[0] = ll
-                improvement = "✓ NEW BEST"
+                improvement = "[NEW BEST]"  # 🔴 ✓ 대신 ASCII 문자 사용
             else:
                 improvement = ""
 
@@ -180,27 +221,88 @@ class SimultaneousEstimator:
         )
         print(f"파라미터 bounds 계산 완료 (총 {len(bounds)}개)", flush=True)
 
-        # 🔴 임시: Nelder-Mead로 변경 (gradient-free)
+        # 최적화 방법 선택
+        use_gradient = self.config.estimation.optimizer in ['BFGS', 'L-BFGS-B']
+
+        # Gradient 함수 정의 (Apollo 방식)
+        def gradient_function(params):
+            """Analytic gradient 계산 (Apollo 방식)"""
+            if not self.use_analytic_gradient:
+                return None  # 수치적 그래디언트 사용
+
+            # 파라미터 딕셔너리로 변환
+            param_dict = self._unpack_parameters(
+                params, measurement_model, structural_model, choice_model
+            )
+
+            # Analytic gradient 계산
+            grad_dict = self.joint_grad.compute_gradient(
+                data=self.data,
+                params_dict=param_dict,
+                draws=self.halton_generator.get_draws(),
+                individual_id_column=self.config.individual_id_column,
+                measurement_model=measurement_model,
+                structural_model=structural_model,
+                choice_model=choice_model,
+                indicators=self.config.measurement.indicators,
+                sociodemographics=self.config.structural.sociodemographics,
+                choice_attributes=self.config.choice.choice_attributes
+            )
+
+            # 그래디언트 벡터로 변환 (파라미터 순서와 동일)
+            grad_vector = self._pack_gradient(grad_dict, measurement_model, structural_model, choice_model)
+
+            # Negative gradient (minimize -LL)
+            return -grad_vector
+
         print("=" * 70, flush=True)
-        print("최적화 시작: Nelder-Mead (gradient-free)", flush=True)
+        if use_gradient:
+            print(f"최적화 시작: {self.config.estimation.optimizer} (gradient-based)", flush=True)
+            if self.use_analytic_gradient:
+                print("Analytic gradient 사용 (Apollo 방식)", flush=True)
+            else:
+                print("수치적 그래디언트 사용 (2-point finite difference)", flush=True)
+        else:
+            print("최적화 시작: Nelder-Mead (gradient-free)", flush=True)
         print(f"초기 파라미터 개수: {len(initial_params)}", flush=True)
         print(f"최대 반복 횟수: {self.config.estimation.max_iterations}", flush=True)
         print("=" * 70, flush=True)
-        self.logger.info(f"최적화 시작: Nelder-Mead (gradient-free)")
-        self.logger.info(f"초기 파라미터 개수: {len(initial_params)}")
-        self.logger.info(f"최대 반복 횟수: {self.config.estimation.max_iterations}")
 
-        result = optimize.minimize(
-            negative_log_likelihood,
-            initial_params,
-            method='Nelder-Mead',  # Gradient-free method
-            options={
-                'maxiter': self.config.estimation.max_iterations,
-                'xatol': 1e-4,
-                'fatol': 1e-4,
-                'disp': True
-            }
-        )
+        if use_gradient:
+            self.logger.info(f"최적화 시작: {self.config.estimation.optimizer} (gradient-based)")
+            if self.use_analytic_gradient:
+                self.logger.info("Analytic gradient 사용 (Apollo 방식)")
+            else:
+                self.logger.info("수치적 그래디언트 사용 (2-point finite difference)")
+
+            # BFGS 또는 L-BFGS-B
+            result = optimize.minimize(
+                negative_log_likelihood,
+                initial_params,
+                method=self.config.estimation.optimizer,
+                jac=gradient_function if self.use_analytic_gradient else '2-point',
+                bounds=bounds if self.config.estimation.optimizer == 'L-BFGS-B' else None,
+                options={
+                    'maxiter': self.config.estimation.max_iterations,
+                    'ftol': 1e-6,
+                    'gtol': 1e-5,
+                    'disp': True
+                }
+            )
+        else:
+            self.logger.info(f"최적화 시작: Nelder-Mead (gradient-free)")
+
+            result = optimize.minimize(
+                negative_log_likelihood,
+                initial_params,
+                method='Nelder-Mead',
+                options={
+                    'maxiter': self.config.estimation.max_iterations,
+                    'xatol': 1e-4,
+                    'fatol': 1e-4,
+                    'disp': True
+                }
+            )
         
         if result.success:
             self.logger.info("최적화 성공")
@@ -276,16 +378,15 @@ class SimultaneousEstimator:
                 # 결합 로그우도
                 draw_ll = ll_measurement + ll_choice + ll_structural
 
-                # 수치 안정성: 유한한 값만 사용
-                if np.isfinite(draw_ll):
-                    draw_lls.append(draw_ll)
+                # 🔴 수정: -inf를 매우 작은 값으로 대체 (연속성 확보 for gradient)
+                if not np.isfinite(draw_ll):
+                    draw_ll = -1e10  # -inf 대신 매우 작은 값
+
+                draw_lls.append(draw_ll)
 
             # 🔴 수정: logsumexp를 사용하여 평균 계산
             # log[(1/R) Σᵣ exp(ll_r)] = logsumexp(ll_r) - log(R)
-            if len(draw_lls) == 0:
-                person_ll = -1e10  # 유효한 draws가 없으면 매우 작은 값
-            else:
-                person_ll = logsumexp(draw_lls) - np.log(len(draw_lls))
+            person_ll = logsumexp(draw_lls) - np.log(len(draw_lls))
 
             total_ll += person_ll
 
@@ -458,7 +559,46 @@ class SimultaneousEstimator:
             idx += n_sociodem
         
         return param_dict
-    
+
+    def _pack_gradient(self, grad_dict: Dict, measurement_model,
+                      structural_model, choice_model) -> np.ndarray:
+        """
+        그래디언트 딕셔너리를 벡터로 변환 (파라미터 순서와 동일)
+
+        Args:
+            grad_dict: 그래디언트 딕셔너리
+            measurement_model: 측정모델
+            structural_model: 구조모델
+            choice_model: 선택모델
+
+        Returns:
+            gradient_vector: 그래디언트 벡터
+        """
+        gradient_list = []
+
+        # 측정모델 그래디언트
+        gradient_list.append(grad_dict['grad_zeta'])
+        gradient_list.append(grad_dict['grad_tau'].flatten())
+
+        # 구조모델 그래디언트
+        gradient_list.append(grad_dict['grad_gamma'])
+
+        # 선택모델 그래디언트
+        gradient_list.append(np.array([grad_dict['grad_intercept']]))
+        gradient_list.append(grad_dict['grad_beta'])
+        gradient_list.append(np.array([grad_dict['grad_lambda']]))
+
+        # 사회인구학적 변수가 선택모델에 포함되는 경우
+        if self.config.structural.include_in_choice:
+            # 현재는 구현되지 않음
+            n_sociodem = len(self.config.structural.sociodemographics)
+            gradient_list.append(np.zeros(n_sociodem))
+
+        # 벡터로 결합
+        gradient_vector = np.concatenate(gradient_list)
+
+        return gradient_vector
+
     def _process_results(self, optimization_result,
                         measurement_model,
                         structural_model,
