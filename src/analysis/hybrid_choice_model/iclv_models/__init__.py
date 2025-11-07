@@ -30,11 +30,12 @@ from .iclv_config import (
     create_iclv_config
 )
 
-from .iclv_analyzer import (
-    ICLVAnalyzer,
-    ICLVResults,
-    run_iclv_analysis
-)
+# 아직 구현되지 않은 모듈 (주석 처리)
+# from .iclv_analyzer import (
+#     ICLVAnalyzer,
+#     ICLVResults,
+#     run_iclv_analysis
+# )
 
 from .measurement_equations import (
     OrderedProbitMeasurement,
@@ -57,11 +58,12 @@ from .simultaneous_estimator import (
     estimate_iclv_simultaneous
 )
 
-from .wtp_calculator import (
-    WTPCalculator,
-    calculate_conditional_wtp,
-    calculate_unconditional_wtp
-)
+# 아직 구현되지 않은 모듈 (주석 처리)
+# from .wtp_calculator import (
+#     WTPCalculator,
+#     calculate_conditional_wtp,
+#     calculate_unconditional_wtp
+# )
 
 __all__ = [
     # 설정
@@ -71,10 +73,10 @@ __all__ = [
     'ChoiceConfig',
     'create_iclv_config',
 
-    # 메인 분석기
-    'ICLVAnalyzer',
-    'ICLVResults',
-    'run_iclv_analysis',
+    # 메인 분석기 (아직 구현 안됨)
+    # 'ICLVAnalyzer',
+    # 'ICLVResults',
+    # 'run_iclv_analysis',
 
     # 측정모델
     'OrderedProbitMeasurement',
@@ -93,10 +95,10 @@ __all__ = [
     'HaltonDrawGenerator',
     'estimate_iclv_simultaneous',
 
-    # WTP 계산
-    'WTPCalculator',
-    'calculate_conditional_wtp',
-    'calculate_unconditional_wtp',
+    # WTP 계산 (아직 구현 안됨)
+    # 'WTPCalculator',
+    # 'calculate_conditional_wtp',
+    # 'calculate_unconditional_wtp',
 ]
 
 __version__ = '1.0.0'

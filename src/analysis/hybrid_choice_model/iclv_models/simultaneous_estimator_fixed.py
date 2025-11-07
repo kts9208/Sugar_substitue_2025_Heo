@@ -14,6 +14,7 @@ import pandas as pd
 from typing import Dict, List, Optional, Tuple, Callable
 from scipy import optimize
 from scipy.stats import norm, qmc
+from scipy.special import logsumexp
 import logging
 
 logger = logging.getLogger(__name__)
@@ -114,37 +115,89 @@ class SimultaneousEstimator:
         Returns:
             추정 결과 딕셔너리
         """
+        print("=" * 70, flush=True)
+        print("SimultaneousEstimator.estimate() 시작", flush=True)
+        print("=" * 70, flush=True)
         self.logger.info("ICLV 모델 동시 추정 시작")
-        
+
         self.data = data
+        print(f"데이터 shape: {data.shape}", flush=True)
         n_individuals = data[self.config.individual_id_column].nunique()
-        
+        print(f"개인 수: {n_individuals}", flush=True)
+        self.logger.info(f"개인 수: {n_individuals}")
+
         # Halton draws 생성
+        print(f"Halton draws 생성 시작... (n_draws={self.config.estimation.n_draws}, n_individuals={n_individuals})", flush=True)
+        self.logger.info(f"Halton draws 생성 중... (n_draws={self.config.estimation.n_draws})")
         self.halton_generator = HaltonDrawGenerator(
             n_draws=self.config.estimation.n_draws,
             n_individuals=n_individuals,
             scramble=self.config.estimation.scramble_halton
         )
-        
+        print("Halton draws 생성 완료", flush=True)
+        self.logger.info("Halton draws 생성 완료")
+
         # 초기 파라미터 설정
+        print("초기 파라미터 설정 시작...", flush=True)
+        self.logger.info("초기 파라미터 설정 중...")
         initial_params = self._get_initial_parameters(
             measurement_model, structural_model, choice_model
         )
+        print(f"초기 파라미터 설정 완료 (총 {len(initial_params)}개)", flush=True)
+        self.logger.info(f"초기 파라미터 설정 완료 (총 {len(initial_params)}개)")
         
-        # 결합 우도함수 정의
+        # 결합 우도함수 정의 (gradient check 로깅 추가)
+        iteration_count = [0]  # Mutable counter
+        best_ll = [-np.inf]  # Track best log-likelihood
+
         def negative_log_likelihood(params):
-            return -self._joint_log_likelihood(
+            iteration_count[0] += 1
+            ll = self._joint_log_likelihood(
                 params, measurement_model, structural_model, choice_model
             )
-        
-        # 최적화
-        self.logger.info(f"최적화 시작: {self.config.estimation.optimizer}")
+
+            # Track best value
+            if ll > best_ll[0]:
+                best_ll[0] = ll
+                improvement = "✓ NEW BEST"
+            else:
+                improvement = ""
+
+            # Log every iteration with more detail
+            if iteration_count[0] % 5 == 0 or improvement:
+                print(
+                    f"Iter {iteration_count[0]:4d}: LL = {ll:12.4f} "
+                    f"(Best: {best_ll[0]:12.4f}) {improvement}",
+                    flush=True
+                )
+
+            return -ll
+
+        # Get parameter bounds
+        print("파라미터 bounds 계산 시작...", flush=True)
+        bounds = self._get_parameter_bounds(
+            measurement_model, structural_model, choice_model
+        )
+        print(f"파라미터 bounds 계산 완료 (총 {len(bounds)}개)", flush=True)
+
+        # 🔴 임시: Nelder-Mead로 변경 (gradient-free)
+        print("=" * 70, flush=True)
+        print("최적화 시작: Nelder-Mead (gradient-free)", flush=True)
+        print(f"초기 파라미터 개수: {len(initial_params)}", flush=True)
+        print(f"최대 반복 횟수: {self.config.estimation.max_iterations}", flush=True)
+        print("=" * 70, flush=True)
+        self.logger.info(f"최적화 시작: Nelder-Mead (gradient-free)")
+        self.logger.info(f"초기 파라미터 개수: {len(initial_params)}")
+        self.logger.info(f"최대 반복 횟수: {self.config.estimation.max_iterations}")
+
         result = optimize.minimize(
             negative_log_likelihood,
             initial_params,
-            method=self.config.estimation.optimizer,
+            method='Nelder-Mead',  # Gradient-free method
             options={
                 'maxiter': self.config.estimation.max_iterations,
+                'xatol': 1e-4,
+                'fatol': 1e-4,
                 'disp': True
             }
         )
@@ -171,6 +224,7 @@ class SimultaneousEstimator:
         시뮬레이션 기반:
         log L ≈ Σᵢ log[(1/R) Σᵣ P(Choice|LVᵣ) × P(Indicators|LVᵣ) × P(LVᵣ|X)]
         """
+        # print("_joint_log_likelihood 시작", flush=True)
 
         # 파라미터 분해
         param_dict = self._unpack_parameters(
@@ -182,16 +236,15 @@ class SimultaneousEstimator:
 
         # 개인별 우도 계산
         individual_ids = self.data[self.config.individual_id_column].unique()
+        # print(f"개인 수: {len(individual_ids)}", flush=True)
 
         for i, ind_id in enumerate(individual_ids):
-            if i % 10 == 0:  # 디버깅: 10명마다 출력
-                print(f"   Processing individual {i+1}/{len(individual_ids)}...", flush=True)
-
             ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
             ind_draws = draws[i, :]  # 이 개인의 draws
 
-            # 시뮬레이션 우도 (각 draw에 대해)
-            sim_likelihood = 0.0
+            # 🔴 수정: logsumexp를 사용하여 수치 안정성 확보
+            # King (2022) Apollo 방식
+            draw_lls = []
 
             for j, draw in enumerate(ind_draws):
                 # 구조모델: LV = γ*X + η
@@ -202,32 +255,84 @@ class SimultaneousEstimator:
                     ind_data, lv, param_dict['measurement']
                 )
 
-                # 선택모델 우도: P(Choice|LV, Attributes)
-                ll_choice = choice_model.log_likelihood(
-                    ind_data, lv, param_dict['choice']
-                )
+                # Panel Product: 개인의 여러 선택 상황에 대한 확률을 곱함
+                choice_set_lls = []
+                for idx in range(len(ind_data)):
+                    ll_choice_t = choice_model.log_likelihood(
+                        ind_data.iloc[idx:idx+1],  # 각 선택 상황
+                        lv,
+                        param_dict['choice']
+                    )
+                    choice_set_lls.append(ll_choice_t)
+
+                # Panel product: log(P1 * P2 * ... * PT) = log(P1) + log(P2) + ... + log(PT)
+                ll_choice = sum(choice_set_lls)
 
                 # 구조모델 우도: P(LV|X) - 정규분포 가정
                 ll_structural = structural_model.log_likelihood(
                     ind_data, lv, param_dict['structural'], draw
                 )
 
-                # 결합 우도
-                sim_likelihood += np.exp(ll_measurement + ll_choice + ll_structural)
+                # 결합 로그우도
+                draw_ll = ll_measurement + ll_choice + ll_structural
 
-            # 평균 (시뮬레이션)
-            sim_likelihood /= len(ind_draws)
+                # 수치 안정성: 유한한 값만 사용
+                if np.isfinite(draw_ll):
+                    draw_lls.append(draw_ll)
 
-            # 로그 변환
-            if sim_likelihood > 0:
-                total_ll += np.log(sim_likelihood)
+            # 🔴 수정: logsumexp를 사용하여 평균 계산
+            # log[(1/R) Σᵣ exp(ll_r)] = logsumexp(ll_r) - log(R)
+            if len(draw_lls) == 0:
+                person_ll = -1e10  # 유효한 draws가 없으면 매우 작은 값
             else:
-                total_ll += -1e10  # 매우 작은 값
+                person_ll = logsumexp(draw_lls) - np.log(len(draw_lls))
 
-        print(f"   Log-likelihood: {total_ll:.4f}", flush=True)
+            total_ll += person_ll
+
         return total_ll
-    
-    def _get_initial_parameters(self, measurement_model, 
+
+    def _get_parameter_bounds(self, measurement_model,
+                              structural_model, choice_model) -> list:
+        """
+        Parameter bounds for L-BFGS-B
+
+        Returns:
+            bounds: [(lower, upper), ...] list
+        """
+        bounds = []
+
+        # Measurement model parameters
+        # - Factor loadings (zeta): [0.1, 10]
+        n_indicators = len(self.config.measurement.indicators)
+        bounds.extend([(0.1, 10.0)] * n_indicators)
+
+        # - Thresholds (tau): [-10, 10]
+        n_thresholds = self.config.measurement.n_categories - 1
+        for _ in range(n_indicators):
+            bounds.extend([(-10.0, 10.0)] * n_thresholds)
+
+        # Structural model parameters (gamma): unbounded
+        n_sociodem = len(self.config.structural.sociodemographics)
+        bounds.extend([(None, None)] * n_sociodem)
+
+        # Choice model parameters
+        # - Intercept: unbounded
+        bounds.append((None, None))
+
+        # - Attribute coefficients (beta): unbounded
+        n_attributes = len(self.config.choice.choice_attributes)
+        bounds.extend([(None, None)] * n_attributes)
+
+        # - Latent variable coefficient (lambda): unbounded
+        bounds.append((None, None))
+
+        # - Sociodemographic coefficients: unbounded
+        if self.config.structural.include_in_choice:
+            bounds.extend([(None, None)] * n_sociodem)
+
+        return bounds
+
+    def _get_initial_parameters(self, measurement_model,
                                 structural_model, choice_model) -> np.ndarray:
         """초기 파라미터 설정"""
         
@@ -264,6 +369,48 @@ class SimultaneousEstimator:
         
         return np.array(params)
     
+
+    
+    def _get_parameter_bounds(self, measurement_model,
+                              structural_model, choice_model) -> list:
+        """
+        Parameter bounds for L-BFGS-B
+        
+        Returns:
+            bounds: [(lower, upper), ...] list
+        """
+        bounds = []
+        
+        # Measurement model parameters
+        # - Factor loadings (zeta): [0.1, 10]
+        n_indicators = len(self.config.measurement.indicators)
+        bounds.extend([(0.1, 10.0)] * n_indicators)
+        
+        # - Thresholds (tau): [-10, 10]
+        n_thresholds = self.config.measurement.n_categories - 1
+        for _ in range(n_indicators):
+            bounds.extend([(-10.0, 10.0)] * n_thresholds)
+        
+        # Structural model parameters (gamma): unbounded
+        n_sociodem = len(self.config.structural.sociodemographics)
+        bounds.extend([(None, None)] * n_sociodem)
+        
+        # Choice model parameters
+        # - Intercept: unbounded
+        bounds.append((None, None))
+        
+        # - Attribute coefficients (beta): unbounded
+        n_attributes = len(self.config.choice.choice_attributes)
+        bounds.extend([(None, None)] * n_attributes)
+        
+        # - Latent variable coefficient (lambda): unbounded
+        bounds.append((None, None))
+        
+        # - Sociodemographic coefficients: unbounded
+        if self.config.structural.include_in_choice:
+            bounds.extend([(None, None)] * n_sociodem)
+        
+        return bounds
     def _unpack_parameters(self, params: np.ndarray,
                           measurement_model,
                           structural_model,

@@ -1,0 +1,3 @@
+ERROR:root:기존 FactorConfig 모듈을 찾을 수 없습니다: No module named 'survey_data_preprocessor'
+ERROR:root:기존 FactorConfig 모듈을 찾을 수 없습니다: No module named 'survey_data_preprocessor'
+WARNING:root:기존 SEM 모듈을 찾을 수 없습니다.

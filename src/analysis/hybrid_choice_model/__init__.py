@@ -51,30 +51,31 @@ from .data_integration.hybrid_data_integrator import (
     validate_hybrid_data
 )
 
-from .latent_variable_modeling.measurement_model import (
-    MeasurementModel,
-    estimate_measurement_model
-)
+# 아직 구현되지 않은 모듈들 (주석 처리)
+# from .latent_variable_modeling.measurement_model import (
+#     MeasurementModel,
+#     estimate_measurement_model
+# )
 
-from .latent_variable_modeling.factor_score_calculator import (
-    FactorScoreCalculator,
-    calculate_factor_scores
-)
+# from .latent_variable_modeling.factor_score_calculator import (
+#     FactorScoreCalculator,
+#     calculate_factor_scores
+# )
 
-from .utility_function_modeling.hybrid_utility_builder import (
-    HybridUtilityBuilder,
-    build_hybrid_utility
-)
+# from .utility_function_modeling.hybrid_utility_builder import (
+#     HybridUtilityBuilder,
+#     build_hybrid_utility
+# )
 
-from .simultaneous_estimation.hybrid_estimator import (
-    HybridEstimator,
-    estimate_hybrid_model
-)
+# from .simultaneous_estimation.hybrid_estimator import (
+#     HybridEstimator,
+#     estimate_hybrid_model
+# )
 
-from .results.hybrid_results_analyzer import (
-    HybridResultsAnalyzer,
-    analyze_hybrid_results
-)
+# from .results.hybrid_results_analyzer import (
+#     HybridResultsAnalyzer,
+#     analyze_hybrid_results
+# )
 
 from .main_analyzer import (
     HybridChoiceAnalyzer,
@@ -181,18 +182,18 @@ __all__ = [
     # 데이터 통합
     "HybridDataIntegrator", "integrate_dce_sem_data", "validate_hybrid_data",
     
-    # 잠재변수 모델링
-    "MeasurementModel", "FactorScoreCalculator",
-    "estimate_measurement_model", "calculate_factor_scores",
-    
-    # 효용함수 모델링
-    "HybridUtilityBuilder", "build_hybrid_utility",
-    
-    # 추정
-    "HybridEstimator", "estimate_hybrid_model",
-    
-    # 결과 분석
-    "HybridResultsAnalyzer", "analyze_hybrid_results",
+    # 잠재변수 모델링 (아직 구현 안됨)
+    # "MeasurementModel", "FactorScoreCalculator",
+    # "estimate_measurement_model", "calculate_factor_scores",
+
+    # 효용함수 모델링 (아직 구현 안됨)
+    # "HybridUtilityBuilder", "build_hybrid_utility",
+
+    # 추정 (아직 구현 안됨)
+    # "HybridEstimator", "estimate_hybrid_model",
+
+    # 결과 분석 (아직 구현 안됨)
+    # "HybridResultsAnalyzer", "analyze_hybrid_results",
     
     # 메인 분석기
     "HybridChoiceAnalyzer", "run_hybrid_analysis", "run_model_comparison",

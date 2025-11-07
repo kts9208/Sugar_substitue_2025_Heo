@@ -131,7 +131,7 @@ class BinaryProbitChoice:
         
         # 선택 속성 추출
         X = data[self.choice_attributes].values
-        
+
         # 선택 결과 (0 or 1)
         if 'choice' in data.columns:
             choice = data['choice'].values
@@ -139,31 +139,40 @@ class BinaryProbitChoice:
             choice = data['Choice'].values
         else:
             raise ValueError("데이터에 'choice' 또는 'Choice' 열이 없습니다.")
-        
+
         # 잠재변수 처리 (스칼라 또는 배열)
         if np.isscalar(lv):
             lv_array = np.full(len(data), lv)
         else:
             lv_array = lv
-        
+
+        # 🔴 수정: NaN 처리 (opt-out 대안)
+        # NaN이 있는 행은 효용을 0으로 설정 (opt-out 정규화)
+        has_nan = np.isnan(X).any(axis=1)
+
         # 효용 계산
         # V = intercept + β*X + λ*LV
-        V = intercept + X @ beta + lambda_lv * lv_array
-        
+        V = np.zeros(len(data))
+        for i in range(len(data)):
+            if has_nan[i]:
+                V[i] = 0.0  # opt-out: 효용 = 0
+            else:
+                V[i] = intercept + X[i] @ beta + lambda_lv * lv_array[i]
+
         # 확률 계산
         # P(Yes) = Φ(V), P(No) = 1 - Φ(V)
         prob_yes = norm.cdf(V)
-        
+
         # 수치 안정성을 위해 클리핑
         prob_yes = np.clip(prob_yes, 1e-10, 1 - 1e-10)
-        
+
         # 로그우도
         # log L = Σ [choice * log(Φ(V)) + (1-choice) * log(1-Φ(V))]
         ll = np.sum(
-            choice * np.log(prob_yes) + 
+            choice * np.log(prob_yes) +
             (1 - choice) * np.log(1 - prob_yes)
         )
-        
+
         return ll
     
     def predict_probabilities(self, data: pd.DataFrame, lv: np.ndarray,

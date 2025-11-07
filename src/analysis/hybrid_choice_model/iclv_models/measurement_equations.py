@@ -69,51 +69,52 @@ class OrderedProbitMeasurement:
         
         logger.info(f"OrderedProbitMeasurement 초기화: {self.n_indicators}개 지표, {self.n_categories}점 척도")
     
-    def log_likelihood(self, data: pd.DataFrame, latent_var: np.ndarray, 
+    def log_likelihood(self, data: pd.DataFrame, latent_var: float,
                       params: Dict[str, np.ndarray]) -> float:
         """
         로그우도 계산 (King 2022 Apollo 코드 기반)
-        
+
+        🔴 수정: 측정모델은 개인당 1번만 계산 (지표는 개인 특성)
+
         Args:
-            data: 관측지표 데이터 (n_obs, n_indicators)
-            latent_var: 잠재변수 값 (n_obs,)
+            data: 관측지표 데이터 (개인의 여러 선택 상황)
+            latent_var: 잠재변수 값 (스칼라 - 개인당 1개)
             params: 파라미터 딕셔너리
                 - 'zeta': 요인적재량 (n_indicators,)
                 - 'tau': 임계값 (n_indicators, n_thresholds)
-        
+
         Returns:
             로그우도 값
         """
         zeta = params['zeta']
         tau = params['tau']
-        
+
         total_ll = 0.0
-        
+
+        # 🔴 수정: 첫 번째 행만 사용 (지표는 개인 특성이므로 모든 행이 동일)
+        first_row = data.iloc[0]
+
         # 각 지표에 대해
         for i, indicator in enumerate(self.config.indicators):
-            if indicator not in data.columns:
+            if indicator not in first_row.index:
                 continue
-            
-            y_values = data[indicator].values
+
+            y = first_row[indicator]
+            if np.isnan(y):
+                continue
+
             zeta_i = zeta[i]
             tau_i = tau[i]  # (n_thresholds,)
-            
-            # 각 관측치에 대해
-            for j, y in enumerate(y_values):
-                if np.isnan(y):
-                    continue
-                
-                lv = latent_var[j]
-                
-                # Ordered Probit 확률 계산
-                prob = self._ordered_probit_probability(y, lv, zeta_i, tau_i)
-                
-                # 로그우도 누적
-                if prob > 0:
-                    total_ll += np.log(prob)
-                else:
-                    total_ll += -1e10  # 매우 작은 값
-        
+
+            # Ordered Probit 확률 계산
+            prob = self._ordered_probit_probability(y, latent_var, zeta_i, tau_i)
+
+            # 로그우도 누적
+            if prob > 0:
+                total_ll += np.log(prob)
+            else:
+                total_ll += -1e10  # 매우 작은 값
+
         return total_ll
     
     def _ordered_probit_probability(self, y: float, lv: float, 

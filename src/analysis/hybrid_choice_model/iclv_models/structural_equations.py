@@ -89,87 +89,99 @@ class LatentVariableRegression:
         self.logger.info(f"  사회인구학적 변수: {self.sociodemographics}")
         self.logger.info(f"  오차 분산: {self.error_variance} (고정: {self.fix_error_variance})")
     
-    def predict(self, data: pd.DataFrame, params: Dict, 
-                draw: float) -> np.ndarray:
+    def predict(self, data: pd.DataFrame, params: Dict,
+                draw: float) -> float:
         """
         잠재변수 예측 (시뮬레이션 기반)
-        
+
+        🔴 수정: 개인당 1개의 LV 값 반환 (스칼라)
+
         LV = γ*X + σ*draw
-        
+
         King (2022) Apollo R 코드:
             LV = gamma_age * age + gamma_gender * gender + ... + eta
-        
+
         Args:
-            data: 사회인구학적 변수 데이터 (n_obs, n_vars)
+            data: 사회인구학적 변수 데이터 (개인의 여러 선택 상황)
             params: {'gamma': np.ndarray}  # 회귀계수 (n_vars,)
-            draw: 표준정규분포 draw (Halton sequence)
-                  스칼라 또는 배열 (n_obs,)
-        
+            draw: 표준정규분포 draw (Halton sequence) - 스칼라
+
         Returns:
-            잠재변수 값 (n_obs,)
-        
+            잠재변수 값 (스칼라 - 개인당 1개)
+
         Example:
             >>> params = {'gamma': np.array([0.5, -0.3, 0.2])}
             >>> draw = 0.5  # 표준정규분포 draw
             >>> lv = model.predict(data, params, draw)
         """
         gamma = params['gamma']
-        
-        # 사회인구학적 변수 추출
-        X = data[self.sociodemographics].values
-        
+
+        # 🔴 수정: 첫 번째 행만 사용 (사회인구학적 변수는 개인 특성)
+        first_row = data.iloc[0]
+
         # 선형 예측 (평균)
-        lv_mean = X @ gamma
-        
+        lv_mean = 0.0
+        for i, var in enumerate(self.sociodemographics):
+            if var in first_row.index:
+                value = first_row[var]
+                # 🔴 수정: NaN 처리 (0으로 대체)
+                if pd.isna(value):
+                    value = 0.0
+                lv_mean += gamma[i] * value
+
         # 오차항 추가 (시뮬레이션)
-        # draw가 스칼라면 모든 관측치에 동일하게 적용
-        # draw가 배열이면 각 관측치마다 다른 값 적용
-        if np.isscalar(draw):
-            lv = lv_mean + np.sqrt(self.error_variance) * draw
-        else:
-            lv = lv_mean + np.sqrt(self.error_variance) * draw
-        
+        lv = lv_mean + np.sqrt(self.error_variance) * draw
+
         return lv
     
-    def log_likelihood(self, data: pd.DataFrame, lv: np.ndarray,
+    def log_likelihood(self, data: pd.DataFrame, lv: float,
                       params: Dict, draw: float) -> float:
         """
         구조모델 로그우도
-        
+
+        🔴 수정: 개인당 1개의 LV에 대한 로그우도
+
         P(LV|X) ~ N(γ*X, σ²)
-        
+
         정규분포 확률밀도함수:
             f(LV|X) = (1/√(2πσ²)) * exp(-(LV - γ*X)²/(2σ²))
-        
+
         로그우도:
             log L = -0.5 * log(2πσ²) - 0.5 * (LV - γ*X)²/σ²
-        
+
         Args:
-            data: 사회인구학적 변수 데이터 (n_obs, n_vars)
-            lv: 잠재변수 값 (n_obs,)
+            data: 사회인구학적 변수 데이터 (개인의 여러 선택 상황)
+            lv: 잠재변수 값 (스칼라 - 개인당 1개)
             params: {'gamma': np.ndarray}  # 회귀계수
             draw: 표준정규분포 draw (사용하지 않음, 인터페이스 일관성용)
-        
+
         Returns:
             로그우도 값 (스칼라)
-        
+
         Example:
             >>> ll = model.log_likelihood(data, lv, params, draw)
         """
         gamma = params['gamma']
-        
-        # 사회인구학적 변수 추출
-        X = data[self.sociodemographics].values
-        
+
+        # 🔴 수정: 첫 번째 행만 사용
+        first_row = data.iloc[0]
+
         # 평균
-        lv_mean = X @ gamma
-        
+        lv_mean = 0.0
+        for i, var in enumerate(self.sociodemographics):
+            if var in first_row.index:
+                value = first_row[var]
+                # 🔴 수정: NaN 처리 (0으로 대체)
+                if pd.isna(value):
+                    value = 0.0
+                lv_mean += gamma[i] * value
+
         # 로그우도 (정규분포)
         # log f(LV|X) = -0.5 * log(2πσ²) - 0.5 * (LV - μ)²/σ²
         ll = -0.5 * np.log(2 * np.pi * self.error_variance)
         ll -= 0.5 * ((lv - lv_mean) ** 2) / self.error_variance
-        
-        return np.sum(ll)
+
+        return ll
     
     def fit(self, data: pd.DataFrame, latent_var: np.ndarray) -> Dict:
         """
