@@ -108,7 +108,7 @@ class SociodemographicLoader(BaseDataLoader):
         if raw_data_path is None:
             # 프로젝트 루트에서 기본 경로 설정
             project_root = Path(__file__).parent.parent.parent.parent.parent
-            self.raw_data_path = project_root / "data" / "raw" / "Sugar_substitue_Raw data_250730.xlsx"
+            self.raw_data_path = project_root / "data" / "raw" / "Sugar_substitue_Raw data_251108.xlsx"
         else:
             self.raw_data_path = Path(raw_data_path)
         

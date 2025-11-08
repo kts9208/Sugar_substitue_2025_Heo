@@ -62,7 +62,12 @@ class EstimationConfig:
     # 로버스트 추정
     robust_standard_errors: bool = True
     bootstrap_samples: int = 0
-    
+
+    # 표준오차 계산
+    calculate_se: bool = True  # 표준오차 계산 여부
+    use_numerical_hessian: bool = False  # 수치적 Hessian 계산 (느리지만 정확)
+    use_robust_se: bool = False  # Robust SE (샌드위치 추정량) 사용 여부
+
     def __post_init__(self):
         """설정 후처리"""
         if self.initial_parameter_bounds is None:
@@ -98,7 +103,10 @@ class EstimationConfig:
             "parallel_processing": self.parallel_processing,
             "n_cores": self.n_cores,
             "robust_standard_errors": self.robust_standard_errors,
-            "bootstrap_samples": self.bootstrap_samples
+            "bootstrap_samples": self.bootstrap_samples,
+            "calculate_se": self.calculate_se,
+            "use_numerical_hessian": self.use_numerical_hessian,
+            "use_robust_se": self.use_robust_se
         }
 
 

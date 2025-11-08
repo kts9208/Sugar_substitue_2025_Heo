@@ -103,7 +103,7 @@ def load_sociodem_data():
     print("\n[3] 사회인구학적 데이터 로드 중...")
 
     # 원본 데이터 로드
-    df = pd.read_excel('data/raw/Sugar_substitue_Raw data_250730.xlsx', sheet_name='DATA')
+    df = pd.read_excel('data/raw/Sugar_substitue_Raw data_251108.xlsx', sheet_name='DATA')
 
     # 사회인구학적 변수 선택
     # 🔴 수정: q50 (income), q52 (education) 올바른 매핑

@@ -78,7 +78,7 @@ def main():
         n_draws=100,                     # 🔴 100 draws (Apollo 권장)
         draw_type='halton',
         max_iterations=1000,             # 🔴 전체 데이터는 더 많은 반복 필요
-        calculate_se=False,              # 일단 추정만
+        calculate_se=True,               # 🔴 표준오차 계산 활성화
         use_parallel=True,               # 🔴 병렬처리 활성화
         n_cores=None                     # 🔴 자동으로 CPU 코어 수 감지
     )
@@ -183,81 +183,187 @@ def main():
     # 파라미터를 DataFrame으로 변환
     param_list = []
 
-    # 측정모델 파라미터
-    zeta = results['parameters']['measurement']['zeta']
-    for i, val in enumerate(zeta):
-        param_list.append({
-            'Model': 'Measurement',
-            'Parameter': f'zeta_{i+1}',
-            'Value': val
-        })
+    # parameter_statistics가 있는 경우 (표준오차 계산됨)
+    if 'parameter_statistics' in results:
+        print("\n표준오차 및 통계량 포함하여 저장 중...")
+        stats = results['parameter_statistics']
 
-    tau = results['parameters']['measurement']['tau']
-    for i in range(tau.shape[0]):
-        for j in range(tau.shape[1]):
+        # 측정모델 파라미터
+        if 'measurement' in stats:
+            meas = stats['measurement']
+
+            # zeta
+            if 'zeta' in meas:
+                zeta_stats = meas['zeta']
+                for i in range(len(zeta_stats['estimate'])):
+                    param_list.append({
+                        'Coefficient': f'ζ_{i+1}',
+                        'Estimate': zeta_stats['estimate'][i],
+                        'Std. Err.': zeta_stats['std_error'][i],
+                        'P. Value': zeta_stats['p_value'][i]
+                    })
+
+            # tau
+            if 'tau' in meas:
+                tau_stats = meas['tau']
+                for i in range(tau_stats['estimate'].shape[0]):
+                    for j in range(tau_stats['estimate'].shape[1]):
+                        param_list.append({
+                            'Coefficient': f'τ_{i+1},{j+1}',
+                            'Estimate': tau_stats['estimate'][i, j],
+                            'Std. Err.': tau_stats['std_error'][i, j],
+                            'P. Value': tau_stats['p_value'][i, j]
+                        })
+
+        # 구조모델 파라미터
+        if 'structural' in stats:
+            struct = stats['structural']
+            if 'gamma' in struct:
+                gamma_stats = struct['gamma']
+                sociodem_vars = ['age_std', 'gender', 'income_std']
+                for i, var in enumerate(sociodem_vars):
+                    param_list.append({
+                        'Coefficient': f'γ_{var}',
+                        'Estimate': gamma_stats['estimate'][i],
+                        'Std. Err.': gamma_stats['std_error'][i],
+                        'P. Value': gamma_stats['p_value'][i]
+                    })
+
+        # 선택모델 파라미터
+        if 'choice' in stats:
+            choice = stats['choice']
+
+            # intercept
+            if 'intercept' in choice:
+                param_list.append({
+                    'Coefficient': 'β_Intercept',
+                    'Estimate': choice['intercept']['estimate'],
+                    'Std. Err.': choice['intercept']['std_error'],
+                    'P. Value': choice['intercept']['p_value']
+                })
+
+            # beta
+            if 'beta' in choice:
+                beta_stats = choice['beta']
+                choice_attrs = ['price', 'health_label']
+                for i, attr in enumerate(choice_attrs):
+                    param_list.append({
+                        'Coefficient': f'β_{attr}',
+                        'Estimate': beta_stats['estimate'][i],
+                        'Std. Err.': beta_stats['std_error'][i],
+                        'P. Value': beta_stats['p_value'][i]
+                    })
+
+            # lambda
+            if 'lambda' in choice:
+                param_list.append({
+                    'Coefficient': 'λ',
+                    'Estimate': choice['lambda']['estimate'],
+                    'Std. Err.': choice['lambda']['std_error'],
+                    'P. Value': choice['lambda']['p_value']
+                })
+
+    else:
+        # 기존 방식 (표준오차 없음)
+        print("\n표준오차 없이 저장 중...")
+
+        # 측정모델 파라미터
+        zeta = results['parameters']['measurement']['zeta']
+        for i, val in enumerate(zeta):
             param_list.append({
-                'Model': 'Measurement',
-                'Parameter': f'tau_{i+1}_{j+1}',
-                'Value': tau[i, j]
+                'Coefficient': f'ζ_{i+1}',
+                'Estimate': val,
+                'Std. Err.': 'N/A',
+                'P. Value': 'N/A'
             })
 
-    # 구조모델 파라미터
-    gamma = results['parameters']['structural']['gamma']
-    sociodem_vars = ['age_std', 'gender', 'income_std']
-    for i, var in enumerate(sociodem_vars):
+        tau = results['parameters']['measurement']['tau']
+        for i in range(tau.shape[0]):
+            for j in range(tau.shape[1]):
+                param_list.append({
+                    'Coefficient': f'τ_{i+1},{j+1}',
+                    'Estimate': tau[i, j],
+                    'Std. Err.': 'N/A',
+                    'P. Value': 'N/A'
+                })
+
+        # 구조모델 파라미터
+        gamma = results['parameters']['structural']['gamma']
+        sociodem_vars = ['age_std', 'gender', 'income_std']
+        for i, var in enumerate(sociodem_vars):
+            param_list.append({
+                'Coefficient': f'γ_{var}',
+                'Estimate': gamma[i],
+                'Std. Err.': 'N/A',
+                'P. Value': 'N/A'
+            })
+
+        # 선택모델 파라미터
         param_list.append({
-            'Model': 'Structural',
-            'Parameter': f'gamma_{var}',
-            'Value': gamma[i]
+            'Coefficient': 'β_Intercept',
+            'Estimate': results['parameters']['choice']['intercept'],
+            'Std. Err.': 'N/A',
+            'P. Value': 'N/A'
         })
 
-    # 선택모델 파라미터
-    param_list.append({
-        'Model': 'Choice',
-        'Parameter': 'intercept',
-        'Value': results['parameters']['choice']['intercept']
-    })
+        beta = results['parameters']['choice']['beta']
+        choice_attrs = ['price', 'health_label']
+        for i, attr in enumerate(choice_attrs):
+            param_list.append({
+                'Coefficient': f'β_{attr}',
+                'Estimate': beta[i],
+                'Std. Err.': 'N/A',
+                'P. Value': 'N/A'
+            })
 
-    beta = results['parameters']['choice']['beta']
-    choice_attrs = ['price', 'health_label']
-    for i, attr in enumerate(choice_attrs):
         param_list.append({
-            'Model': 'Choice',
-            'Parameter': f'beta_{attr}',
-            'Value': beta[i]
+            'Coefficient': 'λ',
+            'Estimate': results['parameters']['choice']['lambda'],
+            'Std. Err.': 'N/A',
+            'P. Value': 'N/A'
         })
 
-    param_list.append({
-        'Model': 'Choice',
-        'Parameter': 'lambda',
-        'Value': results['parameters']['choice']['lambda']
-    })
-
-    # DataFrame 생성 및 저장
+    # DataFrame 생성
     df_params = pd.DataFrame(param_list)
+
+    # Estimation statistics 추가
+    stats_list = [
+        {'Coefficient': '', 'Estimate': '', 'Std. Err.': '', 'P. Value': ''},
+        {'Coefficient': 'Estimation statistics', 'Estimate': '', 'Std. Err.': '', 'P. Value': ''},
+        {'Coefficient': 'Iterations', 'Estimate': results.get('n_iterations', 'N/A'),
+         'Std. Err.': 'LL (start)', 'P. Value': 'N/A'},
+        {'Coefficient': 'AIC', 'Estimate': f"{results['aic']:.2f}",
+         'Std. Err.': 'LL (final, whole model)', 'P. Value': f"{results['log_likelihood']:.2f}"},
+        {'Coefficient': 'BIC', 'Estimate': f"{results['bic']:.2f}",
+         'Std. Err.': 'LL (Choice)', 'P. Value': 'N/A'}
+    ]
+
+    df_stats = pd.DataFrame(stats_list)
+    df_combined = pd.concat([df_params, df_stats], ignore_index=True)
+
+    # CSV 저장
     csv_file = output_dir / 'iclv_full_data_results.csv'
-    df_params.to_csv(csv_file, index=False, encoding='utf-8-sig')
+    df_combined.to_csv(csv_file, index=False, encoding='utf-8-sig')
 
     # 요약 정보도 별도 CSV로 저장
     summary_data = {
         'Metric': ['Estimation_Time_Minutes', 'N_Individuals', 'N_Observations',
-                   'Halton_Draws', 'Optimizer', 'Log_Likelihood'],
+                   'Halton_Draws', 'Optimizer', 'Log_Likelihood', 'AIC', 'BIC'],
         'Value': [f"{elapsed_time/60:.2f}", str(n_individuals), str(data.shape[0]),
                   str(estimation_config.n_draws), f"{estimation_config.optimizer}_Analytic",
-                  f"{results['log_likelihood']:.4f}"]
+                  f"{results['log_likelihood']:.4f}", f"{results['aic']:.2f}", f"{results['bic']:.2f}"]
     }
 
-    if 'convergence' in results:
-        summary_data['Metric'].extend(['Convergence_Success', 'N_Iterations'])
-        summary_data['Value'].extend([str(results['convergence']['success']),
-                                      str(results['convergence']['n_iterations'])])
+    if 'n_iterations' in results:
+        summary_data['Metric'].append('N_Iterations')
+        summary_data['Value'].append(str(results['n_iterations']))
 
     df_summary = pd.DataFrame(summary_data)
     summary_file = output_dir / 'iclv_full_data_summary.csv'
     df_summary.to_csv(summary_file, index=False, encoding='utf-8-sig')
 
     print(f"\n결과 저장:")
-    print(f"  - 파라미터: {csv_file}")
+    print(f"  - 파라미터 (통계량 포함): {csv_file}")
     print(f"  - 요약정보: {summary_file}")
     
     print("\n" + "="*70)

@@ -456,6 +456,7 @@ class SimultaneousEstimator:
 
                 self.best_ll = np.inf
                 self.best_x = None  # 최적 파라미터 저장
+                self.best_hess_inv = None  # BFGS의 Hessian 역행렬 저장
                 self.no_improvement_count = 0
                 self.func_call_count = 0
                 self.grad_call_count = 0
@@ -497,6 +498,14 @@ class SimultaneousEstimator:
                 self.grad_call_count += 1
                 return self.grad_func(x)
 
+            def callback(self, xk):
+                """
+                BFGS callback - 매 반복마다 호출됨
+                scipy.optimize.minimize의 BFGS는 callback에 OptimizeResult를 전달하지 않으므로
+                여기서는 파라미터만 받음. Hessian은 minimize 완료 후 result 객체에서 가져옴.
+                """
+                pass
+
         if use_gradient:
             self.logger.info(f"최적화 시작: {self.config.estimation.optimizer} (gradient-based)")
             self.iteration_logger.info(f"최적화 시작: {self.config.estimation.optimizer} (gradient-based)")
@@ -528,6 +537,7 @@ class SimultaneousEstimator:
                     method=self.config.estimation.optimizer,
                     jac=early_stopping_wrapper.gradient if self.use_analytic_gradient else '2-point',
                     bounds=bounds if self.config.estimation.optimizer == 'L-BFGS-B' else None,
+                    callback=early_stopping_wrapper.callback,  # Callback 추가
                     options={
                         'maxiter': 200,  # 안전장치 (조기 종료가 작동하므로 낮춰도 됨)
                         'ftol': 1e-6,
@@ -535,6 +545,10 @@ class SimultaneousEstimator:
                         'disp': True
                     }
                 )
+
+                # 정상 종료 시 BFGS의 hess_inv 저장
+                if hasattr(result, 'hess_inv'):
+                    early_stopping_wrapper.best_hess_inv = result.hess_inv
             except StopIteration as e:
                 # 조기 종료된 경우 - 최적 파라미터로 result 객체 생성
                 from scipy.optimize import OptimizeResult
@@ -549,6 +563,35 @@ class SimultaneousEstimator:
                     nfev=early_stopping_wrapper.func_call_count,
                     njev=early_stopping_wrapper.grad_call_count
                 )
+
+                # 조기 종료 후 Hessian 역행렬 계산 (BFGS를 최적점에서 짧게 재실행)
+                if self.config.estimation.calculate_se:
+                    self.logger.info("조기 종료 후 Hessian 역행렬 계산 중 (BFGS 재실행)...")
+                    self.iteration_logger.info("조기 종료 후 Hessian 역행렬 계산 중 (BFGS 재실행)...")
+                    try:
+                        # 최적 파라미터에서 BFGS를 1-2회만 실행하여 Hessian 역행렬 얻기
+                        hess_result = optimize.minimize(
+                            negative_log_likelihood,
+                            early_stopping_wrapper.best_x,
+                            method='BFGS',
+                            jac=gradient_function if self.use_analytic_gradient else '2-point',
+                            options={
+                                'maxiter': 2,  # 1-2회만 실행
+                                'disp': False
+                            }
+                        )
+
+                        if hasattr(hess_result, 'hess_inv'):
+                            result.hess_inv = hess_result.hess_inv
+                            self.logger.info("Hessian 역행렬 계산 완료 (BFGS 재실행)")
+                            self.iteration_logger.info("Hessian 역행렬 계산 완료 (BFGS 재실행)")
+                        else:
+                            self.logger.warning("BFGS 재실행 후에도 Hessian 역행렬을 얻지 못함")
+                            self.iteration_logger.warning("BFGS 재실행 후에도 Hessian 역행렬을 얻지 못함")
+
+                    except Exception as hess_error:
+                        self.logger.warning(f"Hessian 계산 실패: {hess_error}")
+                        self.iteration_logger.warning(f"Hessian 계산 실패: {hess_error}")
 
                 self.logger.info(f"조기 종료 완료: 함수 호출 {early_stopping_wrapper.func_call_count}회, LL={-early_stopping_wrapper.best_ll:.4f}")
                 self.iteration_logger.info(f"조기 종료 완료: 함수 호출 {early_stopping_wrapper.func_call_count}회, LL={-early_stopping_wrapper.best_ll:.4f}")
@@ -967,24 +1010,124 @@ class SimultaneousEstimator:
         # 표준오차 계산 (Hessian 기반)
         if self.config.estimation.calculate_se:
             try:
-                hessian = optimization_result.hess_inv
-                if hasattr(hessian, 'todense'):
-                    hessian = hessian.todense()
-                
-                se = np.sqrt(np.diag(hessian))
-                results['standard_errors'] = se
-                
-                # t-통계량
-                results['t_statistics'] = optimization_result.x / se
-                
-                # p-값
-                from scipy.stats import t
-                results['p_values'] = 2 * (1 - t.cdf(np.abs(results['t_statistics']), n - k))
-                
+                # BFGS는 hess_inv를 반환 (역 Hessian)
+                # 표준오차 = sqrt(diag(H^-1))
+                if hasattr(optimization_result, 'hess_inv'):
+                    hess_inv = optimization_result.hess_inv
+                    if hasattr(hess_inv, 'todense'):
+                        hess_inv = hess_inv.todense()
+
+                    # 대각 원소 추출 (분산)
+                    variances = np.diag(hess_inv)
+
+                    # 음수 분산 처리 (수치 오류)
+                    variances = np.maximum(variances, 1e-10)
+
+                    se = np.sqrt(variances)
+                    results['standard_errors'] = se
+
+                    # t-통계량
+                    results['t_statistics'] = optimization_result.x / se
+
+                    # p-값 (양측 검정, 대표본이므로 정규분포 사용)
+                    from scipy.stats import norm
+                    results['p_values'] = 2 * (1 - norm.cdf(np.abs(results['t_statistics'])))
+
+                    # 파라미터별로 구조화
+                    self.logger.info("파라미터별 통계량 구조화 중...")
+                    results['parameter_statistics'] = self._structure_statistics(
+                        optimization_result.x, se,
+                        results['t_statistics'], results['p_values'],
+                        measurement_model, structural_model, choice_model
+                    )
+                    self.logger.info("파라미터별 통계량 구조화 완료")
+
+                else:
+                    self.logger.warning("Hessian 정보가 없어 표준오차를 계산할 수 없습니다.")
+
             except Exception as e:
                 self.logger.warning(f"표준오차 계산 실패: {e}")
-        
+                import traceback
+                self.logger.debug(traceback.format_exc())
+
         return results
+
+    def _structure_statistics(self, estimates, std_errors, t_stats, p_values,
+                              measurement_model, structural_model, choice_model):
+        """
+        파라미터별 통계량을 구조화된 딕셔너리로 변환
+
+        Args:
+            estimates: 추정값 벡터
+            std_errors: 표준오차 벡터
+            t_stats: t-통계량 벡터
+            p_values: p-value 벡터
+            measurement_model: 측정모델
+            structural_model: 구조모델
+            choice_model: 선택모델
+
+        Returns:
+            구조화된 통계량 딕셔너리
+            {
+                'measurement': {'zeta': {...}, 'tau': {...}},
+                'structural': {'gamma': {...}},
+                'choice': {'intercept': {...}, 'beta': {...}, 'lambda': {...}}
+            }
+        """
+        # 파라미터 언팩
+        param_dict = self._unpack_parameters(
+            estimates, measurement_model, structural_model, choice_model
+        )
+
+        # 동일한 방식으로 표준오차, t-통계량, p-value 언팩
+        se_dict = self._unpack_parameters(
+            std_errors, measurement_model, structural_model, choice_model
+        )
+        t_dict = self._unpack_parameters(
+            t_stats, measurement_model, structural_model, choice_model
+        )
+        p_dict = self._unpack_parameters(
+            p_values, measurement_model, structural_model, choice_model
+        )
+
+        # 구조화된 결과 생성
+        structured = {
+            'measurement': {},
+            'structural': {},
+            'choice': {}
+        }
+
+        # 측정모델
+        if 'measurement' in param_dict:
+            for key in param_dict['measurement']:
+                structured['measurement'][key] = {
+                    'estimate': param_dict['measurement'][key],
+                    'std_error': se_dict['measurement'][key],
+                    't_statistic': t_dict['measurement'][key],
+                    'p_value': p_dict['measurement'][key]
+                }
+
+        # 구조모델
+        if 'structural' in param_dict:
+            for key in param_dict['structural']:
+                structured['structural'][key] = {
+                    'estimate': param_dict['structural'][key],
+                    'std_error': se_dict['structural'][key],
+                    't_statistic': t_dict['structural'][key],
+                    'p_value': p_dict['structural'][key]
+                }
+
+        # 선택모델
+        if 'choice' in param_dict:
+            for key in param_dict['choice']:
+                structured['choice'][key] = {
+                    'estimate': param_dict['choice'][key],
+                    'std_error': se_dict['choice'][key],
+                    't_statistic': t_dict['choice'][key],
+                    'p_value': p_dict['choice'][key]
+                }
+
+        return structured
 
 
 def estimate_iclv_simultaneous(data: pd.DataFrame, config,

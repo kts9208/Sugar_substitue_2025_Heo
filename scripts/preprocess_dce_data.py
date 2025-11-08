@@ -22,9 +22,9 @@ def load_raw_dce_data():
         pd.DataFrame: DCE 응답 데이터 (no, q21-q26)
     """
     print("\n[1] 원본 DCE 응답 데이터 로드 중...")
-    
+
     # 원본 데이터 로드
-    df = pd.read_excel('data/raw/Sugar_substitue_Raw data_250730.xlsx', 
+    df = pd.read_excel('data/raw/Sugar_substitue_Raw data_251108.xlsx',
                        sheet_name='DATA')
     
     # DCE 관련 컬럼만 선택
