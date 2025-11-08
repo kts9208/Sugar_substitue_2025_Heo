@@ -24,7 +24,7 @@ try:
     EXISTING_SEM_AVAILABLE = True
 except ImportError:
     EXISTING_SEM_AVAILABLE = False
-    logging.warning("기존 SEM 모듈을 찾을 수 없습니다.")
+    # 무시 가능한 오류 (ICLV 추정과 무관)
 
 logger = logging.getLogger(__name__)
 

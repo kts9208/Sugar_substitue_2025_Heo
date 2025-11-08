@@ -16,6 +16,9 @@ from scipy import optimize
 from scipy.stats import norm, qmc
 from scipy.special import logsumexp
 import logging
+from concurrent.futures import ProcessPoolExecutor
+import multiprocessing
+import os
 
 from .gradient_calculator import (
     MeasurementGradient,
@@ -25,6 +28,90 @@ from .gradient_calculator import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# 병렬처리를 위한 전역 함수 (pickle 가능)
+# ============================================================================
+
+def _compute_individual_likelihood_parallel(args):
+    """
+    개인별 우도 계산 (병렬처리용 전역 함수)
+
+    Args:
+        args: (ind_data_dict, ind_draws, param_dict, config_dict)
+            - ind_data_dict: 개인 데이터 (dict 형태)
+            - ind_draws: Halton draws
+            - param_dict: 파라미터 딕셔너리
+            - config_dict: 설정 정보
+
+    Returns:
+        개인의 로그우도
+    """
+    # 병렬 프로세스에서 불필요한 로그 억제
+    import logging
+    logging.getLogger('root').setLevel(logging.CRITICAL)
+
+    from .measurement_equations import OrderedProbitMeasurement
+    from .structural_equations import LatentVariableRegression
+    from .choice_equations import BinaryProbitChoice
+    from .iclv_config import MeasurementConfig, StructuralConfig, ChoiceConfig
+
+    ind_data_dict, ind_draws, param_dict, config_dict = args
+
+    # DataFrame 복원
+    ind_data = pd.DataFrame(ind_data_dict)
+
+    # 모델 재생성 (각 프로세스에서)
+    measurement_config = MeasurementConfig(**config_dict['measurement'])
+    structural_config = StructuralConfig(**config_dict['structural'])
+    choice_config = ChoiceConfig(**config_dict['choice'])
+
+    measurement_model = OrderedProbitMeasurement(measurement_config)
+    structural_model = LatentVariableRegression(structural_config)
+    choice_model = BinaryProbitChoice(choice_config)
+
+    # 우도 계산
+    draw_lls = []
+
+    for j, draw in enumerate(ind_draws):
+        # 구조모델: LV = γ*X + η
+        lv = structural_model.predict(ind_data, param_dict['structural'], draw)
+
+        # 측정모델 우도: P(Indicators|LV)
+        ll_measurement = measurement_model.log_likelihood(
+            ind_data, lv, param_dict['measurement']
+        )
+
+        # Panel Product: 개인의 여러 선택 상황에 대한 확률을 곱함
+        choice_set_lls = []
+        for idx in range(len(ind_data)):
+            ll_choice_t = choice_model.log_likelihood(
+                ind_data.iloc[idx:idx+1],
+                lv,
+                param_dict['choice']
+            )
+            choice_set_lls.append(ll_choice_t)
+
+        ll_choice = sum(choice_set_lls)
+
+        # 구조모델 우도: P(LV|X)
+        ll_structural = structural_model.log_likelihood(
+            ind_data, lv, param_dict['structural'], draw
+        )
+
+        # 결합 로그우도
+        draw_ll = ll_measurement + ll_choice + ll_structural
+
+        if not np.isfinite(draw_ll):
+            draw_ll = -1e10
+
+        draw_lls.append(draw_ll)
+
+    # logsumexp를 사용하여 평균 계산
+    person_ll = logsumexp(draw_lls) - np.log(len(draw_lls))
+
+    return person_ll
 
 
 class HaltonDrawGenerator:
@@ -106,49 +193,104 @@ class SimultaneousEstimator:
         self.data = None
         self.results = None
 
+        # 로그 파일 핸들러 (추정 시작 시 설정)
+        self.log_file_handler = None
+        self.iteration_logger = None
+
         # Gradient calculators (Apollo 방식)
         self.measurement_grad = None
         self.structural_grad = None
         self.choice_grad = None
         self.joint_grad = None
         self.use_analytic_gradient = False  # 기본값: 수치적 그래디언트
+
+    def _setup_iteration_logger(self, log_file_path: str):
+        """
+        반복 과정 로깅을 위한 파일 핸들러 설정
+
+        Args:
+            log_file_path: 로그 파일 경로
+        """
+        # 반복 과정 전용 로거 생성
+        self.iteration_logger = logging.getLogger('iclv_iteration')
+        self.iteration_logger.setLevel(logging.INFO)
+
+        # 기존 핸들러 제거 (중복 방지)
+        self.iteration_logger.handlers.clear()
+
+        # 파일 핸들러 추가
+        self.log_file_handler = logging.FileHandler(log_file_path, mode='w', encoding='utf-8')
+        self.log_file_handler.setLevel(logging.INFO)
+
+        # 포맷 설정
+        formatter = logging.Formatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+        self.log_file_handler.setFormatter(formatter)
+
+        self.iteration_logger.addHandler(self.log_file_handler)
+
+        # 콘솔 핸들러도 추가 (선택적)
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(formatter)
+        self.iteration_logger.addHandler(console_handler)
+
+        self.iteration_logger.info("="*70)
+        self.iteration_logger.info("ICLV 모델 추정 시작")
+        self.iteration_logger.info("="*70)
+
+    def _close_iteration_logger(self):
+        """반복 과정 로거 종료"""
+        if self.log_file_handler:
+            self.iteration_logger.removeHandler(self.log_file_handler)
+            self.log_file_handler.close()
+            self.log_file_handler = None
     
-    def estimate(self, data: pd.DataFrame, 
+    def estimate(self, data: pd.DataFrame,
                 measurement_model,
                 structural_model,
-                choice_model) -> Dict:
+                choice_model,
+                log_file: Optional[str] = None) -> Dict:
         """
         ICLV 모델 동시 추정
-        
+
         Args:
             data: 통합 데이터
             measurement_model: 측정모델 객체
             structural_model: 구조모델 객체
             choice_model: 선택모델 객체
-        
+            log_file: 로그 파일 경로 (None이면 자동 생성)
+
         Returns:
             추정 결과 딕셔너리
         """
-        print("=" * 70, flush=True)
-        print("SimultaneousEstimator.estimate() 시작", flush=True)
-        print("=" * 70, flush=True)
+        # 로그 파일 설정
+        if log_file is None:
+            from pathlib import Path
+            results_dir = Path('results')
+            results_dir.mkdir(exist_ok=True)
+            log_file = results_dir / 'iclv_estimation_log.txt'
+
+        self._setup_iteration_logger(str(log_file))
+
+        self.iteration_logger.info("SimultaneousEstimator.estimate() 시작")
         self.logger.info("ICLV 모델 동시 추정 시작")
 
         self.data = data
-        print(f"데이터 shape: {data.shape}", flush=True)
         n_individuals = data[self.config.individual_id_column].nunique()
-        print(f"개인 수: {n_individuals}", flush=True)
+
+        self.iteration_logger.info(f"데이터 shape: {data.shape}")
+        self.iteration_logger.info(f"개인 수: {n_individuals}")
         self.logger.info(f"개인 수: {n_individuals}")
 
         # Halton draws 생성
-        print(f"Halton draws 생성 시작... (n_draws={self.config.estimation.n_draws}, n_individuals={n_individuals})", flush=True)
+        self.iteration_logger.info(f"Halton draws 생성 시작... (n_draws={self.config.estimation.n_draws}, n_individuals={n_individuals})")
         self.logger.info(f"Halton draws 생성 중... (n_draws={self.config.estimation.n_draws})")
         self.halton_generator = HaltonDrawGenerator(
             n_draws=self.config.estimation.n_draws,
             n_individuals=n_individuals,
             scramble=self.config.estimation.scramble_halton
         )
-        print("Halton draws 생성 완료", flush=True)
+        self.iteration_logger.info("Halton draws 생성 완료")
         self.logger.info("Halton draws 생성 완료")
 
         # Gradient calculators 초기화 (Apollo 방식)
@@ -159,7 +301,7 @@ class SimultaneousEstimator:
             self.use_analytic_gradient = False
 
         if self.use_analytic_gradient:
-            print("Analytic gradient calculators 초기화 (Apollo 방식)...", flush=True)
+            self.iteration_logger.info("Analytic gradient calculators 초기화 (Apollo 방식)...")
             self.measurement_grad = MeasurementGradient(
                 n_indicators=len(self.config.measurement.indicators),
                 n_categories=self.config.measurement.n_categories
@@ -176,17 +318,17 @@ class SimultaneousEstimator:
                 self.structural_grad,
                 self.choice_grad
             )
-            print("Analytic gradient calculators 초기화 완료", flush=True)
+            self.iteration_logger.info("Analytic gradient calculators 초기화 완료")
 
         # 초기 파라미터 설정
-        print("초기 파라미터 설정 시작...", flush=True)
+        self.iteration_logger.info("초기 파라미터 설정 시작...")
         self.logger.info("초기 파라미터 설정 중...")
         initial_params = self._get_initial_parameters(
             measurement_model, structural_model, choice_model
         )
-        print(f"초기 파라미터 설정 완료 (총 {len(initial_params)}개)", flush=True)
+        self.iteration_logger.info(f"초기 파라미터 설정 완료 (총 {len(initial_params)}개)")
         self.logger.info(f"초기 파라미터 설정 완료 (총 {len(initial_params)}개)")
-        
+
         # 결합 우도함수 정의 (gradient check 로깅 추가)
         iteration_count = [0]  # Mutable counter
         best_ll = [-np.inf]  # Track best log-likelihood
@@ -200,26 +342,30 @@ class SimultaneousEstimator:
             # Track best value
             if ll > best_ll[0]:
                 best_ll[0] = ll
-                improvement = "[NEW BEST]"  # 🔴 ✓ 대신 ASCII 문자 사용
+                improvement = "[NEW BEST]"
             else:
                 improvement = ""
 
             # Log every iteration with more detail
-            if iteration_count[0] % 5 == 0 or improvement:
-                print(
+            # 개인 수에 따라 로깅 빈도 조정
+            n_individuals = self.data[self.config.individual_id_column].nunique()
+            log_interval = 10 if n_individuals > 100 else 5
+
+            if iteration_count[0] % log_interval == 0 or improvement:
+                log_msg = (
                     f"Iter {iteration_count[0]:4d}: LL = {ll:12.4f} "
-                    f"(Best: {best_ll[0]:12.4f}) {improvement}",
-                    flush=True
+                    f"(Best: {best_ll[0]:12.4f}) {improvement}"
                 )
+                self.iteration_logger.info(log_msg)
 
             return -ll
 
         # Get parameter bounds
-        print("파라미터 bounds 계산 시작...", flush=True)
+        self.iteration_logger.info("파라미터 bounds 계산 시작...")
         bounds = self._get_parameter_bounds(
             measurement_model, structural_model, choice_model
         )
-        print(f"파라미터 bounds 계산 완료 (총 {len(bounds)}개)", flush=True)
+        self.iteration_logger.info(f"파라미터 bounds 계산 완료 (총 {len(bounds)}개)")
 
         # 최적화 방법 선택
         use_gradient = self.config.estimation.optimizer in ['BFGS', 'L-BFGS-B']
@@ -235,6 +381,10 @@ class SimultaneousEstimator:
                 params, measurement_model, structural_model, choice_model
             )
 
+            # 병렬처리 설정 가져오기
+            use_parallel = getattr(self.config.estimation, 'use_parallel', False)
+            n_cores = getattr(self.config.estimation, 'n_cores', None)
+
             # Analytic gradient 계산
             grad_dict = self.joint_grad.compute_gradient(
                 data=self.data,
@@ -246,7 +396,9 @@ class SimultaneousEstimator:
                 choice_model=choice_model,
                 indicators=self.config.measurement.indicators,
                 sociodemographics=self.config.structural.sociodemographics,
-                choice_attributes=self.config.choice.choice_attributes
+                choice_attributes=self.config.choice.choice_attributes,
+                use_parallel=use_parallel,
+                n_cores=n_cores
             )
 
             # 그래디언트 벡터로 변환 (파라미터 순서와 동일)
@@ -265,32 +417,118 @@ class SimultaneousEstimator:
         else:
             print("최적화 시작: Nelder-Mead (gradient-free)", flush=True)
         print(f"초기 파라미터 개수: {len(initial_params)}", flush=True)
-        print(f"최대 반복 횟수: {self.config.estimation.max_iterations}", flush=True)
-        print("=" * 70, flush=True)
+        self.iteration_logger.info(f"최대 반복 횟수: {self.config.estimation.max_iterations}")
+        self.iteration_logger.info("=" * 70)
+
+        # 병렬처리 설정 로깅
+        use_parallel = getattr(self.config.estimation, 'use_parallel', False)
+        if use_parallel:
+            n_cores = getattr(self.config.estimation, 'n_cores', None)
+            if n_cores is None:
+                n_cores = max(1, multiprocessing.cpu_count() - 1)
+            self.iteration_logger.info(f"병렬처리 활성화: {n_cores} 코어 사용")
+        else:
+            self.iteration_logger.info("순차처리 사용")
+
+        # 조기 종료를 위한 callback 클래스
+        class EarlyStoppingCallback:
+            def __init__(self, patience=10, tol=1e-6, logger=None, iteration_logger=None):
+                """
+                조기 종료 callback
+
+                Args:
+                    patience: LL 개선이 없는 연속 반복 횟수
+                    tol: LL 변화 허용 오차 (절대값)
+                """
+                self.patience = patience
+                self.tol = tol
+                self.best_ll = np.inf
+                self.no_improvement_count = 0
+                self.iteration_count = 0
+                self.logger = logger
+                self.iteration_logger = iteration_logger
+
+            def __call__(self, xk):
+                """매 반복마다 호출되는 함수"""
+                self.iteration_count += 1
+                current_ll = negative_log_likelihood(xk)
+
+                # LL 개선 체크
+                if current_ll < self.best_ll - self.tol:
+                    # 개선됨
+                    self.best_ll = current_ll
+                    self.no_improvement_count = 0
+                else:
+                    # 개선 없음
+                    self.no_improvement_count += 1
+
+                # 조기 종료 조건
+                if self.no_improvement_count >= self.patience:
+                    msg = f"조기 종료: {self.patience}회 연속 LL 개선 없음 (LL={-self.best_ll:.4f})"
+                    if self.logger:
+                        self.logger.info(msg)
+                    if self.iteration_logger:
+                        self.iteration_logger.info(msg)
+                    raise StopIteration(msg)
 
         if use_gradient:
             self.logger.info(f"최적화 시작: {self.config.estimation.optimizer} (gradient-based)")
+            self.iteration_logger.info(f"최적화 시작: {self.config.estimation.optimizer} (gradient-based)")
             if self.use_analytic_gradient:
                 self.logger.info("Analytic gradient 사용 (Apollo 방식)")
+                self.iteration_logger.info("Analytic gradient 사용 (Apollo 방식)")
             else:
                 self.logger.info("수치적 그래디언트 사용 (2-point finite difference)")
+                self.iteration_logger.info("수치적 그래디언트 사용 (2-point finite difference)")
+
+            # 조기 종료 callback 생성
+            early_stopping = EarlyStoppingCallback(
+                patience=10,
+                tol=1e-6,
+                logger=self.logger,
+                iteration_logger=self.iteration_logger
+            )
+
+            self.logger.info("조기 종료 활성화: 10회 연속 LL 개선 없으면 종료 (tol=1e-6)")
+            self.iteration_logger.info("조기 종료 활성화: 10회 연속 LL 개선 없으면 종료 (tol=1e-6)")
 
             # BFGS 또는 L-BFGS-B
-            result = optimize.minimize(
-                negative_log_likelihood,
-                initial_params,
-                method=self.config.estimation.optimizer,
-                jac=gradient_function if self.use_analytic_gradient else '2-point',
-                bounds=bounds if self.config.estimation.optimizer == 'L-BFGS-B' else None,
-                options={
-                    'maxiter': self.config.estimation.max_iterations,
-                    'ftol': 1e-6,
-                    'gtol': 1e-5,
-                    'disp': True
-                }
-            )
+            try:
+                result = optimize.minimize(
+                    negative_log_likelihood,
+                    initial_params,
+                    method=self.config.estimation.optimizer,
+                    jac=gradient_function if self.use_analytic_gradient else '2-point',
+                    bounds=bounds if self.config.estimation.optimizer == 'L-BFGS-B' else None,
+                    callback=early_stopping,
+                    options={
+                        'maxiter': self.config.estimation.max_iterations,
+                        'ftol': 1e-6,
+                        'gtol': 1e-5,
+                        'disp': True
+                    }
+                )
+            except StopIteration as e:
+                # 조기 종료된 경우 - 최적 파라미터로 result 객체 생성
+                from scipy.optimize import OptimizeResult
+
+                # best_params를 사용하여 최종 파라미터 벡터 생성
+                final_params_vector = params_to_vector(best_params)
+
+                result = OptimizeResult(
+                    x=final_params_vector,
+                    success=True,
+                    message=f"Early stopping: {str(e)}",
+                    fun=best_ll,
+                    nit=early_stopping.iteration_count,
+                    nfev=early_stopping.iteration_count
+                )
+
+                self.logger.info(f"조기 종료 완료: 반복 {early_stopping.iteration_count}회, LL={-best_ll:.4f}")
+                self.iteration_logger.info(f"조기 종료 완료: 반복 {early_stopping.iteration_count}회, LL={-best_ll:.4f}")
         else:
             self.logger.info(f"최적화 시작: Nelder-Mead (gradient-free)")
+            self.iteration_logger.info(f"최적화 시작: Nelder-Mead (gradient-free)")
 
             result = optimize.minimize(
                 negative_log_likelihood,
@@ -303,19 +541,91 @@ class SimultaneousEstimator:
                     'disp': True
                 }
             )
-        
+
         if result.success:
             self.logger.info("최적화 성공")
+            self.iteration_logger.info("최적화 성공")
         else:
             self.logger.warning(f"최적화 실패: {result.message}")
-        
+            self.iteration_logger.warning(f"최적화 실패: {result.message}")
+
+        self.iteration_logger.info("=" * 70)
+        self.iteration_logger.info(f"최종 로그우도: {-result.fun:.4f}")
+        self.iteration_logger.info(f"반복 횟수: {iteration_count[0]}")
+        self.iteration_logger.info("=" * 70)
+
         # 결과 처리
         self.results = self._process_results(
             result, measurement_model, structural_model, choice_model
         )
-        
+
+        # 로거 종료
+        self._close_iteration_logger()
+
         return self.results
     
+    def _compute_individual_likelihood(self, ind_id, ind_data, ind_draws,
+                                       param_dict, measurement_model,
+                                       structural_model, choice_model) -> float:
+        """
+        개인별 우도 계산 (병렬화 가능)
+
+        Args:
+            ind_id: 개인 ID
+            ind_data: 개인 데이터
+            ind_draws: 개인의 Halton draws
+            param_dict: 파라미터 딕셔너리
+            measurement_model: 측정모델
+            structural_model: 구조모델
+            choice_model: 선택모델
+
+        Returns:
+            개인의 로그우도
+        """
+        draw_lls = []
+
+        for j, draw in enumerate(ind_draws):
+            # 구조모델: LV = γ*X + η
+            lv = structural_model.predict(ind_data, param_dict['structural'], draw)
+
+            # 측정모델 우도: P(Indicators|LV)
+            ll_measurement = measurement_model.log_likelihood(
+                ind_data, lv, param_dict['measurement']
+            )
+
+            # Panel Product: 개인의 여러 선택 상황에 대한 확률을 곱함
+            choice_set_lls = []
+            for idx in range(len(ind_data)):
+                ll_choice_t = choice_model.log_likelihood(
+                    ind_data.iloc[idx:idx+1],  # 각 선택 상황
+                    lv,
+                    param_dict['choice']
+                )
+                choice_set_lls.append(ll_choice_t)
+
+            # Panel product: log(P1 * P2 * ... * PT) = log(P1) + log(P2) + ... + log(PT)
+            ll_choice = sum(choice_set_lls)
+
+            # 구조모델 우도: P(LV|X) - 정규분포 가정
+            ll_structural = structural_model.log_likelihood(
+                ind_data, lv, param_dict['structural'], draw
+            )
+
+            # 결합 로그우도
+            draw_ll = ll_measurement + ll_choice + ll_structural
+
+            # 🔴 수정: -inf를 매우 작은 값으로 대체 (연속성 확보 for gradient)
+            if not np.isfinite(draw_ll):
+                draw_ll = -1e10  # -inf 대신 매우 작은 값
+
+            draw_lls.append(draw_ll)
+
+        # 🔴 수정: logsumexp를 사용하여 평균 계산
+        # log[(1/R) Σᵣ exp(ll_r)] = logsumexp(ll_r) - log(R)
+        person_ll = logsumexp(draw_lls) - np.log(len(draw_lls))
+
+        return person_ll
+
     def _joint_log_likelihood(self, params: np.ndarray,
                              measurement_model,
                              structural_model,
@@ -326,69 +636,64 @@ class SimultaneousEstimator:
         시뮬레이션 기반:
         log L ≈ Σᵢ log[(1/R) Σᵣ P(Choice|LVᵣ) × P(Indicators|LVᵣ) × P(LVᵣ|X)]
         """
-        # print("_joint_log_likelihood 시작", flush=True)
-
         # 파라미터 분해
         param_dict = self._unpack_parameters(
             params, measurement_model, structural_model, choice_model
         )
 
-        total_ll = 0.0
         draws = self.halton_generator.get_draws()
-
-        # 개인별 우도 계산
         individual_ids = self.data[self.config.individual_id_column].unique()
-        # print(f"개인 수: {len(individual_ids)}", flush=True)
 
-        for i, ind_id in enumerate(individual_ids):
-            ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
-            ind_draws = draws[i, :]  # 이 개인의 draws
+        # 병렬처리 여부 확인
+        use_parallel = getattr(self.config.estimation, 'use_parallel', False)
 
-            # 🔴 수정: logsumexp를 사용하여 수치 안정성 확보
-            # King (2022) Apollo 방식
-            draw_lls = []
+        if use_parallel:
+            # 병렬처리 사용 (전역 함수 사용)
+            n_cores = getattr(self.config.estimation, 'n_cores', None)
+            if n_cores is None:
+                n_cores = max(1, multiprocessing.cpu_count() - 1)
 
-            for j, draw in enumerate(ind_draws):
-                # 구조모델: LV = γ*X + η
-                lv = structural_model.predict(ind_data, param_dict['structural'], draw)
+            # 설정 정보를 dict로 변환 (pickle 가능)
+            config_dict = {
+                'measurement': {
+                    'latent_variable': self.config.measurement.latent_variable,
+                    'indicators': self.config.measurement.indicators,
+                    'n_categories': self.config.measurement.n_categories
+                },
+                'structural': {
+                    'sociodemographics': self.config.structural.sociodemographics,
+                    'error_variance': self.config.structural.error_variance
+                },
+                'choice': {
+                    'choice_attributes': self.config.choice.choice_attributes
+                }
+            }
 
-                # 측정모델 우도: P(Indicators|LV)
-                ll_measurement = measurement_model.log_likelihood(
-                    ind_data, lv, param_dict['measurement']
+            # 개인별 데이터 준비 (dict 형태로 변환)
+            args_list = []
+            for i, ind_id in enumerate(individual_ids):
+                ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
+                ind_data_dict = ind_data.to_dict('list')  # pickle 가능한 dict로 변환
+                ind_draws = draws[i, :]
+                args_list.append((ind_data_dict, ind_draws, param_dict, config_dict))
+
+            # 병렬 계산
+            with ProcessPoolExecutor(max_workers=n_cores) as executor:
+                person_lls = list(executor.map(_compute_individual_likelihood_parallel, args_list))
+
+            total_ll = sum(person_lls)
+        else:
+            # 순차처리
+            total_ll = 0.0
+            for i, ind_id in enumerate(individual_ids):
+                ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
+                ind_draws = draws[i, :]
+
+                person_ll = self._compute_individual_likelihood(
+                    ind_id, ind_data, ind_draws, param_dict,
+                    measurement_model, structural_model, choice_model
                 )
-
-                # Panel Product: 개인의 여러 선택 상황에 대한 확률을 곱함
-                choice_set_lls = []
-                for idx in range(len(ind_data)):
-                    ll_choice_t = choice_model.log_likelihood(
-                        ind_data.iloc[idx:idx+1],  # 각 선택 상황
-                        lv,
-                        param_dict['choice']
-                    )
-                    choice_set_lls.append(ll_choice_t)
-
-                # Panel product: log(P1 * P2 * ... * PT) = log(P1) + log(P2) + ... + log(PT)
-                ll_choice = sum(choice_set_lls)
-
-                # 구조모델 우도: P(LV|X) - 정규분포 가정
-                ll_structural = structural_model.log_likelihood(
-                    ind_data, lv, param_dict['structural'], draw
-                )
-
-                # 결합 로그우도
-                draw_ll = ll_measurement + ll_choice + ll_structural
-
-                # 🔴 수정: -inf를 매우 작은 값으로 대체 (연속성 확보 for gradient)
-                if not np.isfinite(draw_ll):
-                    draw_ll = -1e10  # -inf 대신 매우 작은 값
-
-                draw_lls.append(draw_ll)
-
-            # 🔴 수정: logsumexp를 사용하여 평균 계산
-            # log[(1/R) Σᵣ exp(ll_r)] = logsumexp(ll_r) - log(R)
-            person_ll = logsumexp(draw_lls) - np.log(len(draw_lls))
-
-            total_ll += person_ll
+                total_ll += person_ll
 
         return total_ll
 

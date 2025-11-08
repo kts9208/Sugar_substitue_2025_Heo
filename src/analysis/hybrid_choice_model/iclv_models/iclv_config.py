@@ -93,10 +93,14 @@ class EstimationConfig:
     # Gradient 설정 (Apollo 방식)
     use_analytic_gradient: bool = True  # True: analytic gradient, False: numerical gradient
 
+    # 병렬처리 설정
+    use_parallel: bool = False  # 개인별 우도 계산 병렬화
+    n_cores: Optional[int] = None  # None이면 CPU 코어 수 자동 감지
+
     # 표준오차 계산
     calculate_se: bool = True
     se_method: Literal['hessian', 'bootstrap', 'robust'] = 'hessian'
-    
+
     # 부트스트랩 설정 (se_method='bootstrap'인 경우)
     n_bootstrap: int = 500
 

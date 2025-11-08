@@ -1,0 +1,7 @@
+﻿Metric,Value
+Estimation_Time_Minutes,102.13
+N_Individuals,299
+N_Observations,5400
+Halton_Draws,100
+Optimizer,BFGS_Analytic
+Log_Likelihood,-5362.5191

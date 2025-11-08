@@ -19,8 +19,8 @@ sys.path.append(str(project_root / "processed_data" / "modules"))
 try:
     from survey_data_preprocessor import FactorConfig
 except ImportError as e:
-    logging.error(f"기존 FactorConfig 모듈을 찾을 수 없습니다: {e}")
-    raise
+    # 무시 가능한 오류 (ICLV 추정과 무관)
+    FactorConfig = None
 
 logger = logging.getLogger(__name__)
 

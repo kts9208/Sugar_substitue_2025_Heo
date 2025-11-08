@@ -14,8 +14,148 @@ import pandas as pd
 from typing import Dict, Tuple
 from scipy.stats import norm
 import logging
+from concurrent.futures import ProcessPoolExecutor
+import multiprocessing
 
 logger = logging.getLogger(__name__)
+
+
+def _compute_individual_gradient_parallel(args):
+    """
+    개인별 그래디언트 계산 (병렬처리용 전역 함수)
+
+    Args:
+        args: (ind_data_dict, ind_draws, params_dict, config_dict)
+
+    Returns:
+        개인의 weighted gradient dict
+    """
+    # 병렬 프로세스에서 불필요한 로그 억제
+    import logging
+    logging.getLogger('root').setLevel(logging.CRITICAL)
+
+    from .measurement_equations import OrderedProbitMeasurement
+    from .structural_equations import LatentVariableRegression
+    from .choice_equations import BinaryProbitChoice
+    from .iclv_config import MeasurementConfig, StructuralConfig, ChoiceConfig
+
+    ind_data_dict, ind_draws, params_dict, config_dict = args
+
+    # DataFrame 복원
+    ind_data = pd.DataFrame(ind_data_dict)
+
+    # 모델 재생성
+    measurement_config = MeasurementConfig(**config_dict['measurement'])
+    structural_config = StructuralConfig(**config_dict['structural'])
+    choice_config = ChoiceConfig(**config_dict['choice'])
+
+    measurement_model = OrderedProbitMeasurement(measurement_config)
+    structural_model = LatentVariableRegression(structural_config)
+    choice_model = BinaryProbitChoice(choice_config)
+
+    # Gradient 계산기 재생성
+    from .gradient_calculator import MeasurementGradient, StructuralGradient, ChoiceGradient
+
+    measurement_grad = MeasurementGradient(
+        n_indicators=len(config_dict['measurement']['indicators']),
+        n_categories=config_dict['measurement']['n_categories']
+    )
+    structural_grad = StructuralGradient(
+        n_sociodem=len(config_dict['structural']['sociodemographics']),
+        error_variance=config_dict['structural']['error_variance']
+    )
+    choice_grad = ChoiceGradient(
+        n_attributes=len(config_dict['choice']['choice_attributes'])
+    )
+
+    # 각 draw에 대한 likelihood와 gradient 저장
+    draw_likelihoods = []
+    draw_gradients = []
+
+    for j, draw in enumerate(ind_draws):
+        # LV 예측
+        lv = structural_model.predict(ind_data, params_dict['structural'], draw)
+
+        # 각 모델의 log-likelihood 계산
+        ll_measurement = measurement_model.log_likelihood(
+            ind_data, lv, params_dict['measurement']
+        )
+
+        # Panel Product
+        choice_set_lls = []
+        for idx in range(len(ind_data)):
+            ll_choice_t = choice_model.log_likelihood(
+                ind_data.iloc[idx:idx+1], lv, params_dict['choice']
+            )
+            choice_set_lls.append(ll_choice_t)
+        ll_choice = sum(choice_set_lls)
+
+        ll_structural = structural_model.log_likelihood(
+            ind_data, lv, params_dict['structural'], draw
+        )
+
+        # 결합 log-likelihood
+        joint_ll = ll_measurement + ll_choice + ll_structural
+
+        # Likelihood (not log)
+        likelihood = np.exp(joint_ll) if np.isfinite(joint_ll) else 1e-100
+        draw_likelihoods.append(likelihood)
+
+        # 각 모델의 gradient 계산
+        grad_meas = measurement_grad.compute_gradient(
+            ind_data, lv, params_dict['measurement'],
+            config_dict['measurement']['indicators']
+        )
+        grad_struct = structural_grad.compute_gradient(
+            ind_data, lv, params_dict['structural'],
+            config_dict['structural']['sociodemographics']
+        )
+        grad_choice = choice_grad.compute_gradient(
+            ind_data, lv, params_dict['choice'],
+            config_dict['choice']['choice_attributes']
+        )
+
+        # Gradient 저장
+        draw_gradients.append({
+            'zeta': grad_meas['grad_zeta'],
+            'tau': grad_meas['grad_tau'],
+            'gamma': grad_struct['grad_gamma'],
+            'intercept': grad_choice['grad_intercept'],
+            'beta': grad_choice['grad_beta'],
+            'lambda': grad_choice['grad_lambda']
+        })
+
+    # Importance weights 계산 (Apollo 방식)
+    total_likelihood = sum(draw_likelihoods)
+    if total_likelihood > 0:
+        weights = np.array(draw_likelihoods) / total_likelihood
+    else:
+        weights = np.ones(len(draw_likelihoods)) / len(draw_likelihoods)
+
+    # Weighted average of gradients
+    n_indicators = len(config_dict['measurement']['indicators'])
+    n_thresholds = config_dict['measurement']['n_categories'] - 1
+    n_sociodem = len(config_dict['structural']['sociodemographics'])
+    n_attributes = len(config_dict['choice']['choice_attributes'])
+
+    weighted_grad = {
+        'zeta': np.zeros(n_indicators),
+        'tau': np.zeros((n_indicators, n_thresholds)),
+        'gamma': np.zeros(n_sociodem),
+        'intercept': 0.0,
+        'beta': np.zeros(n_attributes),
+        'lambda': 0.0
+    }
+
+    for w, grad in zip(weights, draw_gradients):
+        weighted_grad['zeta'] += w * grad['zeta']
+        weighted_grad['tau'] += w * grad['tau']
+        weighted_grad['gamma'] += w * grad['gamma']
+        weighted_grad['intercept'] += w * grad['intercept']
+        weighted_grad['beta'] += w * grad['beta']
+        weighted_grad['lambda'] += w * grad['lambda']
+
+    return weighted_grad
 
 
 class MeasurementGradient:
@@ -290,7 +430,9 @@ class JointGradient:
                         draws: np.ndarray, individual_id_column: str,
                         measurement_model, structural_model, choice_model,
                         indicators: list, sociodemographics: list,
-                        choice_attributes: list) -> Dict[str, np.ndarray]:
+                        choice_attributes: list,
+                        use_parallel: bool = False,
+                        n_cores: int = None) -> Dict[str, np.ndarray]:
         """
         결합 그래디언트 계산 (Apollo 방식)
 
@@ -311,6 +453,8 @@ class JointGradient:
             indicators: 지표 변수명 리스트
             sociodemographics: 사회인구학적 변수명 리스트
             choice_attributes: 선택 속성 변수명 리스트
+            use_parallel: 병렬처리 사용 여부
+            n_cores: 사용할 코어 수 (None이면 자동 감지)
 
         Returns:
             gradient_dict: 각 파라미터 그룹별 그래디언트
@@ -331,81 +475,126 @@ class JointGradient:
         grad_beta_total = np.zeros(n_beta)
         grad_lambda_total = 0.0
 
-        # 개인별 그래디언트 계산
-        for i, ind_id in enumerate(individual_ids):
-            ind_data = data[data[individual_id_column] == ind_id]
-            ind_draws = draws[i, :]
+        # 병렬처리 여부 확인
+        if use_parallel:
+            # 병렬처리 사용
+            if n_cores is None:
+                n_cores = max(1, multiprocessing.cpu_count() - 1)
 
-            # 각 draw에 대한 likelihood와 gradient 저장
-            draw_likelihoods = []
-            draw_gradients = []
+            # 설정 정보를 dict로 변환 (pickle 가능)
+            config_dict = {
+                'measurement': {
+                    'latent_variable': 'health_concern',  # 하드코딩 (config에서 가져올 수 없음)
+                    'indicators': indicators,
+                    'n_categories': measurement_model.n_categories
+                },
+                'structural': {
+                    'sociodemographics': sociodemographics,
+                    'error_variance': structural_model.error_variance
+                },
+                'choice': {
+                    'choice_attributes': choice_attributes
+                }
+            }
 
-            for j, draw in enumerate(ind_draws):
-                # LV 예측
-                lv = structural_model.predict(ind_data, params_dict['structural'], draw)
+            # 개인별 데이터 준비
+            args_list = []
+            for i, ind_id in enumerate(individual_ids):
+                ind_data = data[data[individual_id_column] == ind_id]
+                ind_data_dict = ind_data.to_dict('list')
+                ind_draws = draws[i, :]
+                args_list.append((ind_data_dict, ind_draws, params_dict, config_dict))
 
-                # 각 모델의 log-likelihood 계산
-                ll_measurement = measurement_model.log_likelihood(
-                    ind_data, lv, params_dict['measurement']
-                )
+            # 병렬 계산
+            with ProcessPoolExecutor(max_workers=n_cores) as executor:
+                individual_grads = list(executor.map(_compute_individual_gradient_parallel, args_list))
 
-                # Panel Product
-                choice_set_lls = []
-                for idx in range(len(ind_data)):
-                    ll_choice_t = choice_model.log_likelihood(
-                        ind_data.iloc[idx:idx+1], lv, params_dict['choice']
+            # 개인별 gradient 합산
+            for weighted_grad in individual_grads:
+                grad_zeta_total += weighted_grad['zeta']
+                grad_tau_total += weighted_grad['tau']
+                grad_gamma_total += weighted_grad['gamma']
+                grad_intercept_total += weighted_grad['intercept']
+                grad_beta_total += weighted_grad['beta']
+                grad_lambda_total += weighted_grad['lambda']
+
+        else:
+            # 순차처리 (기존 코드)
+            # 개인별 그래디언트 계산
+            for i, ind_id in enumerate(individual_ids):
+                ind_data = data[data[individual_id_column] == ind_id]
+                ind_draws = draws[i, :]
+
+                # 각 draw에 대한 likelihood와 gradient 저장
+                draw_likelihoods = []
+                draw_gradients = []
+
+                for j, draw in enumerate(ind_draws):
+                    # LV 예측
+                    lv = structural_model.predict(ind_data, params_dict['structural'], draw)
+
+                    # 각 모델의 log-likelihood 계산
+                    ll_measurement = measurement_model.log_likelihood(
+                        ind_data, lv, params_dict['measurement']
                     )
-                    choice_set_lls.append(ll_choice_t)
-                ll_choice = sum(choice_set_lls)
 
-                ll_structural = structural_model.log_likelihood(
-                    ind_data, lv, params_dict['structural'], draw
-                )
+                    # Panel Product
+                    choice_set_lls = []
+                    for idx in range(len(ind_data)):
+                        ll_choice_t = choice_model.log_likelihood(
+                            ind_data.iloc[idx:idx+1], lv, params_dict['choice']
+                        )
+                        choice_set_lls.append(ll_choice_t)
+                    ll_choice = sum(choice_set_lls)
 
-                # 결합 log-likelihood
-                joint_ll = ll_measurement + ll_choice + ll_structural
+                    ll_structural = structural_model.log_likelihood(
+                        ind_data, lv, params_dict['structural'], draw
+                    )
 
-                # Likelihood (not log)
-                likelihood = np.exp(joint_ll) if np.isfinite(joint_ll) else 1e-100
-                draw_likelihoods.append(likelihood)
+                    # 결합 log-likelihood
+                    joint_ll = ll_measurement + ll_choice + ll_structural
 
-                # 각 모델의 gradient 계산
-                grad_meas = self.measurement_grad.compute_gradient(
-                    ind_data, lv, params_dict['measurement'], indicators
-                )
-                grad_struct = self.structural_grad.compute_gradient(
-                    ind_data, lv, params_dict['structural'], sociodemographics
-                )
-                grad_choice = self.choice_grad.compute_gradient(
-                    ind_data, lv, params_dict['choice'], choice_attributes
-                )
+                    # Likelihood (not log)
+                    likelihood = np.exp(joint_ll) if np.isfinite(joint_ll) else 1e-100
+                    draw_likelihoods.append(likelihood)
 
-                # Gradient 저장
-                draw_gradients.append({
-                    'zeta': grad_meas['grad_zeta'],
-                    'tau': grad_meas['grad_tau'],
-                    'gamma': grad_struct['grad_gamma'],
-                    'intercept': grad_choice['grad_intercept'],
-                    'beta': grad_choice['grad_beta'],
-                    'lambda': grad_choice['grad_lambda']
-                })
+                    # 각 모델의 gradient 계산
+                    grad_meas = self.measurement_grad.compute_gradient(
+                        ind_data, lv, params_dict['measurement'], indicators
+                    )
+                    grad_struct = self.structural_grad.compute_gradient(
+                        ind_data, lv, params_dict['structural'], sociodemographics
+                    )
+                    grad_choice = self.choice_grad.compute_gradient(
+                        ind_data, lv, params_dict['choice'], choice_attributes
+                    )
 
-            # Importance weights 계산 (Apollo 방식)
-            total_likelihood = sum(draw_likelihoods)
-            if total_likelihood > 0:
-                weights = np.array(draw_likelihoods) / total_likelihood
-            else:
-                weights = np.ones(len(draw_likelihoods)) / len(draw_likelihoods)
+                    # Gradient 저장
+                    draw_gradients.append({
+                        'zeta': grad_meas['grad_zeta'],
+                        'tau': grad_meas['grad_tau'],
+                        'gamma': grad_struct['grad_gamma'],
+                        'intercept': grad_choice['grad_intercept'],
+                        'beta': grad_choice['grad_beta'],
+                        'lambda': grad_choice['grad_lambda']
+                    })
 
-            # Weighted average of gradients
-            for j, grad in enumerate(draw_gradients):
-                w = weights[j]
-                grad_zeta_total += w * grad['zeta']
-                grad_tau_total += w * grad['tau']
-                grad_gamma_total += w * grad['gamma']
-                grad_intercept_total += w * grad['intercept']
-                grad_beta_total += w * grad['beta']
-                grad_lambda_total += w * grad['lambda']
+                # Importance weights 계산 (Apollo 방식)
+                total_likelihood = sum(draw_likelihoods)
+                if total_likelihood > 0:
+                    weights = np.array(draw_likelihoods) / total_likelihood
+                else:
+                    weights = np.ones(len(draw_likelihoods)) / len(draw_likelihoods)
+
+                # Weighted average of gradients
+                for j, grad in enumerate(draw_gradients):
+                    w = weights[j]
+                    grad_zeta_total += w * grad['zeta']
+                    grad_tau_total += w * grad['tau']
+                    grad_gamma_total += w * grad['gamma']
+                    grad_intercept_total += w * grad['intercept']
+                    grad_beta_total += w * grad['beta']
+                    grad_lambda_total += w * grad['lambda']
 
         return {
             'grad_zeta': grad_zeta_total,
