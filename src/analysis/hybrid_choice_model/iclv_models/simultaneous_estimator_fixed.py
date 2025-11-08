@@ -430,33 +430,49 @@ class SimultaneousEstimator:
         else:
             self.iteration_logger.info("순차처리 사용")
 
-        # 조기 종료를 위한 callback 클래스
-        class EarlyStoppingCallback:
-            def __init__(self, patience=10, tol=1e-6, logger=None, iteration_logger=None):
-                """
-                조기 종료 callback
+        # 조기 종료를 위한 Wrapper 클래스
+        class EarlyStoppingWrapper:
+            """
+            목적 함수와 gradient 함수를 감싸서 조기 종료 구현
+            매 함수 호출마다 LL 개선을 체크하여 확실한 조기 종료 보장
+            """
 
-                Args:
-                    patience: LL 개선이 없는 연속 반복 횟수
-                    tol: LL 변화 허용 오차 (절대값)
+            def __init__(self, func, grad_func, patience=20, tol=1e-6, logger=None, iteration_logger=None):
                 """
+                Args:
+                    func: 목적 함수 (negative log-likelihood)
+                    grad_func: Gradient 함수
+                    patience: 함수 호출 기준 개선 없는 횟수 (반복 기준보다 많아야 함)
+                    tol: LL 변화 허용 오차 (절대값)
+                    logger: 메인 로거
+                    iteration_logger: 반복 로거
+                """
+                self.func = func
+                self.grad_func = grad_func
                 self.patience = patience
                 self.tol = tol
-                self.best_ll = np.inf
-                self.no_improvement_count = 0
-                self.iteration_count = 0
                 self.logger = logger
                 self.iteration_logger = iteration_logger
 
-            def __call__(self, xk):
-                """매 반복마다 호출되는 함수"""
-                self.iteration_count += 1
-                current_ll = negative_log_likelihood(xk)
+                self.best_ll = np.inf
+                self.best_x = None  # 최적 파라미터 저장
+                self.no_improvement_count = 0
+                self.func_call_count = 0
+                self.grad_call_count = 0
+                self.early_stopped = False
+
+            def objective(self, x):
+                """
+                목적 함수 wrapper - 매 호출마다 조기 종료 체크
+                """
+                self.func_call_count += 1
+                current_ll = self.func(x)
 
                 # LL 개선 체크
                 if current_ll < self.best_ll - self.tol:
-                    # 개선됨
+                    # 명확한 개선
                     self.best_ll = current_ll
+                    self.best_x = x.copy()  # 최적 파라미터 저장
                     self.no_improvement_count = 0
                 else:
                     # 개선 없음
@@ -464,12 +480,22 @@ class SimultaneousEstimator:
 
                 # 조기 종료 조건
                 if self.no_improvement_count >= self.patience:
-                    msg = f"조기 종료: {self.patience}회 연속 LL 개선 없음 (LL={-self.best_ll:.4f})"
+                    self.early_stopped = True
+                    msg = f"조기 종료: {self.patience}회 연속 함수 호출에서 LL 개선 없음 (Best LL={self.best_ll:.4f})"
                     if self.logger:
                         self.logger.info(msg)
                     if self.iteration_logger:
                         self.iteration_logger.info(msg)
                     raise StopIteration(msg)
+
+                return current_ll
+
+            def gradient(self, x):
+                """
+                Gradient 함수 wrapper
+                """
+                self.grad_call_count += 1
+                return self.grad_func(x)
 
         if use_gradient:
             self.logger.info(f"최적화 시작: {self.config.estimation.optimizer} (gradient-based)")
@@ -481,28 +507,29 @@ class SimultaneousEstimator:
                 self.logger.info("수치적 그래디언트 사용 (2-point finite difference)")
                 self.iteration_logger.info("수치적 그래디언트 사용 (2-point finite difference)")
 
-            # 조기 종료 callback 생성
-            early_stopping = EarlyStoppingCallback(
-                patience=10,
+            # 조기 종료 Wrapper 생성
+            early_stopping_wrapper = EarlyStoppingWrapper(
+                func=negative_log_likelihood,
+                grad_func=gradient_function if self.use_analytic_gradient else None,
+                patience=20,  # 함수 호출 기준 (반복당 여러 번 호출되므로 반복 기준보다 많아야 함)
                 tol=1e-6,
                 logger=self.logger,
                 iteration_logger=self.iteration_logger
             )
 
-            self.logger.info("조기 종료 활성화: 10회 연속 LL 개선 없으면 종료 (tol=1e-6)")
-            self.iteration_logger.info("조기 종료 활성화: 10회 연속 LL 개선 없으면 종료 (tol=1e-6)")
+            self.logger.info("조기 종료 활성화: 20회 연속 함수 호출에서 LL 개선 없으면 종료 (tol=1e-6)")
+            self.iteration_logger.info("조기 종료 활성화: 20회 연속 함수 호출에서 LL 개선 없으면 종료 (tol=1e-6)")
 
             # BFGS 또는 L-BFGS-B
             try:
                 result = optimize.minimize(
-                    negative_log_likelihood,
+                    early_stopping_wrapper.objective,  # Wrapper의 objective 사용
                     initial_params,
                     method=self.config.estimation.optimizer,
-                    jac=gradient_function if self.use_analytic_gradient else '2-point',
+                    jac=early_stopping_wrapper.gradient if self.use_analytic_gradient else '2-point',
                     bounds=bounds if self.config.estimation.optimizer == 'L-BFGS-B' else None,
-                    callback=early_stopping,
                     options={
-                        'maxiter': self.config.estimation.max_iterations,
+                        'maxiter': 200,  # 안전장치 (조기 종료가 작동하므로 낮춰도 됨)
                         'ftol': 1e-6,
                         'gtol': 1e-5,
                         'disp': True
@@ -512,20 +539,19 @@ class SimultaneousEstimator:
                 # 조기 종료된 경우 - 최적 파라미터로 result 객체 생성
                 from scipy.optimize import OptimizeResult
 
-                # best_params를 사용하여 최종 파라미터 벡터 생성
-                final_params_vector = params_to_vector(best_params)
-
+                # Wrapper에 저장된 최적 파라미터 사용
                 result = OptimizeResult(
-                    x=final_params_vector,
+                    x=early_stopping_wrapper.best_x,
                     success=True,
                     message=f"Early stopping: {str(e)}",
-                    fun=best_ll,
-                    nit=early_stopping.iteration_count,
-                    nfev=early_stopping.iteration_count
+                    fun=early_stopping_wrapper.best_ll,
+                    nit=early_stopping_wrapper.func_call_count,
+                    nfev=early_stopping_wrapper.func_call_count,
+                    njev=early_stopping_wrapper.grad_call_count
                 )
 
-                self.logger.info(f"조기 종료 완료: 반복 {early_stopping.iteration_count}회, LL={-best_ll:.4f}")
-                self.iteration_logger.info(f"조기 종료 완료: 반복 {early_stopping.iteration_count}회, LL={-best_ll:.4f}")
+                self.logger.info(f"조기 종료 완료: 함수 호출 {early_stopping_wrapper.func_call_count}회, LL={-early_stopping_wrapper.best_ll:.4f}")
+                self.iteration_logger.info(f"조기 종료 완료: 함수 호출 {early_stopping_wrapper.func_call_count}회, LL={-early_stopping_wrapper.best_ll:.4f}")
         else:
             self.logger.info(f"최적화 시작: Nelder-Mead (gradient-free)")
             self.iteration_logger.info(f"최적화 시작: Nelder-Mead (gradient-free)")
