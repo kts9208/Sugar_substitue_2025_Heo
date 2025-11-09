@@ -68,7 +68,7 @@ def main():
     
     # 선택모델 설정
     choice_config = ChoiceConfig(
-        choice_attributes=['price', 'health_label']
+        choice_attributes=['sugar_free', 'health_label', 'price']  # 설탕함량 추가
     )
     
     # 추정 설정 - 전체 데이터용
@@ -245,7 +245,7 @@ def main():
             # beta
             if 'beta' in choice:
                 beta_stats = choice['beta']
-                choice_attrs = ['price', 'health_label']
+                choice_attrs = ['sugar_free', 'health_label', 'price']  # 설탕함량 추가
                 for i, attr in enumerate(choice_attrs):
                     param_list.append({
                         'Coefficient': f'β_{attr}',
@@ -307,7 +307,7 @@ def main():
         })
 
         beta = results['parameters']['choice']['beta']
-        choice_attrs = ['price', 'health_label']
+        choice_attrs = ['sugar_free', 'health_label', 'price']  # 설탕함량 추가
         for i, attr in enumerate(choice_attrs):
             param_list.append({
                 'Coefficient': f'β_{attr}',
