@@ -326,12 +326,25 @@ def main():
     # DataFrame 생성
     df_params = pd.DataFrame(param_list)
 
+    # 로그 파일에서 초기 LL 읽기
+    initial_ll = 'N/A'
+    try:
+        with open(log_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                if 'Iter    1:' in line and 'LL =' in line:
+                    # "Iter    1: LL =   -7581.2098 (Best:   -7581.2098) [NEW BEST]"
+                    ll_str = line.split('LL =')[1].split('(')[0].strip()
+                    initial_ll = f"{float(ll_str):.2f}"
+                    break
+    except Exception as e:
+        print(f"   ⚠️  초기 LL 읽기 실패: {e}")
+
     # Estimation statistics 추가
     stats_list = [
         {'Coefficient': '', 'Estimate': '', 'Std. Err.': '', 'P. Value': ''},
         {'Coefficient': 'Estimation statistics', 'Estimate': '', 'Std. Err.': '', 'P. Value': ''},
         {'Coefficient': 'Iterations', 'Estimate': results.get('n_iterations', 'N/A'),
-         'Std. Err.': 'LL (start)', 'P. Value': 'N/A'},
+         'Std. Err.': 'LL (start)', 'P. Value': initial_ll},
         {'Coefficient': 'AIC', 'Estimate': f"{results['aic']:.2f}",
          'Std. Err.': 'LL (final, whole model)', 'P. Value': f"{results['log_likelihood']:.2f}"},
         {'Coefficient': 'BIC', 'Estimate': f"{results['bic']:.2f}",

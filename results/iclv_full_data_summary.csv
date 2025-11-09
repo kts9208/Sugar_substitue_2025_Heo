@@ -1,10 +1,10 @@
 ﻿Metric,Value
-Estimation_Time_Minutes,62.90
+Estimation_Time_Minutes,63.05
 N_Individuals,326
 N_Observations,5904
 Halton_Draws,100
 Optimizer,BFGS_Analytic
-Log_Likelihood,-5734.9191
-AIC,11543.84
-BIC,11791.12
-N_Iterations,96
+Log_Likelihood,-5734.7047
+AIC,11543.41
+BIC,11790.69
+N_Iterations,90
