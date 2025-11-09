@@ -1,0 +1,31 @@
+======================================================================
+GPU 배치 처리 ICLV 동시추정 - 다중 잠재변수 (5개)
+======================================================================
+
+1. 데이터 로드 중...
+   데이터 shape: (5904, 60)
+   전체 개인 수: 326
+
+2. ICLV 설정...
+   설정 완료
+   - 잠재변수: 5개 (4개 외생 + 1개 내생)
+   - 지표 수: 38
+   - 사회인구학적 변수: 3
+   - 선택 속성: 3
+   - Halton draws: 100
+   - 최대 반복: 1000
+   - 전체 개인 수: 326
+   - GPU 배치 처리: 활성화
+
+3. GPU 배치 Estimator 생성...
+   - GPU 배치 Estimator 생성 완료
+
+4. ICLV 동시추정 실행...
+   (GPU 배치 처리 - 다중 잠재변수)
+   (로깅: 매 5회 반복마다 LL 출력)
+Traceback (most recent call last):
+  File "C:\Users\KimTaeseok\OneDrive - 제주대학교\Research\Coding\Sugar_substitue_2025_Heo\scripts\test_gpu_batch_iclv.py", line 224, in <module>
+    main()
+  File "C:\Users\KimTaeseok\OneDrive - 제주대학교\Research\Coding\Sugar_substitue_2025_Heo\scripts\test_gpu_batch_iclv.py", line 155, in main
+    print("\n   \u26a0\ufe0f  GPU 배치 처리는 5-10분 정도 소요될 수 있습니다...")
+UnicodeEncodeError: 'cp949' codec can't encode character '\u26a0' in position 5: illegal multibyte sequence

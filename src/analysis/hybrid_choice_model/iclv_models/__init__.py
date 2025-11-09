@@ -58,6 +58,25 @@ from .simultaneous_estimator import (
     estimate_iclv_simultaneous
 )
 
+# 다중 잠재변수 ICLV
+from .multi_latent_config import (
+    MultiLatentConfig,
+    MultiLatentStructuralConfig,
+    create_default_multi_lv_config
+)
+
+from .multi_latent_measurement import (
+    MultiLatentMeasurement
+)
+
+from .multi_latent_structural import (
+    MultiLatentStructural
+)
+
+from .multi_latent_estimator import (
+    MultiLatentSimultaneousEstimator
+)
+
 # 아직 구현되지 않은 모듈 (주석 처리)
 # from .wtp_calculator import (
 #     WTPCalculator,
@@ -94,6 +113,14 @@ __all__ = [
     'SimultaneousEstimator',
     'HaltonDrawGenerator',
     'estimate_iclv_simultaneous',
+
+    # 다중 잠재변수 ICLV
+    'MultiLatentConfig',
+    'MultiLatentStructuralConfig',
+    'create_default_multi_lv_config',
+    'MultiLatentMeasurement',
+    'MultiLatentStructural',
+    'MultiLatentSimultaneousEstimator',
 
     # WTP 계산 (아직 구현 안됨)
     # 'WTPCalculator',
