@@ -1,0 +1,106 @@
+INFO:iclv_iteration:======================================================================
+INFO:iclv_iteration:ICLV 모델 추정 시작
+INFO:iclv_iteration:======================================================================
+INFO:iclv_iteration:SimultaneousEstimator.estimate() 시작
+INFO:iclv_iteration:데이터 shape: (5904, 60)
+INFO:iclv_iteration:개인 수: 326
+INFO:iclv_iteration:Halton draws 이미 설정됨 (건너뛰기)
+INFO:iclv_iteration:Analytic gradient calculators 초기화 (Apollo 방식)...
+INFO:iclv_iteration:다중 잠재변수 측정모델 gradient 초기화: 5개 LV
+INFO:iclv_iteration:다중 잠재변수 구조모델 gradient 초기화
+INFO:iclv_iteration:GPU 배치 그래디언트 활성화
+INFO:iclv_iteration:다중 잠재변수 JointGradient 초기화 완료
+INFO:iclv_iteration:초기 파라미터 설정 시작...
+INFO:iclv_iteration:초기 파라미터 설정 완료 (총 202개)
+INFO:iclv_iteration:파라미터 bounds 계산 시작...
+INFO:iclv_iteration:파라미터 bounds 계산 완료 (총 202개)
+======================================================================
+GPU 배치 처리 ICLV 동시추정 - 다중 잠재변수 (5개)
+======================================================================
+
+1. 데이터 로드 중...
+   데이터 shape: (5904, 60)
+   전체 개인 수: 326
+
+2. ICLV 설정...
+   설정 완료
+   - 잠재변수: 5개 (4개 외생 + 1개 내생)
+   - 지표 수: 38
+   - 사회인구학적 변수: 3
+   - 선택 속성: 3
+   - Halton draws: 100
+   - 최대 반복: 1000
+   - 전체 개인 수: 326
+   - GPU 배치 처리: 활성화
+
+3. 모델 생성...
+   - 측정모델, 구조모델, 선택모델 생성 완료
+
+4. GPU 배치 Estimator 생성...
+   - GPU 배치 Estimator 생성 완료
+
+5. ICLV 동시추정 실행...
+   (GPU 배치 처리 - 다중 잠재변수)
+
+   [주의] GPU 배치 처리는 5-10분 정도 소요될 수 있습니다...
+   로그 파일: C:\Users\KimTaeseok\OneDrive - 제주대학교\Research\Coding\Sugar_substitue_2025_Heo\results\gpu_batch_iclv_estimation_log.txt
+======================================================================
+최적화 시작: BFGS (gradient-based)
+Analytic gradient 사용 (Apollo 방식)
+초기 파라미터 개수: 202
+INFO:iclv_iteration:최대 반복 횟수: 1000
+INFO:iclv_iteration:======================================================================
+INFO:iclv_iteration:순차처리 사용
+INFO:iclv_iteration:최적화 시작: BFGS (gradient-based)
+INFO:iclv_iteration:Analytic gradient 사용 (Apollo 방식)
+INFO:iclv_iteration:조기 종료 비활성화 (정상 종료만 사용)
+INFO:iclv_iteration:
+[단계 1/2] 우도 계산 #1
+INFO:iclv_iteration:[파라미터 언팩 #1] 처음 5개: [1. 1. 1. 1. 1.], 마지막 5개: [0. 0. 0. 0. 1.]
+INFO:iclv_iteration:  측정모델 health_concern: zeta[0]=1.0000, tau[0,0]=-2.0000
+INFO:iclv_iteration:  구조모델: gamma_lv[0]=0.000000, gamma_x[0]=0.000000
+INFO:iclv_iteration:  선택모델: intercept=0.000000, beta[0]=0.000000, lambda=1.000000
+INFO:iclv_iteration:[구조모델 예측] Draw 0:
+INFO:iclv_iteration:  외생 draws: [-0.42105739 -0.9504391  -0.16679032  1.64414903]
+INFO:iclv_iteration:  내생 draw: -0.4410775950798641
+INFO:iclv_iteration:  예측된 LV: {'health_concern': np.float64(-0.421057393355367), 'perceived_benefit': np.float64(-0.9504391040242244), 'perceived_price': np.float64(-0.16679031994595406), 'nutrition_knowledge': np.float64(1.6441490285229565), 'purchase_intention': np.float64(-0.4410775950798641)}
+INFO:iclv_iteration:
+[측정모델 우도 계산 시작]
+INFO:iclv_iteration:  개인 데이터 shape: (18, 60)
+INFO:iclv_iteration:  LV 개수: 100
+INFO:iclv_iteration:  측정모델 우도 (처음 5개): [ -71.02675237  -89.61329554 -135.67358681  -83.61241156 -101.32201356]
+INFO:iclv_iteration:  측정모델 우도 범위: [-197.70, -56.71]
+INFO:iclv_iteration:  측정모델 우도 평균: -95.33
+INFO:iclv_iteration:
+[선택모델 우도 계산 시작]
+INFO:iclv_iteration:  선택 상황 수: 18
+INFO:iclv_iteration:  선택모델 우도 (처음 5개): [ -9.05873706 -13.27919376  -9.28813666 -17.55510107 -12.43231056]
+INFO:iclv_iteration:  선택모델 우도 범위: [-41.45, -8.32]
+INFO:iclv_iteration:  선택모델 우도 평균: -12.05
+INFO:iclv_iteration:
+[구조모델 우도 계산 시작]
+INFO:iclv_iteration:  구조모델 우도 (처음 5개): [-1.01621326 -1.58077458 -1.04644268 -2.16993537 -1.46608846]
+INFO:iclv_iteration:  구조모델 우도 범위: [-5.69, -0.92]
+INFO:iclv_iteration:  구조모델 우도 평균: -1.43
+INFO:iclv_iteration:
+[결합 우도 계산] Draw 0:
+INFO:iclv_iteration:  측정모델: -71.0268
+INFO:iclv_iteration:  선택모델: -9.0587
+INFO:iclv_iteration:  구조모델: -1.0162
+INFO:iclv_iteration:  합계: -81.1017
+INFO:iclv_iteration:
+[전체 draws 통계]
+INFO:iclv_iteration:  Draw 우도 범위: [-207.14, -69.00]
+INFO:iclv_iteration:  Draw 우도 평균: -108.81
+INFO:iclv_iteration:================================================================================
+INFO:iclv_iteration:================================================================================
+INFO:iclv_iteration:두 번째 함수 호출 - 파라미터 변화 확인
+INFO:iclv_iteration:================================================================================
+INFO:iclv_iteration:[파라미터 확인]
+INFO:iclv_iteration:  측정모델 zeta (health_concern 처음 3개): [1. 1. 1.]
+INFO:iclv_iteration:  구조모델 gamma_lv: [0. 0. 0. 0.]
+INFO:iclv_iteration:  구조모델 gamma_x: [0. 0. 0.]
+INFO:iclv_iteration:  선택모델 intercept: 0.0
+INFO:iclv_iteration:  선택모델 beta: [0. 0. 0.]
+INFO:iclv_iteration:  선택모델 lambda: 1.0
+INFO:iclv_iteration:================================================================================

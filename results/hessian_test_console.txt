@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "C:\Users\KimTaeseok\OneDrive - 제주대학교\Research\Coding\Sugar_substitue_2025_Heo\scripts\test_hessian_normal_termination.py", line 27, in <module>
+    from src.analysis.hybrid_choice_model.iclv_models.simultaneous_estimator_fixed import SimultaneousEstimatorFixed
+ImportError: cannot import name 'SimultaneousEstimatorFixed' from 'src.analysis.hybrid_choice_model.iclv_models.simultaneous_estimator_fixed' (C:\Users\KimTaeseok\OneDrive - 제주대학교\Research\Coding\Sugar_substitue_2025_Heo\src\analysis\hybrid_choice_model\iclv_models\simultaneous_estimator_fixed.py)

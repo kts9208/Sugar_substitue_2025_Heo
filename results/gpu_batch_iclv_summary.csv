@@ -1,0 +1,12 @@
+﻿Metric,Value
+Estimation_Time_Minutes,9.59
+N_Individuals,326
+N_Observations,5904
+Halton_Draws,100
+Optimizer,BFGS_GPU_Batch
+Log_Likelihood,-43820.7689
+N_Parameters,202
+GPU_Enabled,True
+AIC,88045.54
+BIC,89395.58
+N_Iterations,6
