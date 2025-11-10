@@ -1,714 +1,716 @@
 """
-GPU Batch Processing ICLV Estimator
+GPU 배치 처리 ICLV 동시추정
 
-완전한 GPU 배치 처리로 다중 잠재변수 ICLV 모델을 추정합니다.
-모든 개인 × draws를 한 번에 GPU에서 처리하여 성능을 극대화합니다.
+SimultaneousEstimator를 상속하여 GPU 배치 처리로 가속합니다.
+개인별 우도 계산 부분만 GPU 배치로 오버라이드합니다.
 """
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple
-import logging
-import time
-from scipy import optimize
+from typing import Dict, Optional
 from scipy.special import logsumexp
+import logging
+import gc
 
-from .gpu_measurement_equations import GPUMultiLatentMeasurement, GPU_AVAILABLE
-from .multi_latent_structural import MultiLatentStructural
-from .choice_equations import BinaryProbitChoice
+from .simultaneous_estimator_fixed import SimultaneousEstimator
+from .gpu_measurement_equations import GPUMultiLatentMeasurement
+from . import gpu_batch_utils
+from scipy.stats import qmc, norm
+from .memory_monitor import MemoryMonitor, cleanup_arrays
 
 logger = logging.getLogger(__name__)
 
-# GPU 사용 가능 여부
-if GPU_AVAILABLE:
-    import cupy as cp
-    from cupyx.scipy.special import ndtr
-    logger.info("✅ GPU 배치 처리 모드")
-else:
-    logger.warning("⚠️ CuPy 미설치 - CPU 모드로 작동")
+
+class MultiDimensionalHaltonDrawGenerator:
+    """
+    다중 차원 Halton 시퀀스 생성기
+
+    다중 잠재변수 모델을 위한 다차원 Halton draws를 생성합니다.
+    """
+
+    def __init__(self, n_draws: int, n_individuals: int, n_dimensions: int,
+                 scramble: bool = True, seed: Optional[int] = None):
+        """
+        Args:
+            n_draws: 개인당 draw 수
+            n_individuals: 개인 수
+            n_dimensions: 차원 수 (잠재변수 개수)
+            scramble: 스크램블 여부
+            seed: 난수 시드
+        """
+        self.n_draws = n_draws
+        self.n_individuals = n_individuals
+        self.n_dimensions = n_dimensions
+        self.scramble = scramble
+        self.seed = seed
+
+        self.draws = None
+        self._generate_draws()
+
+    def _generate_draws(self):
+        """다차원 Halton 시퀀스 생성"""
+        logger.info(f"다차원 Halton draws 생성: {self.n_individuals} 개인 × {self.n_draws} draws × {self.n_dimensions} 차원")
+
+        # scipy의 Halton 시퀀스 생성기 사용 (다차원)
+        sampler = qmc.Halton(d=self.n_dimensions, scramble=self.scramble, seed=self.seed)
+
+        # 균등분포 [0,1] 샘플 생성
+        # (n_individuals * n_draws, n_dimensions)
+        uniform_draws = sampler.random(n=self.n_individuals * self.n_draws)
+
+        # 표준정규분포로 변환 (역누적분포함수)
+        normal_draws = norm.ppf(uniform_draws)
+
+        # (n_individuals, n_draws, n_dimensions) 형태로 재구성
+        self.draws = normal_draws.reshape(self.n_individuals, self.n_draws, self.n_dimensions)
+
+        logger.info(f"다차원 Halton draws 생성 완료: shape={self.draws.shape}")
+
+    def get_draws(self) -> np.ndarray:
+        """생성된 draws 반환"""
+        return self.draws
 
 
-class GPUBatchEstimator:
+class GPUBatchEstimator(SimultaneousEstimator):
     """
     GPU 배치 처리 ICLV 동시추정
     
-    모든 개인 × draws를 하나의 배치로 GPU에서 처리하여
-    최대 성능을 달성합니다.
+    SimultaneousEstimator를 상속하여 GPU 배치 처리로 가속합니다.
+    개인별 우도 계산 부분만 GPU 배치로 오버라이드합니다.
     """
     
-    def __init__(self, config, data: pd.DataFrame, use_gpu: bool = True):
+    def __init__(self, config, use_gpu: bool = True,
+                 memory_monitor_cpu_threshold_mb: float = 2000,
+                 memory_monitor_gpu_threshold_mb: float = 1500):
         """
-        초기화
-        
         Args:
-            config: MultiLatentConfig 객체
-            data: 통합 데이터
-            use_gpu: GPU 사용 여부 (기본값: True)
+            config: MultiLatentConfig 또는 ICLVConfig
+            use_gpu: GPU 사용 여부
+            memory_monitor_cpu_threshold_mb: CPU 메모리 임계값 (MB)
+            memory_monitor_gpu_threshold_mb: GPU 메모리 임계값 (MB)
         """
-        self.config = config
-        self.data = data
-        self.use_gpu = use_gpu and GPU_AVAILABLE
-        
-        # 모델 생성
-        self.measurement_model = GPUMultiLatentMeasurement(
-            config.measurement_configs, 
-            use_gpu=self.use_gpu
-        )
-        self.structural_model = MultiLatentStructural(config.structural)
-        self.choice_model = BinaryProbitChoice(config.choice)
-        
-        # 개인 ID 목록
-        self.individual_ids = data[config.individual_id_column].unique()
-        self.n_individuals = len(self.individual_ids)
-        
-        # Halton draws 생성
-        n_draws = config.estimation.n_draws
-        n_dimensions = config.structural.n_exo + 1  # 외생 LV + 내생 LV 오차
-        
-        self.halton_generator = HaltonDrawGenerator(
-            self.n_individuals, n_draws, n_dimensions
-        )
-        
-        # 배치 크기
-        self.batch_size = self.n_individuals * n_draws
-        
-        # 로깅
-        n_measurement_params = self.measurement_model.get_n_parameters()
-        n_structural_params = config.structural.n_exo + config.structural.n_cov
-        n_choice_params = 1 + len(config.choice.choice_attributes) + 1
-        total_params = n_measurement_params + n_structural_params + n_choice_params
-        
-        gpu_status = "🚀 GPU 배치" if self.use_gpu else "💻 CPU"
-        logger.info("=" * 70)
-        logger.info(f"{gpu_status} Estimator 초기화")
-        logger.info(f"  개인 수: {self.n_individuals:,}")
-        logger.info(f"  관측치 수: {len(data):,}")
-        logger.info(f"  Halton draws: {n_draws}")
-        logger.info(f"  배치 크기: {self.batch_size:,} (개인 × draws)")
-        logger.info(f"  측정모델 파라미터: {n_measurement_params}")
-        logger.info(f"  구조모델 파라미터: {n_structural_params}")
-        logger.info(f"  선택모델 파라미터: {n_choice_params}")
-        logger.info(f"  총 파라미터: {total_params}")
-        logger.info("=" * 70)
+        super().__init__(config)
+        self.use_gpu = use_gpu and gpu_batch_utils.CUPY_AVAILABLE
+        self.gpu_measurement_model = None
+
+        # 메모리 모니터 임계값 저장 (나중에 초기화)
+        self.memory_monitor_cpu_threshold_mb = memory_monitor_cpu_threshold_mb
+        self.memory_monitor_gpu_threshold_mb = memory_monitor_gpu_threshold_mb
+        self.memory_monitor = None  # estimate()에서 초기화
+
+        if self.use_gpu:
+            logger.info("GPU 배치 처리 활성화")
+        else:
+            logger.info("GPU 배치 처리 비활성화 (CPU 모드)")
     
-    def _prepare_batch_data(self) -> Tuple[Dict, Dict]:
+    def estimate(self, data: pd.DataFrame,
+                measurement_model,
+                structural_model,
+                choice_model,
+                log_file: Optional[str] = None) -> Dict:
         """
-        배치 처리를 위한 데이터 준비
-        
+        ICLV 모델 추정 (GPU 배치 가속)
+
+        Args:
+            data: 전체 데이터
+            measurement_model: 측정모델 인스턴스
+            structural_model: 구조모델 인스턴스
+            choice_model: 선택모델 인스턴스
+            log_file: 로그 파일 경로
+
         Returns:
-            indicator_data: {lv_name: (n_individuals, n_indicators)} 지표 데이터
-            choice_data: (n_individuals, n_choice_situations, n_attributes) 선택 데이터
+            추정 결과 딕셔너리
         """
-        # 각 개인의 첫 번째 행에서 지표 데이터 추출
-        indicator_data = {}
-        
-        for lv_name, config in self.config.measurement_configs.items():
-            n_indicators = len(config.indicators)
-            data_array = np.zeros((self.n_individuals, n_indicators))
-            
-            for i, ind_id in enumerate(self.individual_ids):
-                ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
-                first_row = ind_data.iloc[0]
-                
-                for j, indicator in enumerate(config.indicators):
-                    if indicator in first_row.index and not pd.isna(first_row[indicator]):
-                        data_array[i, j] = first_row[indicator]
-                    else:
-                        data_array[i, j] = 0  # NaN은 0으로 (나중에 마스킹)
-            
-            indicator_data[lv_name] = data_array
-        
-        # 선택 데이터 준비
-        choice_data = self._prepare_choice_data()
-        
-        return indicator_data, choice_data
+        # GPU 측정모델 생성
+        if self.use_gpu:
+            if hasattr(self.config, 'measurement_configs'):
+                # 다중 잠재변수
+                self.gpu_measurement_model = GPUMultiLatentMeasurement(
+                    self.config.measurement_configs,
+                    use_gpu=True
+                )
+                logger.info("GPU 측정모델 생성 완료 (다중 잠재변수)")
+
+                # 다중 차원 Halton draws 생성을 위해 structural_model 저장
+                self.structural_model_ref = structural_model
+                self.use_multi_dimensional_draws = True
+            else:
+                # 단일 잠재변수 - GPU 배치 처리 미지원
+                logger.warning("단일 잠재변수는 GPU 배치 처리 미지원. CPU 모드로 전환.")
+                self.use_gpu = False
+                self.use_multi_dimensional_draws = False
+        else:
+            self.use_multi_dimensional_draws = False
+
+        # 부모 클래스의 estimate 호출 전에 데이터 저장
+        self.data = data
+
+        # 메모리 모니터 초기화 (iteration_logger 사용 가능한 시점)
+        # 부모 클래스의 estimate()에서 iteration_logger가 설정되므로,
+        # 여기서는 임시로 logger 사용
+        if self.memory_monitor is None:
+            self.memory_monitor = MemoryMonitor(
+                cpu_threshold_mb=self.memory_monitor_cpu_threshold_mb,
+                gpu_threshold_mb=self.memory_monitor_gpu_threshold_mb,
+                auto_cleanup=True,
+                logger=logger  # 임시로 모듈 logger 사용
+            )
+
+        # 다중 차원 Halton draws 생성 (부모 클래스 호출 전에)
+        if self.use_multi_dimensional_draws:
+            n_individuals = data[self.config.individual_id_column].nunique()
+            n_dimensions = structural_model.n_exo + 1  # 외생 LV + 내생 LV 오차항
+
+            logger.info(f"다차원 Halton draws 생성 시작... (n_draws={self.config.estimation.n_draws}, n_individuals={n_individuals}, n_dimensions={n_dimensions})")
+
+            self.halton_generator = MultiDimensionalHaltonDrawGenerator(
+                n_draws=self.config.estimation.n_draws,
+                n_individuals=n_individuals,
+                n_dimensions=n_dimensions,
+                scramble=self.config.estimation.scramble_halton
+            )
+
+            logger.info("다차원 Halton draws 생성 완료")
+
+        # 부모 클래스의 estimate 호출
+        return super().estimate(data, measurement_model, structural_model, choice_model, log_file)
     
-    def _prepare_choice_data(self) -> Dict:
-        """선택 데이터 준비"""
-        choice_data = {
-            'individual_ids': [],
-            'choices': [],
-            'attributes': []
-        }
-
-        for ind_id in self.individual_ids:
-            ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
-
-            # NaN이 있는 행 제거 (alternative=3인 "선택하지 않음" 옵션)
-            # 선택 속성 중 하나라도 NaN이면 제외
-            valid_mask = ~ind_data[self.config.choice.choice_attributes].isna().any(axis=1)
-            ind_data_valid = ind_data[valid_mask]
-
-            choice_data['individual_ids'].append(ind_id)
-            choice_data['choices'].append(ind_data_valid[self.config.choice_column].values)
-
-            # 속성 데이터
-            attr_values = []
-            for attr in self.config.choice.choice_attributes:
-                attr_values.append(ind_data_valid[attr].values)
-            choice_data['attributes'].append(np.column_stack(attr_values))
-
-        return choice_data
-    
-    def _compute_batch_likelihood(self, params: np.ndarray) -> float:
+    def _joint_log_likelihood(self, params: np.ndarray,
+                             measurement_model,
+                             structural_model,
+                             choice_model) -> float:
         """
-        배치 우도 계산 (GPU 가속)
+        결합 로그우도 계산 (메모리 모니터링 추가)
 
-        모든 개인 × draws를 한 번에 처리
+        부모 클래스의 _joint_log_likelihood를 오버라이드하여
+        Halton draws 가져오기 전후 메모리 로그를 추가합니다.
         """
-        t_start = time.time()
+        # 현재 iteration 번호 저장 (개인별 우도 계산 로그에 사용)
+        if not hasattr(self, '_current_iteration'):
+            self._current_iteration = 0
+        self._current_iteration += 1
+
+        # 각 iteration 시작 시 개인별 카운터 리셋
+        self._individual_likelihood_count = 0
 
         # 파라미터 분해
-        param_dict = self._unpack_parameters(params)
-        t1 = time.time()
-
-        # Halton draws 가져오기
-        draws = self.halton_generator.get_draws()  # (n_individuals, n_draws, n_dimensions)
-        t2 = time.time()
-
-        # 데이터 준비
-        indicator_data, choice_data = self._prepare_batch_data()
-        t3 = time.time()
-
-        # 배치 확장: (n_individuals, n_draws, ...)
-        n_draws = draws.shape[1]
-        n_exo = self.config.structural.n_exo
-
-        # 모든 개인 × draws에 대한 잠재변수 계산
-        all_latent_vars = {}  # {lv_name: (batch_size,)}
-
-        # 배치 인덱스 생성
-        batch_indices = []
-        for i in range(self.n_individuals):
-            for d in range(n_draws):
-                batch_indices.append((i, d))
-
-        # 구조모델: 모든 배치에 대한 잠재변수 예측
-        all_latent_vars = self._compute_batch_latent_vars(
-            draws, param_dict['structural'], batch_indices
+        param_dict = self._unpack_parameters(
+            params, measurement_model, structural_model, choice_model
         )
-        t4 = time.time()
 
-        # 측정모델 배치 데이터 준비
-        measurement_batch_data = self._prepare_measurement_batch(
-            indicator_data, batch_indices
-        )
-        t5 = time.time()
+        # 메모리 체크 (Halton draws 가져오기 전)
+        if hasattr(self, 'memory_monitor') and hasattr(self, '_likelihood_call_count'):
+            self.memory_monitor.log_memory_stats(f"Halton draws 가져오기 전 (Iter {self._current_iteration})")
 
-        # 측정모델 우도 (GPU 배치)
-        ll_measurement_batch = self.measurement_model.log_likelihood_batch(
-            measurement_batch_data,
-            all_latent_vars,
-            param_dict['measurement']
-        )  # (batch_size,)
-        t6 = time.time()
+        draws = self.halton_generator.get_draws()
 
-        # 선택모델 우도 (배치)
-        ll_choice_batch = self._compute_choice_batch_likelihood(
-            choice_data, all_latent_vars, param_dict['choice'], batch_indices
-        )  # (batch_size,)
-        t7 = time.time()
+        # 메모리 체크 (Halton draws 가져온 후)
+        if hasattr(self, 'memory_monitor') and hasattr(self, '_likelihood_call_count'):
+            self.memory_monitor.log_memory_stats(f"Halton draws 가져온 후 (Iter {self._current_iteration})")
 
-        # 구조모델 우도 (배치)
-        ll_structural_batch = self._compute_structural_batch_likelihood(
-            draws, all_latent_vars, param_dict['structural'], batch_indices
-        )  # (batch_size,)
-        t8 = time.time()
-        
-        # 전체 우도
-        ll_total_batch = ll_measurement_batch + ll_choice_batch + ll_structural_batch
+        individual_ids = self.data[self.config.individual_id_column].unique()
 
-        # 개인별로 재구성 및 시뮬레이션 평균
-        ll_total_batch = ll_total_batch.reshape(self.n_individuals, n_draws)
+        # 순차처리 (GPU 배치는 _compute_individual_likelihood에서 처리)
+        total_ll = 0.0
+        for i, ind_id in enumerate(individual_ids):
+            ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
+            ind_draws = draws[i, :]
 
-        # 각 개인별 로그 시뮬레이션 평균
-        person_lls = logsumexp(ll_total_batch, axis=1) - np.log(n_draws)
-
-        # 전체 로그우도
-        total_ll = np.sum(person_lls)
-
-        t_total = time.time() - t_start
-
-        # 타이밍 로그 출력
-        print(f"  [시간] 파라미터:{t1-t_start:.2f}s | Draws:{t2-t1:.2f}s | 데이터:{t3-t2:.2f}s | "
-              f"잠재변수:{t4-t3:.2f}s | 측정준비:{t5-t4:.2f}s")
-        print(f"  [시간] 측정우도:{t6-t5:.2f}s (GPU) | 선택우도:{t7-t6:.2f}s | 구조우도:{t8-t7:.2f}s | 총:{t_total:.2f}s")
-        print(f"  [우도] LL = {total_ll:.2f} (측정:{np.sum(ll_measurement_batch):.2f}, "
-              f"선택:{np.sum(ll_choice_batch):.2f}, 구조:{np.sum(ll_structural_batch):.2f})")
+            person_ll = self._compute_individual_likelihood(
+                ind_id, ind_data, ind_draws, param_dict,
+                measurement_model, structural_model, choice_model
+            )
+            total_ll += person_ll
 
         return total_ll
-    
-    def _compute_batch_latent_vars(self, draws, structural_params, batch_indices):
-        """배치 잠재변수 계산"""
-        batch_size = len(batch_indices)
-        n_exo = self.config.structural.n_exo
-        
-        # 외생 잠재변수
-        latent_vars = {}
-        exo_lvs = self.config.structural.exogenous_lvs
-        
-        for lv_idx, lv_name in enumerate(exo_lvs):
-            lv_values = np.zeros(batch_size)
-            for batch_idx, (ind_idx, draw_idx) in enumerate(batch_indices):
-                lv_values[batch_idx] = draws[ind_idx, draw_idx, lv_idx]
-            latent_vars[lv_name] = lv_values
-        
-        # 내생 잠재변수
-        endo_lv = self.config.structural.endogenous_lv
-        endo_values = np.zeros(batch_size)
-        
-        gamma_lv = structural_params['gamma_lv']
-        gamma_x = structural_params['gamma_x']
-        covariates = self.config.structural.covariates
-        
-        for batch_idx, (ind_idx, draw_idx) in enumerate(batch_indices):
-            ind_id = self.individual_ids[ind_idx]
-            ind_data = self.data[self.data[self.config.individual_id_column] == ind_id].iloc[0]
-            
-            # 외생 LV 효과
-            endo_mean = 0.0
-            for lv_idx, lv_name in enumerate(exo_lvs):
-                endo_mean += gamma_lv[lv_idx] * draws[ind_idx, draw_idx, lv_idx]
-            
-            # 공변량 효과
-            for cov_idx, cov_name in enumerate(covariates):
-                if cov_name in ind_data.index:
-                    endo_mean += gamma_x[cov_idx] * ind_data[cov_name]
-            
-            # 오차항 추가
-            endo_error = draws[ind_idx, draw_idx, n_exo]
-            endo_values[batch_idx] = endo_mean + endo_error
-        
-        latent_vars[endo_lv] = endo_values
-        
-        return latent_vars
-    
-    def _prepare_measurement_batch(self, indicator_data, batch_indices):
-        """측정모델 배치 데이터 준비"""
-        batch_size = len(batch_indices)
-        measurement_batch = {}
-        
-        for lv_name, data_array in indicator_data.items():
-            n_indicators = data_array.shape[1]
-            batch_array = np.zeros((batch_size, n_indicators))
-            
-            for batch_idx, (ind_idx, draw_idx) in enumerate(batch_indices):
-                batch_array[batch_idx] = data_array[ind_idx]
-            
-            measurement_batch[lv_name] = batch_array
-        
-        return measurement_batch
 
-    def _compute_choice_batch_likelihood(self, choice_data, latent_vars, choice_params, batch_indices):
+    def _compute_individual_likelihood(self, ind_id, ind_data, ind_draws,
+                                       param_dict, measurement_model,
+                                       structural_model, choice_model) -> float:
         """
-        선택모델 배치 우도 계산 (GPU 가속)
+        개인별 우도 계산 (GPU 배치 가속 버전)
 
-        모든 배치 × 선택 상황을 한 번에 처리
+        SimultaneousEstimator의 메서드를 오버라이드하여 GPU 배치 처리를 사용합니다.
         """
-        batch_size = len(batch_indices)
-        beta_intercept = choice_params['intercept']
-        beta = choice_params['beta']
-        lambda_lv = choice_params['lambda']
-        endo_lv = self.config.structural.endogenous_lv
+        n_draws = len(ind_draws)
 
-        # GPU 모드: 완전 벡터화
-        if self.use_gpu:
-            return self._compute_choice_batch_likelihood_gpu(
-                choice_data, latent_vars, choice_params, batch_indices
+        # 메모리 체크 (우도 계산 전)
+        mem_info = self.memory_monitor.check_and_cleanup(f"우도 계산 - 개인 {ind_id}")
+
+        if self.use_gpu and self.gpu_measurement_model is not None:
+            # GPU 배치 처리
+            draw_lls = self._compute_draws_batch_gpu(
+                ind_data, ind_draws, param_dict,
+                structural_model, choice_model
             )
-
-        # CPU 모드: 기존 루프 방식
-        ll_choice = np.zeros(batch_size)
-        for batch_idx, (ind_idx, draw_idx) in enumerate(batch_indices):
-            choices = choice_data['choices'][ind_idx]
-            attributes = choice_data['attributes'][ind_idx]
-            lv_value = latent_vars[endo_lv][batch_idx]
-
-            # 각 선택 상황에 대해
-            for t in range(len(choices)):
-                # 효용: V = β0 + β*X + λ*LV
-                utility = beta_intercept
-                utility += np.dot(beta, attributes[t])
-                utility += lambda_lv * lv_value
-
-                # Probit 확률 (안전한 계산)
-                from scipy.stats import norm
-                cdf_val = norm.cdf(utility)
-                # 수치 안정성을 위해 클리핑
-                cdf_val = np.clip(cdf_val, 1e-10, 1 - 1e-10)
-
-                if choices[t] == 1:
-                    prob = cdf_val
+        else:
+            # CPU 순차 처리 (부모 클래스와 동일)
+            draw_lls = []
+            
+            for j in range(n_draws):
+                draw = ind_draws[j]
+                
+                # 구조모델: LV 예측
+                if hasattr(structural_model, 'endogenous_lv'):
+                    # 다중 잠재변수
+                    n_exo = structural_model.n_exo
+                    exo_draws = draw[:n_exo]
+                    endo_draw = draw[n_exo]
+                    lv = structural_model.predict(ind_data, exo_draws, param_dict['structural'], endo_draw)
                 else:
-                    prob = 1 - cdf_val
-
-                ll_choice[batch_idx] += np.log(prob)
-
-        return ll_choice
-
-    def _compute_choice_batch_likelihood_gpu(self, choice_data, latent_vars, choice_params, batch_indices):
+                    # 단일 잠재변수
+                    lv = structural_model.predict(ind_data, param_dict['structural'], draw)
+                
+                # 측정모델 우도
+                ll_measurement = measurement_model.log_likelihood(
+                    ind_data, lv, param_dict['measurement']
+                )
+                
+                # 선택모델 우도 (Panel Product)
+                choice_set_lls = []
+                for idx in range(len(ind_data)):
+                    ll_choice_t = choice_model.log_likelihood(
+                        ind_data.iloc[idx:idx+1],
+                        lv,
+                        param_dict['choice']
+                    )
+                    choice_set_lls.append(ll_choice_t)
+                
+                ll_choice = sum(choice_set_lls)
+                
+                # 구조모델 우도
+                if hasattr(structural_model, 'endogenous_lv'):
+                    ll_structural = structural_model.log_likelihood(
+                        ind_data, lv, param_dict['structural'], draw
+                    )
+                else:
+                    ll_structural = structural_model.log_likelihood(
+                        ind_data, lv, param_dict['structural'], draw
+                    )
+                
+                # 결합 로그우도
+                draw_ll = ll_measurement + ll_choice + ll_structural
+                
+                if not np.isfinite(draw_ll):
+                    draw_ll = -1e10
+                
+                draw_lls.append(draw_ll)
+        
+        # 개인 우도: log(1/R * sum(exp(draw_lls)))
+        person_ll = logsumexp(draw_lls) - np.log(n_draws)
+        
+        return person_ll
+    
+    def _compute_draws_batch_gpu(self, ind_data, ind_draws, param_dict,
+                                 structural_model, choice_model):
         """
-        선택모델 GPU 배치 우도 계산
+        개인의 모든 draws에 대한 우도를 GPU 배치로 계산
 
-        모든 개인 × draws × 선택 상황을 하나의 큰 배열로 처리
+        Args:
+            ind_data: 개인 데이터
+            ind_draws: 개인의 draws (n_draws, n_dimensions)
+            param_dict: 파라미터 딕셔너리
+            structural_model: 구조모델 인스턴스
+            choice_model: 선택모델 인스턴스
+
+        Returns:
+            각 draw의 로그우도 리스트
         """
-        beta_intercept = choice_params['intercept']
-        beta = choice_params['beta']
-        lambda_lv = choice_params['lambda']
-        endo_lv = self.config.structural.endogenous_lv
+        # 메모리 체크 (GPU 배치 우도 계산 전) - 로깅 없이 임계값만 체크
+        if hasattr(self, 'memory_monitor'):
+            # 개인별 카운터 증가
+            self._individual_likelihood_count += 1
 
-        # 1. 모든 선택 데이터를 하나의 배열로 수집
-        all_choices = []
-        all_attributes = []
-        all_lv_values = []
-        batch_choice_counts = []  # 각 배치의 선택 개수
+            # 임계값 체크 및 필요시 정리 (로깅 없음)
+            mem_info = self.memory_monitor.check_and_cleanup("GPU 배치 우도 계산")
 
-        for batch_idx, (ind_idx, draw_idx) in enumerate(batch_indices):
-            choices = choice_data['choices'][ind_idx]
-            attributes = choice_data['attributes'][ind_idx]
-            lv_value = latent_vars[endo_lv][batch_idx]
+        n_draws = len(ind_draws)
 
-            n_choices = len(choices)
-            batch_choice_counts.append(n_choices)
+        # 첫 번째 개인의 첫 번째 draw에 대해서만 상세 로깅
+        log_detail = not hasattr(self, '_first_draw_logged')
 
-            all_choices.extend(choices)
-            all_attributes.append(attributes)
-            all_lv_values.extend([lv_value] * n_choices)
+        # if log_detail:
+        #     self.iteration_logger.info("=" * 80)
+        #     self.iteration_logger.info("첫 번째 개인의 첫 번째 draw 상세 로깅")
+        #     self.iteration_logger.info("=" * 80)
+        #     self.iteration_logger.info(f"[파라미터 확인]")
+        #     self.iteration_logger.info(f"  측정모델 zeta (health_concern 처음 3개): {param_dict['measurement']['health_concern']['zeta'][:3]}")
+        #     self.iteration_logger.info(f"  구조모델 gamma_lv: {param_dict['structural']['gamma_lv']}")
+        #     self.iteration_logger.info(f"  구조모델 gamma_x: {param_dict['structural']['gamma_x']}")
+        #     self.iteration_logger.info(f"  선택모델 intercept: {param_dict['choice']['intercept']}")
+        #     self.iteration_logger.info(f"  선택모델 beta: {param_dict['choice']['beta']}")
+        #     self.iteration_logger.info(f"  선택모델 lambda: {param_dict['choice']['lambda']}")
 
-        # NumPy 배열로 변환
-        all_choices = np.array(all_choices)  # (total_choices,)
-        all_attributes = np.vstack(all_attributes)  # (total_choices, n_attrs)
-        all_lv_values = np.array(all_lv_values)  # (total_choices,)
+        # 1. 모든 draws에 대한 잠재변수 예측
+        lvs_list = []
+        for j in range(n_draws):
+            draw = ind_draws[j]
 
-        # 2. GPU로 전송
-        all_choices_gpu = cp.asarray(all_choices)
-        all_attributes_gpu = cp.asarray(all_attributes)
-        all_lv_values_gpu = cp.asarray(all_lv_values)
-        beta_gpu = cp.asarray(beta)
+            if hasattr(structural_model, 'endogenous_lv'):
+                # 다중 잠재변수
+                n_exo = structural_model.n_exo
+                exo_draws = draw[:n_exo]
+                endo_draw = draw[n_exo]
+                lv = structural_model.predict(ind_data, exo_draws, param_dict['structural'], endo_draw)
 
-        # 3. 효용 계산 (벡터화)
-        # V = β0 + β*X + λ*LV
-        utilities = beta_intercept + cp.dot(all_attributes_gpu, beta_gpu) + lambda_lv * all_lv_values_gpu
+                if log_detail and j == 0:
+                    self.iteration_logger.info(f"[구조모델 예측] Draw 0:")
+                    self.iteration_logger.info(f"  외생 draws: {exo_draws}")
+                    self.iteration_logger.info(f"  내생 draw: {endo_draw}")
+                    self.iteration_logger.info(f"  예측된 LV: {lv}")
+            else:
+                # 단일 잠재변수
+                lv = structural_model.predict(ind_data, param_dict['structural'], draw)
 
-        # 4. Probit 확률 계산 (GPU)
-        cdf_vals = ndtr(utilities)  # GPU에서 한 번에!
-        cdf_vals = cp.clip(cdf_vals, 1e-10, 1 - 1e-10)
+            lvs_list.append(lv)
+        
+        # 2. 측정모델 우도 (GPU 배치)
+        if log_detail:
+            self.iteration_logger.info("\n[측정모델 우도 계산 시작]")
+            self.iteration_logger.info(f"  개인 데이터 shape: {ind_data.shape}")
+            self.iteration_logger.info(f"  LV 개수: {len(lvs_list)}")
 
-        # 5. 선택에 따른 확률
-        probs = cp.where(all_choices_gpu == 1, cdf_vals, 1 - cdf_vals)
+        ll_measurement_batch = gpu_batch_utils.compute_measurement_batch_gpu(
+            self.gpu_measurement_model,
+            ind_data,
+            lvs_list,
+            param_dict['measurement'],
+            self.iteration_logger if log_detail else None
+        )
 
-        # 6. 로그 확률
-        log_probs = cp.log(probs)
+        if log_detail:
+            self.iteration_logger.info(f"  측정모델 우도 (처음 5개): {ll_measurement_batch[:5]}")
+            self.iteration_logger.info(f"  측정모델 우도 범위: [{np.min(ll_measurement_batch):.2f}, {np.max(ll_measurement_batch):.2f}]")
+            self.iteration_logger.info(f"  측정모델 우도 평균: {np.mean(ll_measurement_batch):.2f}")
 
-        # 7. 각 배치별로 합산
-        ll_choice = np.zeros(len(batch_indices))
-        start_idx = 0
-        for batch_idx, n_choices in enumerate(batch_choice_counts):
-            end_idx = start_idx + n_choices
-            ll_choice[batch_idx] = float(cp.sum(log_probs[start_idx:end_idx]))
-            start_idx = end_idx
+        # 메모리 정리 (측정모델 계산 후)
+        gc.collect()
 
-        return ll_choice
+        # 3. 선택모델 우도 (GPU 배치)
+        if log_detail:
+            self.iteration_logger.info("\n[선택모델 우도 계산 시작]")
+            self.iteration_logger.info(f"  선택 상황 수: {len(ind_data)}")
 
-    def _compute_structural_batch_likelihood(self, draws, latent_vars, structural_params, batch_indices):
+        ll_choice_batch = gpu_batch_utils.compute_choice_batch_gpu(
+            ind_data,
+            lvs_list,
+            param_dict['choice'],
+            choice_model,
+            self.iteration_logger if log_detail else None
+        )
+
+        if log_detail:
+            self.iteration_logger.info(f"  선택모델 우도 (처음 5개): {ll_choice_batch[:5]}")
+            self.iteration_logger.info(f"  선택모델 우도 범위: [{np.min(ll_choice_batch):.2f}, {np.max(ll_choice_batch):.2f}]")
+            self.iteration_logger.info(f"  선택모델 우도 평균: {np.mean(ll_choice_batch):.2f}")
+
+        # 메모리 정리 (선택모델 계산 후)
+        gc.collect()
+
+        # 4. 구조모델 우도 (GPU 배치)
+        if log_detail:
+            self.iteration_logger.info("\n[구조모델 우도 계산 시작]")
+
+        ll_structural_batch = gpu_batch_utils.compute_structural_batch_gpu(
+            ind_data,
+            lvs_list,
+            param_dict['structural'],
+            ind_draws,
+            structural_model,
+            self.iteration_logger if log_detail else None
+        )
+
+        if log_detail:
+            self.iteration_logger.info(f"  구조모델 우도 (처음 5개): {ll_structural_batch[:5]}")
+            self.iteration_logger.info(f"  구조모델 우도 범위: [{np.min(ll_structural_batch):.2f}, {np.max(ll_structural_batch):.2f}]")
+            self.iteration_logger.info(f"  구조모델 우도 평균: {np.mean(ll_structural_batch):.2f}")
+
+        # 메모리 정리 (구조모델 계산 후)
+        gc.collect()
+
+        # 5. 결합 로그우도
+        draw_lls = []
+        for j in range(n_draws):
+            draw_ll = ll_measurement_batch[j] + ll_choice_batch[j] + ll_structural_batch[j]
+
+            if log_detail and j == 0:
+                self.iteration_logger.info("\n[결합 우도 계산] Draw 0:")
+                self.iteration_logger.info(f"  측정모델: {ll_measurement_batch[j]:.4f}")
+                self.iteration_logger.info(f"  선택모델: {ll_choice_batch[j]:.4f}")
+                self.iteration_logger.info(f"  구조모델: {ll_structural_batch[j]:.4f}")
+                self.iteration_logger.info(f"  합계: {draw_ll:.4f}")
+
+            if not np.isfinite(draw_ll):
+                if log_detail and j == 0:
+                    self.iteration_logger.warning(f"  ⚠️ Draw {j}: 비유한 값 감지, -1e10으로 대체")
+                draw_ll = -1e10
+
+            draw_lls.append(draw_ll)
+
+        if log_detail:
+            self.iteration_logger.info("\n[전체 draws 통계]")
+            self.iteration_logger.info(f"  Draw 우도 범위: [{np.min(draw_lls):.2f}, {np.max(draw_lls):.2f}]")
+            self.iteration_logger.info(f"  Draw 우도 평균: {np.mean(draw_lls):.2f}")
+            self.iteration_logger.info("=" * 80)
+            self._first_draw_logged = True
+
+        # 두 번째 함수 호출에서 파라미터 변화 확인
+        if hasattr(self, '_first_draw_logged') and not hasattr(self, '_second_draw_logged'):
+            self.iteration_logger.info("=" * 80)
+            self.iteration_logger.info("두 번째 함수 호출 - 파라미터 변화 확인")
+            self.iteration_logger.info("=" * 80)
+            self.iteration_logger.info(f"[파라미터 확인]")
+            self.iteration_logger.info(f"  측정모델 zeta (health_concern 처음 3개): {param_dict['measurement']['health_concern']['zeta'][:3]}")
+            self.iteration_logger.info(f"  구조모델 gamma_lv: {param_dict['structural']['gamma_lv']}")
+            self.iteration_logger.info(f"  구조모델 gamma_x: {param_dict['structural']['gamma_x']}")
+            self.iteration_logger.info(f"  선택모델 intercept: {param_dict['choice']['intercept']}")
+            self.iteration_logger.info(f"  선택모델 beta: {param_dict['choice']['beta']}")
+            self.iteration_logger.info(f"  선택모델 lambda: {param_dict['choice']['lambda']}")
+            self.iteration_logger.info("=" * 80)
+            self._second_draw_logged = True
+
+        return draw_lls
+
+    def _get_initial_parameters(self, measurement_model,
+                                structural_model, choice_model) -> np.ndarray:
         """
-        구조모델 배치 우도 계산 (GPU 가속)
-
-        모든 배치를 한 번에 처리
+        초기 파라미터 설정 (다중 잠재변수 지원)
         """
-        # GPU 모드: 완전 벡터화
-        if self.use_gpu:
-            return self._compute_structural_batch_likelihood_gpu(
-                draws, latent_vars, structural_params, batch_indices
-            )
+        params = []
 
-        # CPU 모드: 기존 루프 방식
-        batch_size = len(batch_indices)
-        n_exo = self.config.structural.n_exo
-        endo_lv = self.config.structural.endogenous_lv
-        exo_lvs = self.config.structural.exogenous_lvs
+        # 다중 잠재변수 측정모델 파라미터
+        if hasattr(self.config, 'measurement_configs'):
+            # 다중 잠재변수
+            for lv_name, config in self.config.measurement_configs.items():
+                n_indicators = len(config.indicators)
+                n_thresholds = config.n_categories - 1
 
-        gamma_lv = structural_params['gamma_lv']
-        gamma_x = structural_params['gamma_x']
-        covariates = self.config.structural.covariates
-        error_variance = self.config.structural.error_variance
+                # 요인적재량 (zeta)
+                params.extend([1.0] * n_indicators)
 
-        ll_structural = np.zeros(batch_size)
+                # 임계값 (tau)
+                for _ in range(n_indicators):
+                    if n_thresholds == 4:
+                        params.extend([-2, -1, 1, 2])  # 5점 척도
+                    elif n_thresholds == 1:
+                        params.extend([0.0])  # 2점 척도
+                    else:
+                        # 일반적인 경우
+                        params.extend(list(range(-n_thresholds//2 + 1, n_thresholds//2 + 1)))
+        else:
+            # 단일 잠재변수
+            n_indicators = len(self.config.measurement.indicators)
+            params.extend([1.0] * n_indicators)
 
-        for batch_idx, (ind_idx, draw_idx) in enumerate(batch_indices):
-            ind_id = self.individual_ids[ind_idx]
-            ind_data = self.data[self.data[self.config.individual_id_column] == ind_id].iloc[0]
+            n_thresholds = self.config.measurement.n_categories - 1
+            for _ in range(n_indicators):
+                params.extend([-2, -1, 1, 2])
 
-            # 내생 LV 예측값
-            endo_mean = 0.0
-            for lv_idx, lv_name in enumerate(exo_lvs):
-                endo_mean += gamma_lv[lv_idx] * draws[ind_idx, draw_idx, lv_idx]
+        # 구조모델 파라미터
+        if hasattr(self.config.structural, 'n_exo'):
+            # 다중 잠재변수 구조모델
+            n_exo = self.config.structural.n_exo
+            n_cov = self.config.structural.n_cov
 
-            for cov_idx, cov_name in enumerate(covariates):
-                if cov_name in ind_data.index:
-                    endo_mean += gamma_x[cov_idx] * ind_data[cov_name]
+            # gamma_lv (외생 LV → 내생 LV)
+            params.extend([0.0] * n_exo)
 
-            # 오차항 우도
-            endo_error = draws[ind_idx, draw_idx, n_exo]
-            endo_actual = latent_vars[endo_lv][batch_idx]
-            residual = endo_actual - endo_mean
+            # gamma_x (공변량 → 내생 LV)
+            params.extend([0.0] * n_cov)
+        else:
+            # 단일 잠재변수 구조모델
+            n_sociodem = len(self.config.structural.sociodemographics)
+            params.extend([0.0] * n_sociodem)
 
-            # 정규분포 로그우도
-            ll_structural[batch_idx] = -0.5 * np.log(2 * np.pi * error_variance)
-            ll_structural[batch_idx] -= 0.5 * (residual ** 2) / error_variance
+        # 선택모델 파라미터
+        # - 절편
+        params.append(0.0)
 
-        return ll_structural
+        # - 속성 계수 (beta)
+        n_attributes = len(self.config.choice.choice_attributes)
+        params.extend([0.0] * n_attributes)
 
-    def _compute_structural_batch_likelihood_gpu(self, draws, latent_vars, structural_params, batch_indices):
+        # - 잠재변수 계수 (lambda)
+        params.append(1.0)
+
+        return np.array(params)
+
+    def _get_parameter_bounds(self, measurement_model,
+                              structural_model, choice_model) -> list:
         """
-        구조모델 GPU 배치 우도 계산
-
-        모든 배치의 구조모델 우도를 벡터 연산으로 한 번에 계산
+        파라미터 bounds 설정 (다중 잠재변수 지원)
         """
-        batch_size = len(batch_indices)
-        n_exo = self.config.structural.n_exo
-        endo_lv = self.config.structural.endogenous_lv
-        exo_lvs = self.config.structural.exogenous_lvs
+        bounds = []
 
-        gamma_lv = structural_params['gamma_lv']
-        gamma_x = structural_params['gamma_x']
-        covariates = self.config.structural.covariates
-        error_variance = self.config.structural.error_variance
+        # 다중 잠재변수 측정모델 파라미터
+        if hasattr(self.config, 'measurement_configs'):
+            # 다중 잠재변수
+            for lv_name, config in self.config.measurement_configs.items():
+                n_indicators = len(config.indicators)
+                n_thresholds = config.n_categories - 1
 
-        # 1. 외생 LV 기여도 계산 (배치 전체)
-        # draws: (n_individuals, n_draws, n_dimensions)
-        # 각 배치에 대한 외생 LV 값 추출
-        exo_lv_values = np.zeros((batch_size, n_exo))
-        for batch_idx, (ind_idx, draw_idx) in enumerate(batch_indices):
-            exo_lv_values[batch_idx, :] = draws[ind_idx, draw_idx, :n_exo]
+                # 요인적재량 (zeta): [0.1, 10]
+                bounds.extend([(0.1, 10.0)] * n_indicators)
 
-        # 2. 공변량 기여도 계산 (배치 전체)
-        cov_values = np.zeros((batch_size, len(covariates)))
-        for batch_idx, (ind_idx, draw_idx) in enumerate(batch_indices):
-            ind_id = self.individual_ids[ind_idx]
-            ind_data = self.data[self.data[self.config.individual_id_column] == ind_id].iloc[0]
-            for cov_idx, cov_name in enumerate(covariates):
-                if cov_name in ind_data.index:
-                    cov_values[batch_idx, cov_idx] = ind_data[cov_name]
+                # 임계값 (tau): [-10, 10]
+                for _ in range(n_indicators):
+                    bounds.extend([(-10.0, 10.0)] * n_thresholds)
+        else:
+            # 단일 잠재변수
+            n_indicators = len(self.config.measurement.indicators)
+            bounds.extend([(0.1, 10.0)] * n_indicators)
 
-        # 3. GPU로 전송
-        exo_lv_values_gpu = cp.asarray(exo_lv_values)  # (batch_size, n_exo)
-        cov_values_gpu = cp.asarray(cov_values)  # (batch_size, n_cov)
-        gamma_lv_gpu = cp.asarray(gamma_lv)  # (n_exo,)
-        gamma_x_gpu = cp.asarray(gamma_x)  # (n_cov,)
+            n_thresholds = self.config.measurement.n_categories - 1
+            for _ in range(n_indicators):
+                bounds.extend([(-10.0, 10.0)] * n_thresholds)
 
-        # 4. 내생 LV 예측값 계산 (벡터화)
-        # endo_mean = gamma_lv @ exo_lv + gamma_x @ covariates
-        endo_means = cp.dot(exo_lv_values_gpu, gamma_lv_gpu) + cp.dot(cov_values_gpu, gamma_x_gpu)
+        # 구조모델 파라미터
+        if hasattr(self.config.structural, 'n_exo'):
+            # 다중 잠재변수 구조모델
+            n_exo = self.config.structural.n_exo
+            n_cov = self.config.structural.n_cov
 
-        # 5. 실제 내생 LV 값
-        endo_actual = np.array([latent_vars[endo_lv][i] for i in range(batch_size)])
-        endo_actual_gpu = cp.asarray(endo_actual)
+            # gamma_lv: unbounded
+            bounds.extend([(None, None)] * n_exo)
 
-        # 6. 잔차 계산
-        residuals = endo_actual_gpu - endo_means
+            # gamma_x: unbounded
+            bounds.extend([(None, None)] * n_cov)
+        else:
+            # 단일 잠재변수 구조모델
+            n_sociodem = len(self.config.structural.sociodemographics)
+            bounds.extend([(None, None)] * n_sociodem)
 
-        # 7. 정규분포 로그우도 (벡터화)
-        # ll = -0.5 * log(2π*σ²) - 0.5 * (residual² / σ²)
-        log_const = -0.5 * cp.log(2 * cp.pi * error_variance)
-        ll_structural_gpu = log_const - 0.5 * (residuals ** 2) / error_variance
+        # 선택모델 파라미터
+        # - 절편: unbounded
+        bounds.append((None, None))
 
-        # 8. CPU로 반환
-        ll_structural = cp.asnumpy(ll_structural_gpu)
+        # - 속성 계수 (beta): unbounded
+        n_attributes = len(self.config.choice.choice_attributes)
+        bounds.extend([(None, None)] * n_attributes)
 
-        return ll_structural
+        # - 잠재변수 계수 (lambda): unbounded
+        bounds.append((None, None))
 
-    def _unpack_parameters(self, params: np.ndarray) -> Dict:
-        """파라미터 벡터를 딕셔너리로 분해"""
+        return bounds
+
+    def _unpack_parameters(self, params: np.ndarray,
+                          measurement_model,
+                          structural_model,
+                          choice_model) -> Dict[str, Dict]:
+        """
+        파라미터 벡터를 딕셔너리로 변환 (다중 잠재변수 지원)
+        """
+        # 디버깅: 파라미터 언팩 호출 확인 (간소화)
+        if hasattr(self, 'iteration_logger'):
+            if not hasattr(self, '_unpack_count'):
+                self._unpack_count = 0
+            self._unpack_count += 1
+            # 처음 3번만 로깅
+            if self._unpack_count <= 3:
+                self.iteration_logger.info(f"[파라미터 언팩 #{self._unpack_count}] 처음 5개: {params[:5]}, 마지막 5개: {params[-5:]}")
+
+            # 메모리 체크 (파라미터 언팩 시) - 매번 로깅
+            if hasattr(self, 'memory_monitor'):
+                self.memory_monitor.log_memory_stats(f"파라미터 언팩 #{self._unpack_count}")
+
+                # 항상 임계값 체크 및 필요시 정리
+                mem_info = self.memory_monitor.check_and_cleanup(f"파라미터 언팩 #{self._unpack_count}")
+
         idx = 0
-        param_dict = {}
+        param_dict = {
+            'measurement': {},
+            'structural': {},
+            'choice': {}
+        }
 
-        # 1. 측정모델 파라미터
-        param_dict['measurement'] = {}
-        for lv_name, model in self.measurement_model.models.items():
-            n_indicators = model.n_indicators
-            n_thresholds = model.n_thresholds
+        # 다중 잠재변수 측정모델 파라미터
+        if hasattr(self.config, 'measurement_configs'):
+            # 다중 잠재변수
+            for lv_idx, (lv_name, config) in enumerate(self.config.measurement_configs.items()):
+                n_indicators = len(config.indicators)
+                n_thresholds = config.n_categories - 1
 
-            zeta = params[idx:idx + n_indicators]
+                # 요인적재량 (zeta)
+                zeta = params[idx:idx+n_indicators]
+                idx += n_indicators
+
+                # 임계값 (tau)
+                tau_list = []
+                for i in range(n_indicators):
+                    tau_list.append(params[idx:idx+n_thresholds])
+                    idx += n_thresholds
+                tau = np.array(tau_list)
+
+                param_dict['measurement'][lv_name] = {'zeta': zeta, 'tau': tau}
+
+                # 첫 번째 LV에 대해서만 상세 로깅 (간소화)
+                if hasattr(self, 'iteration_logger') and hasattr(self, '_unpack_count'):
+                    if self._unpack_count <= 3 and lv_idx == 0:
+                        self.iteration_logger.info(f"  측정모델 {lv_name}: zeta[0]={zeta[0]:.4f}, tau[0,0]={tau[0,0]:.4f}")
+        else:
+            # 단일 잠재변수
+            n_indicators = len(self.config.measurement.indicators)
+            zeta = params[idx:idx+n_indicators]
             idx += n_indicators
 
-            tau = params[idx:idx + n_indicators * n_thresholds]
-            tau = tau.reshape(n_indicators, n_thresholds)
-            idx += n_indicators * n_thresholds
+            n_thresholds = self.config.measurement.n_categories - 1
+            tau_list = []
+            for i in range(n_indicators):
+                tau_list.append(params[idx:idx+n_thresholds])
+                idx += n_thresholds
+            tau = np.array(tau_list)
 
-            param_dict['measurement'][lv_name] = {'zeta': zeta, 'tau': tau}
+            param_dict['measurement'] = {'zeta': zeta, 'tau': tau}
 
-        # 2. 구조모델 파라미터
-        n_exo = self.config.structural.n_exo
-        n_cov = self.config.structural.n_cov
+        # 구조모델 파라미터
+        if hasattr(self.config.structural, 'n_exo'):
+            # 다중 잠재변수 구조모델
+            n_exo = self.config.structural.n_exo
+            n_cov = self.config.structural.n_cov
 
-        gamma_lv = params[idx:idx + n_exo]
-        idx += n_exo
+            # gamma_lv (외생 LV → 내생 LV)
+            gamma_lv = params[idx:idx+n_exo]
+            idx += n_exo
 
-        gamma_x = params[idx:idx + n_cov]
-        idx += n_cov
+            # gamma_x (공변량 → 내생 LV)
+            gamma_x = params[idx:idx+n_cov]
+            idx += n_cov
 
-        param_dict['structural'] = {'gamma_lv': gamma_lv, 'gamma_x': gamma_x}
+            param_dict['structural'] = {'gamma_lv': gamma_lv, 'gamma_x': gamma_x}
 
-        # 3. 선택모델 파라미터
-        beta_intercept = params[idx]
+            # 상세 로깅 (간소화)
+            if hasattr(self, 'iteration_logger') and hasattr(self, '_unpack_count'):
+                if self._unpack_count <= 3:
+                    self.iteration_logger.info(f"  구조모델: gamma_lv[0]={gamma_lv[0]:.6f}, gamma_x[0]={gamma_x[0]:.6f}")
+        else:
+            # 단일 잠재변수 구조모델
+            n_sociodem = len(self.config.structural.sociodemographics)
+            gamma = params[idx:idx+n_sociodem]
+            idx += n_sociodem
+
+            param_dict['structural'] = {'gamma': gamma}
+
+        # 선택모델 파라미터
+        intercept = params[idx]
         idx += 1
 
-        n_choice_attrs = len(self.config.choice.choice_attributes)
-        beta = params[idx:idx + n_choice_attrs]
-        idx += n_choice_attrs
+        n_attributes = len(self.config.choice.choice_attributes)
+        beta = params[idx:idx+n_attributes]
+        idx += n_attributes
 
         lambda_lv = params[idx]
         idx += 1
 
         param_dict['choice'] = {
-            'intercept': beta_intercept,
+            'intercept': intercept,
             'beta': beta,
             'lambda': lambda_lv
         }
 
+        # 상세 로깅 (간소화)
+        if hasattr(self, 'iteration_logger') and hasattr(self, '_unpack_count'):
+            if self._unpack_count <= 3:
+                self.iteration_logger.info(f"  선택모델: intercept={intercept:.6f}, beta[0]={beta[0]:.6f}, lambda={lambda_lv:.6f}")
+
         return param_dict
-
-    def estimate(self, initial_params: np.ndarray = None,
-                method: str = 'BFGS', maxiter: int = 100) -> Dict:
-        """
-        모델 추정
-
-        Args:
-            initial_params: 초기 파라미터 (None이면 자동 생성)
-            method: 최적화 방법
-            maxiter: 최대 반복 횟수
-
-        Returns:
-            추정 결과 딕셔너리
-        """
-        if initial_params is None:
-            initial_params = self._initialize_parameters()
-
-        logger.info("=" * 70)
-        logger.info("GPU 배치 추정 시작")
-        logger.info(f"  초기 파라미터 수: {len(initial_params)}")
-        logger.info(f"  최적화 방법: {method}")
-        logger.info(f"  최대 반복: {maxiter}")
-        logger.info("=" * 70)
-
-        start_time = time.time()
-
-        # 콜백 함수
-        self.iteration = 0
-        self.best_ll = -np.inf
-
-        def callback(params):
-            self.iteration += 1
-            ll = self._compute_batch_likelihood(params)
-
-            if ll > self.best_ll:
-                self.best_ll = ll
-
-            if self.iteration % 5 == 0:
-                elapsed = time.time() - start_time
-                logger.info(f"  반복 {self.iteration:3d} | LL = {ll:12.2f} | "
-                          f"Best = {self.best_ll:12.2f} | 시간 = {elapsed:.1f}s")
-
-        # 목적함수 (음의 로그우도)
-        def objective(params):
-            print(f"\n=== 반복 {self.iteration + 1} ===")
-            ll = self._compute_batch_likelihood(params)
-            print(f"=== 반복 {self.iteration + 1} 완료 ===\n")
-            return -ll
-
-        # 최적화
-        result = optimize.minimize(
-            objective,
-            initial_params,
-            method=method,
-            callback=callback,
-            options={'maxiter': maxiter, 'disp': True}
-        )
-
-        elapsed_time = time.time() - start_time
-
-        # 결과 정리
-        final_params = result.x
-        final_ll = -result.fun
-
-        logger.info("=" * 70)
-        logger.info("추정 완료!")
-        logger.info(f"  최종 LL: {final_ll:.2f}")
-        logger.info(f"  반복 횟수: {self.iteration}")
-        logger.info(f"  소요 시간: {elapsed_time:.1f}초")
-        logger.info(f"  수렴 여부: {result.success}")
-        logger.info("=" * 70)
-
-        return {
-            'params': final_params,
-            'log_likelihood': final_ll,
-            'iterations': self.iteration,
-            'time': elapsed_time,
-            'success': result.success,
-            'message': result.message
-        }
-
-    def _initialize_parameters(self) -> np.ndarray:
-        """파라미터 초기화"""
-        params_list = []
-
-        # 측정모델
-        for lv_name, model in self.measurement_model.models.items():
-            init_params = model.initialize_parameters()
-            params_list.append(init_params['zeta'])
-            params_list.append(init_params['tau'].flatten())
-
-        # 구조모델
-        n_exo = self.config.structural.n_exo
-        n_cov = self.config.structural.n_cov
-        params_list.append(np.ones(n_exo) * 0.5)
-        params_list.append(np.zeros(n_cov))
-
-        # 선택모델
-        params_list.append(np.array([0.0]))  # intercept
-        n_choice_attrs = len(self.config.choice.choice_attributes)
-        params_list.append(np.zeros(n_choice_attrs))
-        params_list.append(np.array([1.0]))  # lambda
-
-        return np.concatenate(params_list)
-
-
-class HaltonDrawGenerator:
-    """Halton 시퀀스 생성기"""
-
-    def __init__(self, n_individuals: int, n_draws: int, n_dimensions: int, seed: int = 42):
-        self.n_individuals = n_individuals
-        self.n_draws = n_draws
-        self.n_dimensions = n_dimensions
-        self.seed = seed
-        self._draws = None
-
-    def get_draws(self) -> np.ndarray:
-        """Halton draws 생성 또는 반환"""
-        if self._draws is None:
-            self._draws = self._generate_halton_draws()
-        return self._draws
-
-    def _generate_halton_draws(self) -> np.ndarray:
-        """Halton 시퀀스 생성"""
-        from scipy.stats import qmc
-
-        # Halton 시퀀스 생성기
-        sampler = qmc.Halton(d=self.n_dimensions, scramble=True, seed=self.seed)
-
-        # 균등분포 샘플
-        n_total = self.n_individuals * self.n_draws
-        uniform_samples = sampler.random(n=n_total)
-
-        # 표준정규분포로 변환
-        from scipy.stats import norm
-        normal_samples = norm.ppf(uniform_samples)
-
-        # (n_individuals, n_draws, n_dimensions)로 재구성
-        draws = normal_samples.reshape(self.n_individuals, self.n_draws, self.n_dimensions)
-
-        logger.info(f"Halton draws 생성: {draws.shape}")
-
-        return draws
 

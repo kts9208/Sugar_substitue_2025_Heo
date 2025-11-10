@@ -25,6 +25,9 @@ from src.analysis.hybrid_choice_model.iclv_models.multi_latent_config import (
     MultiLatentConfig
 )
 from src.analysis.hybrid_choice_model.iclv_models.gpu_batch_estimator import GPUBatchEstimator
+from src.analysis.hybrid_choice_model.iclv_models.multi_latent_measurement import MultiLatentMeasurement
+from src.analysis.hybrid_choice_model.iclv_models.multi_latent_structural import MultiLatentStructural
+from src.analysis.hybrid_choice_model.iclv_models.choice_equations import BinaryProbitChoice
 
 
 # DataConfig를 직접 정의
@@ -75,7 +78,7 @@ def main():
         'nutrition_knowledge': MeasurementConfig(
             latent_variable='nutrition_knowledge',
             indicators=[f'q{i}' for i in range(30, 50)],  # q30-q49
-            n_categories=2
+            n_categories=5  # 🔴 수정: 2 → 5 (실제 데이터가 5점 척도)
         ),
         'purchase_intention': MeasurementConfig(
             latent_variable='purchase_intention',
@@ -100,13 +103,16 @@ def main():
     # 추정 설정
     estimation_config = EstimationConfig(
         optimizer='BFGS',
-        use_analytic_gradient=False,  # GPU 배치는 수치 그래디언트 사용
+        use_analytic_gradient=True,  # ✅ Analytic gradient (CPU) 테스트
         n_draws=100,
         draw_type='halton',
         max_iterations=1000,
-        calculate_se=False,  # GPU 배치는 표준오차 계산 안 함 (속도 우선)
+        calculate_se=True,  # 표준오차 계산 활성화
         use_parallel=False,  # GPU 배치는 자체적으로 병렬처리
-        n_cores=None
+        n_cores=None,
+        early_stopping=False,  # ✅ 조기 종료 비활성화 (정상 종료 테스트)
+        early_stopping_patience=999,
+        early_stopping_tol=1e-6
     )
 
     # 통합 설정
@@ -136,22 +142,41 @@ def main():
     print(f"   - 전체 개인 수: {n_individuals}")
     print(f"   - GPU 배치 처리: 활성화")
     
-    # 3. GPU 배치 Estimator 생성
-    print("\n3. GPU 배치 Estimator 생성...")
+    # 3. 모델 생성 (test_iclv_full_data.py와 동일)
+    print("\n3. 모델 생성...")
 
     try:
-        estimator = GPUBatchEstimator(config, data, use_gpu=True)
+        measurement_model = MultiLatentMeasurement(measurement_configs)
+        structural_model = MultiLatentStructural(structural_config)
+        choice_model = BinaryProbitChoice(choice_config)
+        print("   - 측정모델, 구조모델, 선택모델 생성 완료")
+    except Exception as e:
+        print(f"   [ERROR] 모델 생성 실패: {e}")
+        import traceback
+        traceback.print_exc()
+        return
+
+    # 4. GPU 배치 Estimator 생성 (메모리 모니터링 포함)
+    print("\n4. GPU 배치 Estimator 생성...")
+
+    try:
+        estimator = GPUBatchEstimator(
+            config,
+            use_gpu=True,
+            memory_monitor_cpu_threshold_mb=2000,  # CPU 메모리 임계값 2GB
+            memory_monitor_gpu_threshold_mb=5000   # GPU 메모리 임계값 5GB
+        )
         print("   - GPU 배치 Estimator 생성 완료")
+        print("   - 메모리 모니터링 활성화 (CPU: 2GB, GPU: 5GB 임계값)")
     except Exception as e:
         print(f"   [ERROR] Estimator 생성 실패: {e}")
         import traceback
         traceback.print_exc()
         return
 
-    # 4. ICLV 동시추정 실행
-    print("\n4. ICLV 동시추정 실행...")
+    # 5. ICLV 동시추정 실행
+    print("\n5. ICLV 동시추정 실행...")
     print("   (GPU 배치 처리 - 다중 잠재변수)")
-    print("   (로깅: 매 5회 반복마다 LL 출력)")
     print("\n   [주의] GPU 배치 처리는 5-10분 정도 소요될 수 있습니다...")
 
     # 로그 파일 경로 설정
@@ -162,51 +187,272 @@ def main():
 
     try:
         result = estimator.estimate(
-            initial_params=None,
-            method='BFGS',
-            maxiter=estimation_config.max_iterations
+            data=data,
+            measurement_model=measurement_model,
+            structural_model=structural_model,
+            choice_model=choice_model,
+            log_file=str(log_file)
         )
 
         elapsed_time = time.time() - start_time
 
-        # 5. 결과 출력
+        # 6. 결과 출력
         print("\n" + "="*70)
         print("추정 결과 (GPU 배치 - 다중 잠재변수)")
         print("="*70)
         print(f"\n추정 시간: {elapsed_time/60:.2f}분 ({elapsed_time:.1f}초)")
         print(f"수렴 여부: {result['success']}")
-        print(f"반복 횟수: {result['iterations']}")
+        print(f"반복 횟수: {result.get('n_iterations', result.get('iterations', 'N/A'))}")
         print(f"최종 로그우도: {result['log_likelihood']:.4f}")
 
-        # 6. 결과 저장
+        # 메모리 사용 요약
+        print("\n" + "="*70)
+        print("메모리 사용 요약")
+        print("="*70)
+        mem_summary = estimator.memory_monitor.get_memory_summary()
+        print(f"현재 CPU 메모리: {mem_summary['current_cpu_mb']:.1f}MB")
+        if mem_summary['current_gpu_mb'] is not None:
+            print(f"현재 GPU 메모리: {mem_summary['current_gpu_mb']:.1f}MB")
+        if 'cpu_max_mb' in mem_summary:
+            print(f"최대 CPU 메모리: {mem_summary['cpu_max_mb']:.1f}MB")
+            print(f"평균 CPU 메모리: {mem_summary['cpu_avg_mb']:.1f}MB")
+        if 'gpu_max_mb' in mem_summary:
+            print(f"최대 GPU 메모리: {mem_summary['gpu_max_mb']:.1f}MB")
+            print(f"평균 GPU 메모리: {mem_summary['gpu_avg_mb']:.1f}MB")
+
+        # 7. 결과 저장
         output_dir = project_root / 'results'
         output_dir.mkdir(exist_ok=True)
 
         # 파라미터 저장 (npy)
         params_file = output_dir / 'gpu_batch_iclv_params.npy'
-        np.save(params_file, result['params'])
+        np.save(params_file, result['raw_params'])
+
+        # 파라미터를 DataFrame으로 변환 (다중 잠재변수 지원)
+        param_list = []
+
+        # parameter_statistics가 있는 경우 (표준오차 계산됨)
+        if 'parameter_statistics' in result:
+            print("\n표준오차 및 통계량 포함하여 저장 중...")
+            stats = result['parameter_statistics']
+
+            # 측정모델 파라미터 (다중 잠재변수)
+            if 'measurement' in stats:
+                for lv_name, lv_stats in stats['measurement'].items():
+                    # zeta
+                    if 'zeta' in lv_stats:
+                        zeta_stats = lv_stats['zeta']
+                        for i in range(len(zeta_stats['estimate'])):
+                            param_list.append({
+                                'Coefficient': f'ζ_{lv_name}_{i+1}',
+                                'Estimate': zeta_stats['estimate'][i],
+                                'Std. Err.': zeta_stats['std_error'][i],
+                                'P. Value': zeta_stats['p_value'][i]
+                            })
+
+                    # tau
+                    if 'tau' in lv_stats:
+                        tau_stats = lv_stats['tau']
+                        for i in range(tau_stats['estimate'].shape[0]):
+                            for j in range(tau_stats['estimate'].shape[1]):
+                                param_list.append({
+                                    'Coefficient': f'τ_{lv_name}_{i+1},{j+1}',
+                                    'Estimate': tau_stats['estimate'][i, j],
+                                    'Std. Err.': tau_stats['std_error'][i, j],
+                                    'P. Value': tau_stats['p_value'][i, j]
+                                })
+
+            # 구조모델 파라미터
+            if 'structural' in stats:
+                struct = stats['structural']
+
+                # gamma_lv (잠재변수 간 계수)
+                if 'gamma_lv' in struct:
+                    gamma_lv_stats = struct['gamma_lv']
+                    lv_names = ['health_concern', 'perceived_benefit', 'perceived_price', 'nutrition_knowledge']
+                    for i, lv in enumerate(lv_names):
+                        param_list.append({
+                            'Coefficient': f'γ_lv_{lv}',
+                            'Estimate': gamma_lv_stats['estimate'][i],
+                            'Std. Err.': gamma_lv_stats['std_error'][i],
+                            'P. Value': gamma_lv_stats['p_value'][i]
+                        })
+
+                # gamma_x (사회인구학적 변수)
+                if 'gamma_x' in struct:
+                    gamma_x_stats = struct['gamma_x']
+                    sociodem_vars = ['age_std', 'gender', 'income_std']
+                    for i, var in enumerate(sociodem_vars):
+                        param_list.append({
+                            'Coefficient': f'γ_x_{var}',
+                            'Estimate': gamma_x_stats['estimate'][i],
+                            'Std. Err.': gamma_x_stats['std_error'][i],
+                            'P. Value': gamma_x_stats['p_value'][i]
+                        })
+
+            # 선택모델 파라미터
+            if 'choice' in stats:
+                choice = stats['choice']
+
+                # intercept
+                if 'intercept' in choice:
+                    param_list.append({
+                        'Coefficient': 'β_Intercept',
+                        'Estimate': choice['intercept']['estimate'],
+                        'Std. Err.': choice['intercept']['std_error'],
+                        'P. Value': choice['intercept']['p_value']
+                    })
+
+                # beta
+                if 'beta' in choice:
+                    beta_stats = choice['beta']
+                    choice_attrs = ['sugar_free', 'health_label', 'price']
+                    for i, attr in enumerate(choice_attrs):
+                        param_list.append({
+                            'Coefficient': f'β_{attr}',
+                            'Estimate': beta_stats['estimate'][i],
+                            'Std. Err.': beta_stats['std_error'][i],
+                            'P. Value': beta_stats['p_value'][i]
+                        })
+
+                # lambda
+                if 'lambda' in choice:
+                    param_list.append({
+                        'Coefficient': 'λ',
+                        'Estimate': choice['lambda']['estimate'],
+                        'Std. Err.': choice['lambda']['std_error'],
+                        'P. Value': choice['lambda']['p_value']
+                    })
+
+        else:
+            # 기존 방식 (표준오차 없음)
+            print("\n표준오차 없이 저장 중...")
+
+            # 측정모델 파라미터 (다중 잠재변수)
+            for lv_name, lv_params in result['parameters']['measurement'].items():
+                zeta = lv_params['zeta']
+                for i, val in enumerate(zeta):
+                    param_list.append({
+                        'Coefficient': f'ζ_{lv_name}_{i+1}',
+                        'Estimate': val,
+                        'Std. Err.': 'N/A',
+                        'P. Value': 'N/A'
+                    })
+
+                tau = lv_params['tau']
+                for i in range(tau.shape[0]):
+                    for j in range(tau.shape[1]):
+                        param_list.append({
+                            'Coefficient': f'τ_{lv_name}_{i+1},{j+1}',
+                            'Estimate': tau[i, j],
+                            'Std. Err.': 'N/A',
+                            'P. Value': 'N/A'
+                        })
+
+            # 구조모델 파라미터
+            gamma_lv = result['parameters']['structural']['gamma_lv']
+            lv_names = ['health_concern', 'perceived_benefit', 'perceived_price', 'nutrition_knowledge']
+            for i, lv in enumerate(lv_names):
+                param_list.append({
+                    'Coefficient': f'γ_lv_{lv}',
+                    'Estimate': gamma_lv[i],
+                    'Std. Err.': 'N/A',
+                    'P. Value': 'N/A'
+                })
+
+            gamma_x = result['parameters']['structural']['gamma_x']
+            sociodem_vars = ['age_std', 'gender', 'income_std']
+            for i, var in enumerate(sociodem_vars):
+                param_list.append({
+                    'Coefficient': f'γ_x_{var}',
+                    'Estimate': gamma_x[i],
+                    'Std. Err.': 'N/A',
+                    'P. Value': 'N/A'
+                })
+
+            # 선택모델 파라미터
+            param_list.append({
+                'Coefficient': 'β_Intercept',
+                'Estimate': result['parameters']['choice']['intercept'],
+                'Std. Err.': 'N/A',
+                'P. Value': 'N/A'
+            })
+
+            beta = result['parameters']['choice']['beta']
+            choice_attrs = ['sugar_free', 'health_label', 'price']
+            for i, attr in enumerate(choice_attrs):
+                param_list.append({
+                    'Coefficient': f'β_{attr}',
+                    'Estimate': beta[i],
+                    'Std. Err.': 'N/A',
+                    'P. Value': 'N/A'
+                })
+
+            param_list.append({
+                'Coefficient': 'λ',
+                'Estimate': result['parameters']['choice']['lambda'],
+                'Std. Err.': 'N/A',
+                'P. Value': 'N/A'
+            })
+
+        # DataFrame 생성
+        df_params = pd.DataFrame(param_list)
+
+        # 로그 파일에서 초기 LL 읽기
+        initial_ll = 'N/A'
+        try:
+            log_file = output_dir / 'gpu_batch_iclv_estimation_log.txt'
+            with open(log_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if 'Iter    1:' in line and 'LL =' in line:
+                        ll_str = line.split('LL =')[1].split('(')[0].strip()
+                        initial_ll = f"{float(ll_str):.2f}"
+                        break
+        except Exception as e:
+            print(f"   ⚠️  초기 LL 읽기 실패: {e}")
+
+        # Estimation statistics 추가
+        n_iter = result.get('n_iterations', result.get('iterations', 'N/A'))
+        stats_list = [
+            {'Coefficient': '', 'Estimate': '', 'Std. Err.': '', 'P. Value': ''},
+            {'Coefficient': 'Estimation statistics', 'Estimate': '', 'Std. Err.': '', 'P. Value': ''},
+            {'Coefficient': 'Iterations', 'Estimate': n_iter,
+             'Std. Err.': 'LL (start)', 'P. Value': initial_ll},
+            {'Coefficient': 'AIC', 'Estimate': f"{result['aic']:.2f}",
+             'Std. Err.': 'LL (final, whole model)', 'P. Value': f"{result['log_likelihood']:.2f}"},
+            {'Coefficient': 'BIC', 'Estimate': f"{result['bic']:.2f}",
+             'Std. Err.': 'LL (Choice)', 'P. Value': 'N/A'}
+        ]
+
+        df_stats = pd.DataFrame(stats_list)
+        df_combined = pd.concat([df_params, df_stats], ignore_index=True)
+
+        # CSV 저장 (상세 파라미터)
+        csv_file = output_dir / 'gpu_batch_iclv_results.csv'
+        df_combined.to_csv(csv_file, index=False, encoding='utf-8-sig')
 
         # 요약정보 저장 (CSV)
         summary_data = {
             'Metric': ['Estimation_Time_Minutes', 'N_Individuals', 'N_Observations',
                        'Halton_Draws', 'Optimizer', 'Log_Likelihood', 'N_Parameters',
-                       'Batch_Size', 'GPU_Enabled'],
+                       'GPU_Enabled', 'AIC', 'BIC'],
             'Value': [f"{elapsed_time/60:.2f}", str(n_individuals), str(data.shape[0]),
                       str(estimation_config.n_draws), 'BFGS_GPU_Batch',
-                      f"{result['log_likelihood']:.4f}", str(len(result['params'])),
-                      str(estimator.batch_size), 'True']
+                      f"{result['log_likelihood']:.4f}", str(result['n_parameters']),
+                      'True', f"{result['aic']:.2f}", f"{result['bic']:.2f}"]
         }
 
-        if 'iterations' in result:
+        if n_iter != 'N/A':
             summary_data['Metric'].append('N_Iterations')
-            summary_data['Value'].append(str(result['iterations']))
+            summary_data['Value'].append(str(n_iter))
 
         df_summary = pd.DataFrame(summary_data)
         summary_file = output_dir / 'gpu_batch_iclv_summary.csv'
         df_summary.to_csv(summary_file, index=False, encoding='utf-8-sig')
 
         print(f"\n결과 저장:")
-        print(f"  - 파라미터: {params_file}")
+        print(f"  - 파라미터 (통계량 포함): {csv_file}")
+        print(f"  - 파라미터 (npy): {params_file}")
         print(f"  - 요약정보: {summary_file}")
 
     except Exception as e:

@@ -17,6 +17,12 @@ from scipy.special import logsumexp
 from .gpu_measurement_equations import GPUMultiLatentMeasurement, GPU_AVAILABLE
 from .multi_latent_structural import MultiLatentStructural
 from .choice_equations import BinaryProbitChoice
+from .multi_latent_gradient import (
+    MultiLatentMeasurementGradient,
+    MultiLatentStructuralGradient,
+    MultiLatentJointGradient
+)
+from .gradient_calculator import ChoiceGradient
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +44,7 @@ class GPUMultiLatentSimultaneousEstimator:
     def __init__(self, config, data: pd.DataFrame, use_gpu: bool = True):
         """
         초기화
-        
+
         Args:
             config: MultiLatentConfig 객체
             data: 통합 데이터
@@ -47,14 +53,34 @@ class GPUMultiLatentSimultaneousEstimator:
         self.config = config
         self.data = data
         self.use_gpu = use_gpu and GPU_AVAILABLE
-        
+        self.use_analytic_gradient = config.estimation.use_analytic_gradient
+
         # 모델 생성
         self.measurement_model = GPUMultiLatentMeasurement(
-            config.measurement_configs, 
+            config.measurement_configs,
             use_gpu=self.use_gpu
         )
         self.structural_model = MultiLatentStructural(config.structural)
         self.choice_model = BinaryProbitChoice(config.choice)
+
+        # Analytic gradient 계산기 초기화
+        if self.use_analytic_gradient:
+            self.measurement_grad = MultiLatentMeasurementGradient(config.measurement_configs)
+            self.structural_grad = MultiLatentStructuralGradient(
+                n_exo=config.structural.n_exo,
+                n_cov=config.structural.n_cov,
+                error_variance=config.structural.error_variance
+            )
+            self.choice_grad = ChoiceGradient(n_attributes=len(config.choice.choice_attributes))
+            self.joint_grad = MultiLatentJointGradient(
+                self.measurement_grad,
+                self.structural_grad,
+                self.choice_grad
+            )
+            logger.info("✅ Analytic gradient 계산기 초기화 완료")
+        else:
+            self.joint_grad = None
+            logger.info("ℹ️ Numerical gradient 사용")
         
         # Halton draws 생성
         n_individuals = data[config.individual_id_column].nunique()
@@ -129,7 +155,113 @@ class GPUMultiLatentSimultaneousEstimator:
         # logsumexp
         person_ll = logsumexp(draw_lls) - np.log(len(draw_lls))
         return person_ll
-    
+
+    def _compute_analytic_gradient(self, params: np.ndarray) -> np.ndarray:
+        """
+        Analytic gradient 계산
+
+        Args:
+            params: 파라미터 벡터
+
+        Returns:
+            gradient 벡터
+        """
+        if not self.use_analytic_gradient or self.joint_grad is None:
+            return None
+
+        param_dict = self._unpack_parameters(params)
+        draws = self.halton_generator.get_draws()
+        individual_ids = self.data[self.config.individual_id_column].unique()
+
+        # 전체 그래디언트 초기화
+        total_grad_dict = self._initialize_gradient_dict()
+
+        # 개인별 그래디언트 계산 및 합산
+        for i, ind_id in enumerate(individual_ids):
+            ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
+            ind_draws = draws[i, :, :]
+
+            # 개인별 그래디언트
+            ind_grad = self.joint_grad.compute_individual_gradient(
+                ind_data, ind_draws, param_dict,
+                self.measurement_model, self.structural_model, self.choice_model
+            )
+
+            # 합산
+            self._accumulate_gradient(total_grad_dict, ind_grad)
+
+        # 딕셔너리를 벡터로 변환
+        grad_vector = self._pack_gradient(total_grad_dict)
+
+        return grad_vector
+
+    def _initialize_gradient_dict(self) -> Dict:
+        """그래디언트 딕셔너리 초기화"""
+        grad_dict = {
+            'measurement': {},
+            'structural': {},
+            'choice': {}
+        }
+
+        # 측정모델
+        for lv_name, model in self.measurement_model.models.items():
+            grad_dict['measurement'][lv_name] = {
+                'grad_zeta': np.zeros(model.n_indicators),
+                'grad_tau': np.zeros((model.n_indicators, model.n_thresholds))
+            }
+
+        # 구조모델
+        grad_dict['structural'] = {
+            'grad_gamma_lv': np.zeros(self.config.structural.n_exo),
+            'grad_gamma_x': np.zeros(self.config.structural.n_cov)
+        }
+
+        # 선택모델
+        grad_dict['choice'] = {
+            'grad_intercept': 0.0,
+            'grad_beta': np.zeros(len(self.config.choice.choice_attributes)),
+            'grad_lambda': 0.0
+        }
+
+        return grad_dict
+
+    def _accumulate_gradient(self, total_grad: Dict, ind_grad: Dict):
+        """개인별 그래디언트를 전체 그래디언트에 합산"""
+        # 측정모델
+        for lv_name in ind_grad['measurement'].keys():
+            total_grad['measurement'][lv_name]['grad_zeta'] += ind_grad['measurement'][lv_name]['grad_zeta']
+            total_grad['measurement'][lv_name]['grad_tau'] += ind_grad['measurement'][lv_name]['grad_tau']
+
+        # 구조모델
+        total_grad['structural']['grad_gamma_lv'] += ind_grad['structural']['grad_gamma_lv']
+        total_grad['structural']['grad_gamma_x'] += ind_grad['structural']['grad_gamma_x']
+
+        # 선택모델
+        total_grad['choice']['grad_intercept'] += ind_grad['choice']['grad_intercept']
+        total_grad['choice']['grad_beta'] += ind_grad['choice']['grad_beta']
+        total_grad['choice']['grad_lambda'] += ind_grad['choice']['grad_lambda']
+
+    def _pack_gradient(self, grad_dict: Dict) -> np.ndarray:
+        """그래디언트 딕셔너리를 벡터로 변환"""
+        grad_list = []
+
+        # 1. 측정모델 (sorted order)
+        for lv_name in sorted(grad_dict['measurement'].keys()):
+            lv_grad = grad_dict['measurement'][lv_name]
+            grad_list.append(lv_grad['grad_zeta'])
+            grad_list.append(lv_grad['grad_tau'].flatten())
+
+        # 2. 구조모델
+        grad_list.append(grad_dict['structural']['grad_gamma_lv'])
+        grad_list.append(grad_dict['structural']['grad_gamma_x'])
+
+        # 3. 선택모델
+        grad_list.append(np.array([grad_dict['choice']['grad_intercept']]))
+        grad_list.append(grad_dict['choice']['grad_beta'])
+        grad_list.append(np.array([grad_dict['choice']['grad_lambda']]))
+
+        return np.concatenate(grad_list)
+
     def _joint_log_likelihood(self, params: np.ndarray) -> float:
         """결합 로그우도 계산"""
         param_dict = self._unpack_parameters(params)
@@ -306,41 +438,52 @@ class GPUMultiLatentSimultaneousEstimator:
         def objective(params):
             ll = self._joint_log_likelihood(params)
             return -ll
-        
+
+        # Gradient 함수
+        gradient_func = None
+        if self.use_analytic_gradient:
+            def gradient_func(params):
+                grad = self._compute_analytic_gradient(params)
+                return -grad  # minimize는 최소화이므로 부호 반전
+            logger.info("✅ Analytic gradient 사용")
+        else:
+            logger.info("ℹ️ Numerical gradient 사용 (scipy.optimize.approx_fprime)")
+
         # 최적화
         logger.info(f"\n최적화 시작: {self.config.estimation.optimizer}")
-        
+
         iteration_count = [0]
         last_log_time = [time.time()]
         best_ll = [-np.inf]
-        
+
         def callback(xk):
             iteration_count[0] += 1
             current_time = time.time()
-            
+
             ll = -objective(xk)
-            
+
             is_improvement = ll > best_ll[0]
             if is_improvement:
                 best_ll[0] = ll
-            
-            should_log = (current_time - last_log_time[0] > 5 or 
-                         iteration_count[0] % 5 == 0 or 
+
+            should_log = (current_time - last_log_time[0] > 5 or
+                         iteration_count[0] % 5 == 0 or
                          is_improvement)
-            
+
             if should_log:
                 elapsed = current_time - start_time
                 iter_per_sec = iteration_count[0] / elapsed if elapsed > 0 else 0
-                
+
                 improvement_str = " [✨ NEW BEST]" if is_improvement else ""
                 logger.info(f"  반복 {iteration_count[0]:3d}: LL = {ll:12.4f} (Best: {best_ll[0]:12.4f}){improvement_str}")
                 logger.info(f"         경과: {elapsed:.1f}초 | 속도: {iter_per_sec:.2f} iter/s")
                 last_log_time[0] = current_time
-        
+
         result = optimize.minimize(
             objective,
             initial_params,
             method=self.config.estimation.optimizer,
+            jac=gradient_func,  # Analytic gradient 사용
             callback=callback,
             options={'maxiter': self.config.estimation.max_iterations}
         )

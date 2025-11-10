@@ -331,12 +331,17 @@ class GPUMultiLatentMeasurement:
             total_ll = np.zeros(n_batch)
 
         # 각 잠재변수별 측정모델 우도 계산
-        for lv_name, model in self.models.items():
+        for lv_idx, (lv_name, model) in enumerate(self.models.items()):
             if lv_name not in latent_vars_batch or lv_name not in params:
                 continue
 
             if lv_name not in data_batch:
                 continue
+
+            # 첫 번째 LV에 대해서만 파라미터 로깅 (디버깅용)
+            # if lv_idx == 0:
+            #     print(f"  [GPU 측정모델 내부] {lv_name} zeta (처음 3개): {params[lv_name]['zeta'][:3]}")
+            #     print(f"  [GPU 측정모델 내부] {lv_name} tau[0] (처음 3개): {params[lv_name]['tau'][0][:3]}")
 
             # 배치 우도 계산
             ll_batch = model.log_likelihood_batch(
@@ -363,6 +368,41 @@ class GPUMultiLatentMeasurement:
         for lv_name, model in self.models.items():
             params[lv_name] = model.initialize_parameters()
         return params
+
+    def log_likelihood_batch_draws(self, ind_data: pd.DataFrame,
+                                    lvs_list: list,
+                                    params: Dict[str, Dict]) -> list:
+        """
+        개인의 여러 draws에 대한 측정모델 우도 계산 (GPU 배치)
+
+        Args:
+            ind_data: 개인 데이터 (1행)
+            lvs_list: 각 draw의 잠재변수 값 리스트 [{lv_name: value}, ...]
+            params: {lv_name: {'zeta': ..., 'tau': ...}} 파라미터
+
+        Returns:
+            각 draw의 로그우도 리스트
+        """
+        n_draws = len(lvs_list)
+
+        # 배치 데이터 구성
+        data_batch = {}
+        latent_vars_batch = {}
+
+        for lv_name, model in self.models.items():
+            # 지표 데이터 (모든 draws에 동일)
+            indicators = model.config.indicators
+            ind_values = ind_data[indicators].iloc[0].values
+            data_batch[lv_name] = np.tile(ind_values, (n_draws, 1))  # (n_draws, n_indicators)
+
+            # 잠재변수 값 (각 draw마다 다름)
+            lv_values = np.array([lvs[lv_name] for lvs in lvs_list])
+            latent_vars_batch[lv_name] = lv_values  # (n_draws,)
+
+        # 배치 우도 계산
+        ll_batch = self.log_likelihood_batch(data_batch, latent_vars_batch, params)
+
+        return ll_batch.tolist()
 
     def get_n_parameters(self) -> int:
         """총 파라미터 수"""

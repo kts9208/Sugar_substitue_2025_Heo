@@ -104,6 +104,11 @@ class EstimationConfig:
     # 부트스트랩 설정 (se_method='bootstrap'인 경우)
     n_bootstrap: int = 500
 
+    # 조기 종료 설정
+    early_stopping: bool = False  # 조기 종료 활성화 여부
+    early_stopping_patience: int = 5  # 개선 없는 연속 횟수
+    early_stopping_tol: float = 1e-6  # LL 변화 허용 오차
+
 
 @dataclass
 class ICLVConfig:

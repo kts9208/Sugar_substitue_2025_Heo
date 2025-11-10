@@ -413,18 +413,23 @@ class JointGradient:
     Reference: Apollo R package - apollo_estimate.R, apollo_gradient.R
     """
 
-    def __init__(self, measurement_grad: MeasurementGradient,
+    def __init__(self, measurement_grad,
                  structural_grad: StructuralGradient,
                  choice_grad: ChoiceGradient):
         """
         Args:
             measurement_grad: 측정모델 그래디언트 계산기
+                - 단일 LV: MeasurementGradient 객체
+                - 다중 LV: Dict[str, MeasurementGradient]
             structural_grad: 구조모델 그래디언트 계산기
             choice_grad: 선택모델 그래디언트 계산기
         """
         self.measurement_grad = measurement_grad
         self.structural_grad = structural_grad
         self.choice_grad = choice_grad
+
+        # 다중 잠재변수 여부 확인
+        self.is_multi_latent = isinstance(measurement_grad, dict)
 
     def compute_gradient(self, data: pd.DataFrame, params_dict: Dict,
                         draws: np.ndarray, individual_id_column: str,
