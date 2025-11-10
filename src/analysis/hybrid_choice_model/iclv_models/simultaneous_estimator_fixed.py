@@ -228,11 +228,11 @@ class SimultaneousEstimator:
 
         self.iteration_logger.addHandler(self.log_file_handler)
 
-        # 콘솔 핸들러도 추가 (선택적)
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-        console_handler.setFormatter(formatter)
-        self.iteration_logger.addHandler(console_handler)
+        # 콘솔 핸들러 제거 (중복 방지 - 파일만 사용)
+        # console_handler = logging.StreamHandler()
+        # console_handler.setLevel(logging.INFO)
+        # console_handler.setFormatter(formatter)
+        # self.iteration_logger.addHandler(console_handler)
 
         self.iteration_logger.info("="*70)
         self.iteration_logger.info("ICLV 모델 추정 시작")
@@ -275,23 +275,27 @@ class SimultaneousEstimator:
         self.iteration_logger.info("SimultaneousEstimator.estimate() 시작")
         self.logger.info("ICLV 모델 동시 추정 시작")
 
+        # 메모리 모니터의 logger를 iteration_logger로 업데이트
+        if hasattr(self, 'memory_monitor') and self.memory_monitor is not None:
+            self.memory_monitor.logger = self.iteration_logger
+
         self.data = data
         n_individuals = data[self.config.individual_id_column].nunique()
 
         self.iteration_logger.info(f"데이터 shape: {data.shape}")
         self.iteration_logger.info(f"개인 수: {n_individuals}")
-        self.logger.info(f"개인 수: {n_individuals}")
 
-        # Halton draws 생성
-        self.iteration_logger.info(f"Halton draws 생성 시작... (n_draws={self.config.estimation.n_draws}, n_individuals={n_individuals})")
-        self.logger.info(f"Halton draws 생성 중... (n_draws={self.config.estimation.n_draws})")
-        self.halton_generator = HaltonDrawGenerator(
-            n_draws=self.config.estimation.n_draws,
-            n_individuals=n_individuals,
-            scramble=self.config.estimation.scramble_halton
-        )
-        self.iteration_logger.info("Halton draws 생성 완료")
-        self.logger.info("Halton draws 생성 완료")
+        # Halton draws 생성 (이미 설정되어 있으면 건너뛰기)
+        if not hasattr(self, 'halton_generator') or self.halton_generator is None:
+            self.iteration_logger.info(f"Halton draws 생성 시작... (n_draws={self.config.estimation.n_draws}, n_individuals={n_individuals})")
+            self.halton_generator = HaltonDrawGenerator(
+                n_draws=self.config.estimation.n_draws,
+                n_individuals=n_individuals,
+                scramble=self.config.estimation.scramble_halton
+            )
+            self.iteration_logger.info("Halton draws 생성 완료")
+        else:
+            self.iteration_logger.info("Halton draws 이미 설정됨 (건너뛰기)")
 
         # Gradient calculators 초기화 (Apollo 방식)
         use_gradient = self.config.estimation.optimizer in ['BFGS', 'L-BFGS-B']
@@ -302,39 +306,126 @@ class SimultaneousEstimator:
 
         if self.use_analytic_gradient:
             self.iteration_logger.info("Analytic gradient calculators 초기화 (Apollo 방식)...")
-            self.measurement_grad = MeasurementGradient(
-                n_indicators=len(self.config.measurement.indicators),
-                n_categories=self.config.measurement.n_categories
-            )
-            self.structural_grad = StructuralGradient(
-                n_sociodem=len(self.config.structural.sociodemographics),
-                error_variance=1.0
-            )
+
+            # 다중 잠재변수 지원 확인
+            from .multi_latent_config import MultiLatentConfig
+            is_multi_latent = isinstance(self.config, MultiLatentConfig)
+
+            if is_multi_latent:
+                # 다중 잠재변수: MultiLatentMeasurementGradient 사용
+                from .multi_latent_gradient import MultiLatentMeasurementGradient
+                self.measurement_grad = MultiLatentMeasurementGradient(
+                    self.config.measurement_configs
+                )
+                self.iteration_logger.info(f"다중 잠재변수 측정모델 gradient 초기화: {len(self.config.measurement_configs)}개 LV")
+            else:
+                # 단일 잠재변수
+                self.measurement_grad = MeasurementGradient(
+                    n_indicators=len(self.config.measurement.indicators),
+                    n_categories=self.config.measurement.n_categories
+                )
+                self.iteration_logger.info("단일 잠재변수 측정모델 gradient 초기화")
+
+            # 구조모델 gradient
+            if is_multi_latent:
+                # 다중 잠재변수: MultiLatentStructuralGradient 사용
+                from .multi_latent_gradient import MultiLatentStructuralGradient
+                self.structural_grad = MultiLatentStructuralGradient(
+                    n_exo=self.config.structural.n_exo,
+                    n_cov=self.config.structural.n_cov,
+                    error_variance=self.config.structural.error_variance
+                )
+                self.iteration_logger.info("다중 잠재변수 구조모델 gradient 초기화")
+            else:
+                # 단일 잠재변수
+                self.structural_grad = StructuralGradient(
+                    n_sociodem=len(self.config.structural.sociodemographics),
+                    error_variance=1.0
+                )
+                self.iteration_logger.info("단일 잠재변수 구조모델 gradient 초기화")
+
+            # 선택모델 gradient (다중 잠재변수도 동일)
             self.choice_grad = ChoiceGradient(
                 n_attributes=len(self.config.choice.choice_attributes)
             )
-            self.joint_grad = JointGradient(
-                self.measurement_grad,
-                self.structural_grad,
-                self.choice_grad
-            )
-            self.iteration_logger.info("Analytic gradient calculators 초기화 완료")
+
+            # JointGradient
+            if is_multi_latent:
+                # 다중 잠재변수: MultiLatentJointGradient 사용
+                from .multi_latent_gradient import MultiLatentJointGradient
+
+                # GPU 사용 여부 확인
+                use_gpu_gradient = False
+                gpu_measurement_model = None
+
+                if hasattr(self, 'use_gpu') and self.use_gpu:
+                    if hasattr(self, 'gpu_measurement_model') and self.gpu_measurement_model is not None:
+                        use_gpu_gradient = True
+                        gpu_measurement_model = self.gpu_measurement_model
+                        self.iteration_logger.info("GPU 배치 그래디언트 활성화")
+
+                self.joint_grad = MultiLatentJointGradient(
+                    self.measurement_grad,
+                    self.structural_grad,
+                    self.choice_grad,
+                    use_gpu=use_gpu_gradient,
+                    gpu_measurement_model=gpu_measurement_model
+                )
+                self.iteration_logger.info("다중 잠재변수 JointGradient 초기화 완료")
+            else:
+                # 단일 잠재변수
+                self.joint_grad = JointGradient(
+                    self.measurement_grad,
+                    self.structural_grad,
+                    self.choice_grad
+                )
+                self.iteration_logger.info("단일 잠재변수 JointGradient 초기화 완료")
 
         # 초기 파라미터 설정
         self.iteration_logger.info("초기 파라미터 설정 시작...")
-        self.logger.info("초기 파라미터 설정 중...")
         initial_params = self._get_initial_parameters(
             measurement_model, structural_model, choice_model
         )
         self.iteration_logger.info(f"초기 파라미터 설정 완료 (총 {len(initial_params)}개)")
-        self.logger.info(f"초기 파라미터 설정 완료 (총 {len(initial_params)}개)")
 
-        # 결합 우도함수 정의 (gradient check 로깅 추가)
+        # 결합 우도함수 정의 (단계별 로깅 추가)
         iteration_count = [0]  # Mutable counter
         best_ll = [-np.inf]  # Track best log-likelihood
+        func_call_count = [0]  # 함수 호출 횟수 (우도 계산)
+        major_iter_count = [0]  # Major iteration 카운터
+        line_search_call_count = [0]  # Line search 내 함수 호출 카운터
+        last_major_iter_func_value = [None]  # 마지막 major iteration의 함수값
+        current_major_iter_start_call = [0]  # 현재 major iteration 시작 시 함수 호출 번호
+        line_search_func_values = []  # Line search 중 함수값 기록
+        line_search_start_func_value = [None]  # Line search 시작 시 함수값
+        line_search_start_params = [None]  # Line search 시작 시 파라미터
+        line_search_gradient = [None]  # Line search 시작 시 gradient
+        line_search_directional_derivative = [None]  # ∇f(x)^T·d (시작 시)
 
         def negative_log_likelihood(params):
-            iteration_count[0] += 1
+            func_call_count[0] += 1
+
+            # Line search 중인지 판단
+            # Major iteration 시작 직후 첫 호출이 아니면 line search 중
+            calls_since_major_start = func_call_count[0] - current_major_iter_start_call[0]
+
+            if calls_since_major_start == 1:
+                # Major iteration 시작 시 첫 함수 호출
+                context = f"Major Iteration #{major_iter_count[0] + 1} 시작"
+                line_search_call_count[0] = 0
+                line_search_func_values.clear()
+                line_search_start_params[0] = params.copy()
+            elif calls_since_major_start > 1:
+                # Line search 중
+                line_search_call_count[0] += 1
+                context = f"Line Search 함수 호출 #{line_search_call_count[0]}"
+            else:
+                # 초기 호출
+                context = "초기 함수값 계산"
+
+            # 단계 로그: 우도 계산 시작
+            self.iteration_logger.info(f"\n[{context}] [단계 1/2] 전체 우도 계산")
+
             ll = self._joint_log_likelihood(
                 params, measurement_model, structural_model, choice_model
             )
@@ -346,19 +437,43 @@ class SimultaneousEstimator:
             else:
                 improvement = ""
 
-            # Log every iteration with more detail
-            # 개인 수에 따라 로깅 빈도 조정
-            n_individuals = self.data[self.config.individual_id_column].nunique()
-            log_interval = 10 if n_individuals > 100 else 5
+            # 함수값 출력
+            neg_ll = -ll  # scipy가 최소화하는 값
+            log_msg = f"  LL = {ll:12.4f} (Best: {best_ll[0]:12.4f}) {improvement}"
+            self.iteration_logger.info(log_msg)
 
-            if iteration_count[0] % log_interval == 0 or improvement:
-                log_msg = (
-                    f"Iter {iteration_count[0]:4d}: LL = {ll:12.4f} "
-                    f"(Best: {best_ll[0]:12.4f}) {improvement}"
-                )
-                self.iteration_logger.info(log_msg)
+            # Line search 중이면 함수값 변화 로깅
+            if calls_since_major_start == 1:
+                line_search_start_func_value[0] = neg_ll
+                line_search_start_params[0] = params.copy()
+            elif calls_since_major_start > 1:
+                line_search_func_values.append(neg_ll)
 
-            return -ll
+                # 파라미터 변화량과 함수값 변화 로깅
+                if line_search_start_params[0] is not None:
+                    param_diff = params - line_search_start_params[0]
+                    param_change_norm = np.linalg.norm(param_diff)
+
+                    f_start = line_search_start_func_value[0]
+                    f_current = neg_ll
+                    f_decrease = f_start - f_current
+
+                    self.iteration_logger.info(
+                        f"  파라미터 변화량 (L2 norm): {param_change_norm:.6e}\n"
+                        f"  함수값 변화: {f_decrease:+.4f} ({'감소' if f_decrease > 0 else '증가'})"
+                    )
+
+                # Line search가 maxls에 도달했는지 체크
+                if line_search_call_count[0] >= 10:  # maxls = 10
+                    self.iteration_logger.info(
+                        f"\n⚠️  [Line Search 경고] maxls={10}에 도달했습니다.\n"
+                        f"  시작 함수값: {line_search_start_func_value[0]:.4f}\n"
+                        f"  현재 함수값: {neg_ll:.4f}\n"
+                        f"  변화량: {neg_ll - line_search_start_func_value[0]:.4f}\n"
+                        f"  Line search가 Wolfe 조건을 만족하는 step size를 찾지 못했을 수 있습니다."
+                    )
+
+            return neg_ll
 
         # Get parameter bounds
         self.iteration_logger.info("파라미터 bounds 계산 시작...")
@@ -371,10 +486,26 @@ class SimultaneousEstimator:
         use_gradient = self.config.estimation.optimizer in ['BFGS', 'L-BFGS-B']
 
         # Gradient 함수 정의 (Apollo 방식)
+        grad_call_count = [0]  # 그래디언트 호출 횟수
+
         def gradient_function(params):
             """Analytic gradient 계산 (Apollo 방식)"""
             if not self.use_analytic_gradient:
                 return None  # 수치적 그래디언트 사용
+
+            grad_call_count[0] += 1
+
+            # 단계 로그: 그래디언트 계산 시작 (모든 호출에서 출력)
+            self.iteration_logger.info(f"\n[단계 2/2] Analytic Gradient 계산 #{grad_call_count[0]}")
+
+            # 메모리 체크 (그래디언트 계산 전) - 5회마다 로깅
+            if hasattr(self, 'memory_monitor'):
+                # 5회마다 메모리 상태 로깅
+                if grad_call_count[0] % 5 == 1:
+                    self.memory_monitor.log_memory_stats(f"Gradient 계산 #{grad_call_count[0]}")
+
+                # 항상 임계값 체크 및 필요시 정리
+                mem_info = self.memory_monitor.check_and_cleanup(f"Gradient 계산 #{grad_call_count[0]}")
 
             # 파라미터 딕셔너리로 변환
             param_dict = self._unpack_parameters(
@@ -385,27 +516,130 @@ class SimultaneousEstimator:
             use_parallel = getattr(self.config.estimation, 'use_parallel', False)
             n_cores = getattr(self.config.estimation, 'n_cores', None)
 
-            # Analytic gradient 계산
-            grad_dict = self.joint_grad.compute_gradient(
-                data=self.data,
-                params_dict=param_dict,
-                draws=self.halton_generator.get_draws(),
-                individual_id_column=self.config.individual_id_column,
-                measurement_model=measurement_model,
-                structural_model=structural_model,
-                choice_model=choice_model,
-                indicators=self.config.measurement.indicators,
-                sociodemographics=self.config.structural.sociodemographics,
-                choice_attributes=self.config.choice.choice_attributes,
-                use_parallel=use_parallel,
-                n_cores=n_cores
-            )
+            # 다중 잠재변수 여부 확인
+            from .multi_latent_config import MultiLatentConfig
+            is_multi_latent = isinstance(self.config, MultiLatentConfig)
+
+            if is_multi_latent:
+                # 다중 잠재변수: compute_individual_gradient 사용
+                from .multi_latent_gradient import MultiLatentJointGradient
+
+                # 개인별 그래디언트 계산 및 합산
+                individual_ids = self.data[self.config.individual_id_column].unique()
+                total_grad_dict = None
+
+                for ind_id in individual_ids:
+                    ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
+                    ind_idx = np.where(individual_ids == ind_id)[0][0]
+                    ind_draws = self.halton_generator.get_draws()[ind_idx]
+
+                    ind_grad = self.joint_grad.compute_individual_gradient(
+                        ind_data=ind_data,
+                        ind_draws=ind_draws,
+                        params_dict=param_dict,
+                        measurement_model=measurement_model,
+                        structural_model=structural_model,
+                        choice_model=choice_model
+                    )
+
+                    # 그래디언트 합산 (재귀적으로 처리)
+                    if total_grad_dict is None:
+                        # 첫 번째 개인: deep copy
+                        import copy
+                        total_grad_dict = copy.deepcopy(ind_grad)
+                    else:
+                        # 재귀적으로 합산
+                        def add_gradients(total, ind):
+                            for key in total:
+                                if isinstance(total[key], dict):
+                                    add_gradients(total[key], ind[key])
+                                elif isinstance(total[key], np.ndarray):
+                                    total[key] += ind[key]
+                                else:
+                                    total[key] += ind[key]
+
+                        add_gradients(total_grad_dict, ind_grad)
+
+                grad_dict = total_grad_dict
+            else:
+                # 단일 잠재변수: compute_gradient 사용
+                grad_dict = self.joint_grad.compute_gradient(
+                    data=self.data,
+                    params_dict=param_dict,
+                    draws=self.halton_generator.get_draws(),
+                    individual_id_column=self.config.individual_id_column,
+                    measurement_model=measurement_model,
+                    structural_model=structural_model,
+                    choice_model=choice_model,
+                    indicators=self.config.measurement.indicators,
+                    sociodemographics=self.config.structural.sociodemographics,
+                    choice_attributes=self.config.choice.choice_attributes,
+                    use_parallel=use_parallel,
+                    n_cores=n_cores
+                )
 
             # 그래디언트 벡터로 변환 (파라미터 순서와 동일)
             grad_vector = self._pack_gradient(grad_dict, measurement_model, structural_model, choice_model)
 
             # Negative gradient (minimize -LL)
-            return -grad_vector
+            neg_grad = -grad_vector
+
+            # Line search 중인지 판단
+            calls_since_major_start = func_call_count[0] - current_major_iter_start_call[0]
+
+            # Gradient 방향 검증 (첫 번째 호출 시)
+            if grad_call_count[0] == 1:
+                grad_norm = np.linalg.norm(neg_grad)
+                self.iteration_logger.info(
+                    f"\n[Gradient 방향 검증]\n"
+                    f"  Gradient norm: {grad_norm:.6e}\n"
+                    f"  Gradient (처음 5개): {neg_grad[:5]}\n"
+                    f"  Gradient (마지막 5개): {neg_grad[-5:]}\n"
+                    f"  주의: scipy는 이 gradient를 사용하여 descent direction을 계산합니다.\n"
+                    f"       d = -H^(-1) · gradient이므로, gradient가 양수면 d는 음수 방향입니다."
+                )
+
+            # Line search 시작 시 방향 미분 저장
+            if calls_since_major_start == 1:
+                # Major iteration 시작 시 gradient 저장
+                line_search_gradient[0] = neg_grad.copy()
+                # 다음 함수 호출에서 탐색 방향을 알 수 있으므로, 방향 미분은 나중에 계산
+
+            # Line search 중이면 Curvature 조건 계산
+            elif calls_since_major_start > 1 and line_search_start_params[0] is not None:
+                # 탐색 방향 계산: d = params - line_search_start_params
+                search_direction = params - line_search_start_params[0]
+
+                # 현재 위치에서 방향 미분: ∇f(x + α·d)^T·d
+                directional_derivative_new = np.dot(neg_grad, search_direction)
+
+                # Line search 시작 시 방향 미분 계산 (첫 line search 호출 시)
+                if line_search_directional_derivative[0] is None and line_search_gradient[0] is not None:
+                    # 시작 위치에서 방향 미분: ∇f(x)^T·d
+                    line_search_directional_derivative[0] = np.dot(line_search_gradient[0], search_direction)
+
+                # Curvature 조건 체크
+                if line_search_directional_derivative[0] is not None:
+                    dd_start = line_search_directional_derivative[0]
+                    dd_new = directional_derivative_new
+
+                    # Curvature 조건: |∇f(x + α·d)^T·d| ≤ c2·|∇f(x)^T·d|
+                    c2 = 0.9  # scipy 기본값
+                    curvature_lhs = abs(dd_new)
+                    curvature_rhs = c2 * abs(dd_start)
+                    curvature_satisfied = curvature_lhs <= curvature_rhs
+
+                    self.iteration_logger.info(
+                        f"\n[Curvature 조건 체크]\n"
+                        f"  ∇f(x)^T·d (시작): {dd_start:.6e}\n"
+                        f"  ∇f(x+α·d)^T·d (현재): {dd_new:.6e}\n"
+                        f"  |∇f(x+α·d)^T·d|: {curvature_lhs:.6e}\n"
+                        f"  c2·|∇f(x)^T·d|: {curvature_rhs:.6e}\n"
+                        f"  Curvature 조건: {'✓ 만족' if curvature_satisfied else '❌ 불만족'}\n"
+                        f"  → Gradient가 {'충분히 평평해짐' if curvature_satisfied else '아직 가파름'}"
+                    )
+
+            return neg_grad
 
         print("=" * 70, flush=True)
         if use_gradient:
@@ -430,19 +664,20 @@ class SimultaneousEstimator:
         else:
             self.iteration_logger.info("순차처리 사용")
 
-        # 조기 종료를 위한 Wrapper 클래스
+        # 조기 종료를 위한 Wrapper 클래스 (BFGS 정상 종료 활용)
         class EarlyStoppingWrapper:
             """
             목적 함수와 gradient 함수를 감싸서 조기 종료 구현
-            매 함수 호출마다 LL 개선을 체크하여 확실한 조기 종료 보장
+            StopIteration 예외 대신 매우 큰 값을 반환하여 BFGS가 정상 종료하도록 유도
+            → BFGS가 정상 종료하면 result.hess_inv 자동 제공 (추가 계산 0회!)
             """
 
-            def __init__(self, func, grad_func, patience=20, tol=1e-6, logger=None, iteration_logger=None):
+            def __init__(self, func, grad_func, patience=5, tol=1e-6, logger=None, iteration_logger=None):
                 """
                 Args:
                     func: 목적 함수 (negative log-likelihood)
                     grad_func: Gradient 함수
-                    patience: 함수 호출 기준 개선 없는 횟수 (반복 기준보다 많아야 함)
+                    patience: 함수 호출 기준 개선 없는 횟수 (기본값: 5)
                     tol: LL 변화 허용 오차 (절대값)
                     logger: 메인 로거
                     iteration_logger: 반복 로거
@@ -456,16 +691,20 @@ class SimultaneousEstimator:
 
                 self.best_ll = np.inf
                 self.best_x = None  # 최적 파라미터 저장
-                self.best_hess_inv = None  # BFGS의 Hessian 역행렬 저장
                 self.no_improvement_count = 0
                 self.func_call_count = 0
                 self.grad_call_count = 0
                 self.early_stopped = False
+                self.bfgs_iteration_count = 0  # BFGS iteration 카운터
 
             def objective(self, x):
                 """
-                목적 함수 wrapper - 매 호출마다 조기 종료 체크
+                목적 함수 wrapper - 조기 종료 시 매우 큰 값 반환
                 """
+                # 이미 조기 종료된 경우: 매우 큰 값 반환하여 BFGS가 종료하도록 유도
+                if self.early_stopped:
+                    return 1e10
+
                 self.func_call_count += 1
                 current_ll = self.func(x)
 
@@ -479,7 +718,7 @@ class SimultaneousEstimator:
                     # 개선 없음
                     self.no_improvement_count += 1
 
-                # 조기 종료 조건
+                # 조기 종료 조건 체크
                 if self.no_improvement_count >= self.patience:
                     self.early_stopped = True
                     msg = f"조기 종료: {self.patience}회 연속 함수 호출에서 LL 개선 없음 (Best LL={self.best_ll:.4f})"
@@ -487,24 +726,99 @@ class SimultaneousEstimator:
                         self.logger.info(msg)
                     if self.iteration_logger:
                         self.iteration_logger.info(msg)
-                    raise StopIteration(msg)
+                    # StopIteration 대신 매우 큰 값 반환
+                    return 1e10
 
                 return current_ll
 
             def gradient(self, x):
                 """
-                Gradient 함수 wrapper
+                Gradient 함수 wrapper - 조기 종료 시 0 벡터 반환
                 """
+                # 이미 조기 종료된 경우: 0 벡터 반환하여 BFGS가 종료하도록 유도
+                if self.early_stopped:
+                    return np.zeros_like(x)
+
                 self.grad_call_count += 1
                 return self.grad_func(x)
 
             def callback(self, xk):
                 """
-                BFGS callback - 매 반복마다 호출됨
-                scipy.optimize.minimize의 BFGS는 callback에 OptimizeResult를 전달하지 않으므로
-                여기서는 파라미터만 받음. Hessian은 minimize 완료 후 result 객체에서 가져옴.
+                BFGS callback - 매 Major iteration마다 호출됨
+                조기 종료 시 최적 파라미터로 복원
                 """
-                pass
+                self.bfgs_iteration_count += 1
+                major_iter_count[0] = self.bfgs_iteration_count
+
+                # Major iteration 완료 로깅
+                if self.iteration_logger:
+                    # 현재 함수값 계산
+                    current_f = self.func(xk)
+                    current_ll = -current_f
+
+                    # Line search 통계
+                    line_search_calls = line_search_call_count[0]
+
+                    # Line search 성공 여부 판단
+                    if line_search_start_func_value[0] is not None:
+                        f_start = line_search_start_func_value[0]
+                        f_final = current_f
+                        f_decrease = f_start - f_final
+
+                        if f_decrease > 0:
+                            ls_status = f"✓ 성공 (함수값 감소: {f_decrease:.4f})"
+                        elif f_decrease == 0:
+                            ls_status = f"⚠️  정체 (함수값 변화 없음)"
+                        else:
+                            ls_status = f"❌ 실패 (함수값 증가: {-f_decrease:.4f})"
+                    else:
+                        ls_status = "N/A (첫 iteration)"
+
+                    # ftol 계산 (이전 major iteration과 비교)
+                    if last_major_iter_func_value[0] is not None:
+                        f_prev = last_major_iter_func_value[0]
+                        f_curr = current_f
+                        rel_change = abs(f_prev - f_curr) / max(abs(f_prev), abs(f_curr), 1.0)
+                        ftol_status = f"ftol = {rel_change:.6e} (기준: 1e-3)"
+                        if rel_change <= 1e-3:
+                            ftol_status += " ✓ 수렴 조건 만족"
+                    else:
+                        ftol_status = "ftol = N/A (첫 iteration)"
+
+                    # Gradient norm 계산
+                    if self.grad_func:
+                        grad = self.grad_func(xk)
+                        grad_norm = np.linalg.norm(grad, ord=np.inf)
+                        gtol_status = f"gtol = {grad_norm:.6e} (기준: 1e-3)"
+                        if grad_norm <= 1e-3:
+                            gtol_status += " ✓ 수렴 조건 만족"
+                    else:
+                        gtol_status = "gtol = N/A"
+
+                    self.iteration_logger.info(
+                        f"\n{'='*80}\n"
+                        f"[Major Iteration #{self.bfgs_iteration_count} 완료]\n"
+                        f"  최종 LL: {current_ll:.4f}\n"
+                        f"  Line Search: {line_search_calls}회 함수 호출 - {ls_status}\n"
+                        f"  함수 호출: {self.func_call_count}회 (누적)\n"
+                        f"  그래디언트 호출: {self.grad_call_count}회 (누적)\n"
+                        f"  수렴 조건:\n"
+                        f"    - {ftol_status}\n"
+                        f"    - {gtol_status}\n"
+                        f"  Hessian 근사: BFGS 공식으로 업데이트 완료\n"
+                        f"{'='*80}"
+                    )
+
+                    # 다음 major iteration을 위한 준비
+                    last_major_iter_func_value[0] = current_f
+                    current_major_iter_start_call[0] = func_call_count[0]
+                    line_search_call_count[0] = 0  # Line search 카운터 리셋
+                    line_search_func_values.clear()
+                    line_search_directional_derivative[0] = None  # 방향 미분 리셋
+
+                if self.early_stopped and self.best_x is not None:
+                    # 조기 종료 후에는 최적 파라미터를 유지
+                    xk[:] = self.best_x
 
         if use_gradient:
             self.logger.info(f"최적화 시작: {self.config.estimation.optimizer} (gradient-based)")
@@ -516,85 +830,144 @@ class SimultaneousEstimator:
                 self.logger.info("수치적 그래디언트 사용 (2-point finite difference)")
                 self.iteration_logger.info("수치적 그래디언트 사용 (2-point finite difference)")
 
+            # 조기 종료 설정 확인
+            use_early_stopping = getattr(self.config.estimation, 'early_stopping', False)
+            early_stopping_patience = getattr(self.config.estimation, 'early_stopping_patience', 5)
+            early_stopping_tol = getattr(self.config.estimation, 'early_stopping_tol', 1e-6)
+
             # 조기 종료 Wrapper 생성
             early_stopping_wrapper = EarlyStoppingWrapper(
                 func=negative_log_likelihood,
                 grad_func=gradient_function if self.use_analytic_gradient else None,
-                patience=20,  # 함수 호출 기준 (반복당 여러 번 호출되므로 반복 기준보다 많아야 함)
-                tol=1e-6,
+                patience=early_stopping_patience if use_early_stopping else 999999,  # 비활성화 시 매우 큰 값
+                tol=early_stopping_tol,
                 logger=self.logger,
                 iteration_logger=self.iteration_logger
             )
 
-            self.logger.info("조기 종료 활성화: 20회 연속 함수 호출에서 LL 개선 없으면 종료 (tol=1e-6)")
-            self.iteration_logger.info("조기 종료 활성화: 20회 연속 함수 호출에서 LL 개선 없으면 종료 (tol=1e-6)")
+            # 초기 함수 호출 시작 위치 설정
+            current_major_iter_start_call[0] = func_call_count[0]
 
-            # BFGS 또는 L-BFGS-B
-            try:
-                result = optimize.minimize(
-                    early_stopping_wrapper.objective,  # Wrapper의 objective 사용
-                    initial_params,
-                    method=self.config.estimation.optimizer,
-                    jac=early_stopping_wrapper.gradient if self.use_analytic_gradient else '2-point',
-                    bounds=bounds if self.config.estimation.optimizer == 'L-BFGS-B' else None,
-                    callback=early_stopping_wrapper.callback,  # Callback 추가
-                    options={
-                        'maxiter': 200,  # 안전장치 (조기 종료가 작동하므로 낮춰도 됨)
-                        'ftol': 1e-6,
-                        'gtol': 1e-5,
-                        'disp': True
-                    }
+            if use_early_stopping:
+                self.logger.info(f"조기 종료 활성화: {early_stopping_patience}회 연속 함수 호출에서 LL 개선 없으면 종료 (tol={early_stopping_tol})")
+                self.iteration_logger.info(f"조기 종료 활성화: {early_stopping_patience}회 연속 함수 호출에서 LL 개선 없으면 종료 (tol={early_stopping_tol})")
+            else:
+                self.logger.info("조기 종료 비활성화 (정상 종료만 사용)")
+                self.iteration_logger.info("조기 종료 비활성화 (정상 종료만 사용)")
+
+            # BFGS 또는 L-BFGS-B (정상 종료로 처리)
+            # 수치적 그래디언트 함수 (epsilon 제어)
+            if not self.use_analytic_gradient:
+                from scipy.optimize import approx_fprime
+
+                # 그래디언트 호출 카운터
+                grad_call_count = [0]
+
+                def numerical_gradient(x):
+                    grad_call_count[0] += 1
+                    grad = approx_fprime(x, early_stopping_wrapper.objective, epsilon=1e-4)
+
+                    # 처음 5번만 로깅
+                    if grad_call_count[0] <= 5:
+                        self.iteration_logger.info(f"[그래디언트 계산 #{grad_call_count[0]}]")
+                        self.iteration_logger.info(f"  파라미터 (처음 10개): {x[:10]}")
+                        self.iteration_logger.info(f"  그래디언트 (처음 10개): {grad[:10]}")
+                        self.iteration_logger.info(f"  그래디언트 norm: {np.linalg.norm(grad):.6f}")
+                        self.iteration_logger.info(f"  그래디언트 max: {np.max(np.abs(grad)):.6f}")
+
+                    return grad
+
+                jac_function = numerical_gradient
+            else:
+                jac_function = early_stopping_wrapper.gradient
+
+            result = optimize.minimize(
+                early_stopping_wrapper.objective,  # Wrapper의 objective 사용
+                initial_params,
+                method=self.config.estimation.optimizer,
+                jac=jac_function,
+                bounds=bounds if self.config.estimation.optimizer == 'L-BFGS-B' else None,
+                callback=early_stopping_wrapper.callback,  # Callback 추가
+                options={
+                    'maxiter': 200,  # Major iteration 최대 횟수
+                    'ftol': 1e-3,    # 함수값 상대적 변화 0.1% 이하면 종료
+                    'gtol': 1e-3,    # 그래디언트 norm 허용 오차
+                    'maxls': 10,     # Line search 최대 횟수 (기본값: 20)
+                    'disp': True
+                }
+            )
+
+            # 최적화 결과 로깅
+            self.logger.info(f"\n최적화 종료: {result.message}")
+            self.iteration_logger.info(f"\n최적화 종료: {result.message}")
+            self.logger.info(f"  성공 여부: {result.success}")
+            self.iteration_logger.info(f"  성공 여부: {result.success}")
+            self.logger.info(f"  Major iterations: {major_iter_count[0]}")
+            self.iteration_logger.info(f"  Major iterations: {major_iter_count[0]}")
+            self.logger.info(f"  함수 호출: {result.nfev}회")
+            self.iteration_logger.info(f"  함수 호출: {result.nfev}회")
+
+            # Line search 실패 경고
+            if not result.success and 'ABNORMAL_TERMINATION_IN_LNSRCH' in result.message:
+                self.logger.warning(
+                    "\n⚠️  Line Search 실패로 종료되었습니다.\n"
+                    "  가능한 원인:\n"
+                    "    1. Gradient 계산 오류\n"
+                    "    2. 함수가 너무 평평함 (flat region)\n"
+                    "    3. 수치적 불안정성\n"
+                    "  권장 조치:\n"
+                    "    - maxls 값을 증가 (현재: 10)\n"
+                    "    - ftol, gtol 값을 완화\n"
+                    "    - 초기값 변경"
+                )
+                self.iteration_logger.warning(
+                    "\n⚠️  Line Search 실패로 종료되었습니다.\n"
+                    "  가능한 원인:\n"
+                    "    1. Gradient 계산 오류\n"
+                    "    2. 함수가 너무 평평함 (flat region)\n"
+                    "    3. 수치적 불안정성\n"
+                    "  권장 조치:\n"
+                    "    - maxls 값을 증가 (현재: 10)\n"
+                    "    - ftol, gtol 값을 완화\n"
+                    "    - 초기값 변경"
                 )
 
-                # 정상 종료 시 BFGS의 hess_inv 저장
-                if hasattr(result, 'hess_inv'):
-                    early_stopping_wrapper.best_hess_inv = result.hess_inv
-            except StopIteration as e:
-                # 조기 종료된 경우 - 최적 파라미터로 result 객체 생성
+            # 조기 종료된 경우 최적 파라미터로 복원
+            if early_stopping_wrapper.early_stopped:
                 from scipy.optimize import OptimizeResult
 
-                # Wrapper에 저장된 최적 파라미터 사용
+                # Wrapper에 저장된 최적 파라미터로 result 객체 재생성
                 result = OptimizeResult(
                     x=early_stopping_wrapper.best_x,
                     success=True,
-                    message=f"Early stopping: {str(e)}",
+                    message=f"Early stopping: {early_stopping_wrapper.patience}회 연속 개선 없음",
                     fun=early_stopping_wrapper.best_ll,
                     nit=early_stopping_wrapper.func_call_count,
                     nfev=early_stopping_wrapper.func_call_count,
-                    njev=early_stopping_wrapper.grad_call_count
+                    njev=early_stopping_wrapper.grad_call_count,
+                    hess_inv=None  # 나중에 설정
                 )
 
-                # 조기 종료 후 Hessian 역행렬 계산 (BFGS를 최적점에서 짧게 재실행)
-                if self.config.estimation.calculate_se:
-                    self.logger.info("조기 종료 후 Hessian 역행렬 계산 중 (BFGS 재실행)...")
-                    self.iteration_logger.info("조기 종료 후 Hessian 역행렬 계산 중 (BFGS 재실행)...")
-                    try:
-                        # 최적 파라미터에서 BFGS를 1-2회만 실행하여 Hessian 역행렬 얻기
-                        hess_result = optimize.minimize(
-                            negative_log_likelihood,
-                            early_stopping_wrapper.best_x,
-                            method='BFGS',
-                            jac=gradient_function if self.use_analytic_gradient else '2-point',
-                            options={
-                                'maxiter': 2,  # 1-2회만 실행
-                                'disp': False
-                            }
-                        )
+            # Hessian 역행렬 처리
+            if self.config.estimation.calculate_se:
+                # BFGS의 hess_inv가 있으면 사용 (추가 계산 0회!)
+                if hasattr(result, 'hess_inv') and result.hess_inv is not None:
+                    self.logger.info("Hessian 역행렬: BFGS에서 자동 제공 (추가 계산 0회)")
+                    self.iteration_logger.info("Hessian 역행렬: BFGS에서 자동 제공 (추가 계산 0회)")
+                else:
+                    # BFGS hess_inv가 없으면 경고만 출력 (L-BFGS-B의 경우)
+                    self.logger.warning("Hessian 역행렬 없음 (L-BFGS-B는 hess_inv 제공 안 함)")
+                    self.iteration_logger.warning("Hessian 역행렬 없음 (L-BFGS-B는 hess_inv 제공 안 함)")
+                    self.logger.info("표준오차 계산을 위해서는 BFGS 방법 사용 권장")
+                    self.iteration_logger.info("표준오차 계산을 위해서는 BFGS 방법 사용 권장")
 
-                        if hasattr(hess_result, 'hess_inv'):
-                            result.hess_inv = hess_result.hess_inv
-                            self.logger.info("Hessian 역행렬 계산 완료 (BFGS 재실행)")
-                            self.iteration_logger.info("Hessian 역행렬 계산 완료 (BFGS 재실행)")
-                        else:
-                            self.logger.warning("BFGS 재실행 후에도 Hessian 역행렬을 얻지 못함")
-                            self.iteration_logger.warning("BFGS 재실행 후에도 Hessian 역행렬을 얻지 못함")
-
-                    except Exception as hess_error:
-                        self.logger.warning(f"Hessian 계산 실패: {hess_error}")
-                        self.iteration_logger.warning(f"Hessian 계산 실패: {hess_error}")
-
+            # 최종 로그
+            if early_stopping_wrapper.early_stopped:
                 self.logger.info(f"조기 종료 완료: 함수 호출 {early_stopping_wrapper.func_call_count}회, LL={-early_stopping_wrapper.best_ll:.4f}")
                 self.iteration_logger.info(f"조기 종료 완료: 함수 호출 {early_stopping_wrapper.func_call_count}회, LL={-early_stopping_wrapper.best_ll:.4f}")
+            else:
+                self.logger.info(f"정상 종료: 함수 호출 {early_stopping_wrapper.func_call_count}회")
+                self.iteration_logger.info(f"정상 종료: 함수 호출 {early_stopping_wrapper.func_call_count}회")
         else:
             self.logger.info(f"최적화 시작: Nelder-Mead (gradient-free)")
             self.iteration_logger.info(f"최적화 시작: Nelder-Mead (gradient-free)")
@@ -710,7 +1083,16 @@ class SimultaneousEstimator:
             params, measurement_model, structural_model, choice_model
         )
 
+        # 메모리 체크 (Halton draws 가져오기 전)
+        if hasattr(self, 'memory_monitor') and hasattr(self, '_likelihood_call_count'):
+            self.memory_monitor.log_memory_stats(f"Halton draws 가져오기 전 (우도 #{self._likelihood_call_count})")
+
         draws = self.halton_generator.get_draws()
+
+        # 메모리 체크 (Halton draws 가져온 후)
+        if hasattr(self, 'memory_monitor') and hasattr(self, '_likelihood_call_count'):
+            self.memory_monitor.log_memory_stats(f"Halton draws 가져온 후 (우도 #{self._likelihood_call_count})")
+
         individual_ids = self.data[self.config.individual_id_column].unique()
 
         # 병렬처리 여부 확인
@@ -950,20 +1332,33 @@ class SimultaneousEstimator:
         """
         gradient_list = []
 
-        # 측정모델 그래디언트
-        gradient_list.append(grad_dict['grad_zeta'])
-        gradient_list.append(grad_dict['grad_tau'].flatten())
+        # 다중 잠재변수 여부 확인
+        from .multi_latent_config import MultiLatentConfig
+        is_multi_latent = isinstance(self.config, MultiLatentConfig)
 
-        # 구조모델 그래디언트
-        gradient_list.append(grad_dict['grad_gamma'])
+        if is_multi_latent:
+            # 다중 잠재변수: 각 LV별로 그래디언트 추출
+            for lv_name in measurement_model.models.keys():
+                lv_grad = grad_dict['measurement'][lv_name]
+                gradient_list.append(lv_grad['grad_zeta'])
+                gradient_list.append(lv_grad['grad_tau'].flatten())
 
-        # 선택모델 그래디언트
-        gradient_list.append(np.array([grad_dict['grad_intercept']]))
-        gradient_list.append(grad_dict['grad_beta'])
-        gradient_list.append(np.array([grad_dict['grad_lambda']]))
+            # 구조모델 그래디언트
+            gradient_list.append(grad_dict['structural']['grad_gamma_lv'])
+            gradient_list.append(grad_dict['structural']['grad_gamma_x'])
+        else:
+            # 단일 잠재변수
+            gradient_list.append(grad_dict['grad_zeta'])
+            gradient_list.append(grad_dict['grad_tau'].flatten())
+            gradient_list.append(grad_dict['grad_gamma'])
+
+        # 선택모델 그래디언트 (공통)
+        gradient_list.append(np.array([grad_dict['choice']['grad_intercept']]))
+        gradient_list.append(grad_dict['choice']['grad_beta'])
+        gradient_list.append(np.array([grad_dict['choice']['grad_lambda']]))
 
         # 사회인구학적 변수가 선택모델에 포함되는 경우
-        if self.config.structural.include_in_choice:
+        if hasattr(self.config.structural, 'include_in_choice') and self.config.structural.include_in_choice:
             # 현재는 구현되지 않음
             n_sociodem = len(self.config.structural.sociodemographics)
             gradient_list.append(np.zeros(n_sociodem))
