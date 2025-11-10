@@ -605,7 +605,7 @@ class SimultaneousEstimator:
                 line_search_gradient[0] = neg_grad.copy()
                 # 다음 함수 호출에서 탐색 방향을 알 수 있으므로, 방향 미분은 나중에 계산
 
-            # Line search 중이면 Curvature 조건 계산
+            # Line search 중이면 Wolfe 조건 계산
             elif calls_since_major_start > 1 and line_search_start_params[0] is not None:
                 # 탐색 방향 계산: d = params - line_search_start_params
                 search_direction = params - line_search_start_params[0]
@@ -618,24 +618,50 @@ class SimultaneousEstimator:
                     # 시작 위치에서 방향 미분: ∇f(x)^T·d
                     line_search_directional_derivative[0] = np.dot(line_search_gradient[0], search_direction)
 
-                # Curvature 조건 체크
+                # Wolfe 조건 체크
                 if line_search_directional_derivative[0] is not None:
                     dd_start = line_search_directional_derivative[0]
                     dd_new = directional_derivative_new
 
+                    # Armijo 조건: f(x+αd) ≤ f(x) + c₁·α·∇f(x)ᵀd
+                    # 여기서 α = ||search_direction|| / ||d||인데, d를 모르므로
+                    # 대신 이전 함수 호출의 함수값을 사용
+                    c1 = 1e-3  # 조정된 값 (기본값: 1e-4)
+
+                    # 이전 line search 호출의 함수값 가져오기
+                    if len(line_search_func_values) > 0:
+                        f_start = line_search_start_func_value[0]
+                        f_current = line_search_func_values[-1]  # 가장 최근 함수값
+
+                        # Armijo 조건 근사 체크
+                        # f(x+αd) - f(x) ≤ c₁·α·∇f(x)ᵀd
+                        # α·∇f(x)ᵀd를 정확히 모르므로, 단순히 함수값 감소 체크
+                        armijo_satisfied = (f_current <= f_start)
+                    else:
+                        armijo_satisfied = None
+
                     # Curvature 조건: |∇f(x + α·d)^T·d| ≤ c2·|∇f(x)^T·d|
-                    c2 = 0.9  # scipy 기본값
+                    c2 = 0.5  # 조정된 값 (기본값: 0.9)
                     curvature_lhs = abs(dd_new)
                     curvature_rhs = c2 * abs(dd_start)
                     curvature_satisfied = curvature_lhs <= curvature_rhs
 
+                    # Strong Wolfe 조건 = Armijo + Curvature
+                    strong_wolfe_satisfied = (armijo_satisfied and curvature_satisfied) if armijo_satisfied is not None else curvature_satisfied
+
+                    armijo_msg = ""
+                    if armijo_satisfied is not None:
+                        armijo_msg = f"  Armijo 조건 (c1={c1}): {'✓ 만족' if armijo_satisfied else '❌ 불만족'}\n"
+
                     self.iteration_logger.info(
-                        f"\n[Curvature 조건 체크]\n"
+                        f"\n[Wolfe 조건 체크]\n"
+                        f"{armijo_msg}"
+                        f"  Curvature 조건 (c2={c2}): {'✓ 만족' if curvature_satisfied else '❌ 불만족'}\n"
                         f"  ∇f(x)^T·d (시작): {dd_start:.6e}\n"
                         f"  ∇f(x+α·d)^T·d (현재): {dd_new:.6e}\n"
                         f"  |∇f(x+α·d)^T·d|: {curvature_lhs:.6e}\n"
                         f"  c2·|∇f(x)^T·d|: {curvature_rhs:.6e}\n"
-                        f"  Curvature 조건: {'✓ 만족' if curvature_satisfied else '❌ 불만족'}\n"
+                        f"  → Strong Wolfe: {'✓ 만족' if strong_wolfe_satisfied else '❌ 불만족'}\n"
                         f"  → Gradient가 {'충분히 평평해짐' if curvature_satisfied else '아직 가파름'}"
                     )
 
@@ -881,6 +907,34 @@ class SimultaneousEstimator:
             else:
                 jac_function = early_stopping_wrapper.gradient
 
+            # Optimizer별 옵션 설정
+            if self.config.estimation.optimizer == 'BFGS':
+                optimizer_options = {
+                    'maxiter': 200,  # Major iteration 최대 횟수
+                    'ftol': 1e-3,    # 함수값 상대적 변화 0.1% 이하면 종료
+                    'gtol': 1e-3,    # 그래디언트 norm 허용 오차
+                    'c1': 1e-3,      # Armijo 조건 파라미터 (기본값: 1e-4, 완화: 1e-3)
+                    'c2': 0.5,       # Curvature 조건 파라미터 (기본값: 0.9, 강화: 0.5)
+                    'disp': True
+                }
+                self.logger.info(f"BFGS 옵션: c1={optimizer_options['c1']}, c2={optimizer_options['c2']}")
+                self.iteration_logger.info(f"BFGS 옵션: c1={optimizer_options['c1']}, c2={optimizer_options['c2']}")
+            elif self.config.estimation.optimizer == 'L-BFGS-B':
+                optimizer_options = {
+                    'maxiter': 200,  # Major iteration 최대 횟수
+                    'ftol': 1e-3,    # 함수값 상대적 변화 0.1% 이하면 종료
+                    'gtol': 1e-3,    # 그래디언트 norm 허용 오차
+                    'maxls': 10,     # Line search 최대 횟수 (기본값: 20)
+                    'disp': True
+                }
+                self.logger.info(f"L-BFGS-B 옵션: maxls={optimizer_options['maxls']}")
+                self.iteration_logger.info(f"L-BFGS-B 옵션: maxls={optimizer_options['maxls']}")
+            else:
+                optimizer_options = {
+                    'maxiter': 200,
+                    'disp': True
+                }
+
             result = optimize.minimize(
                 early_stopping_wrapper.objective,  # Wrapper의 objective 사용
                 initial_params,
@@ -888,13 +942,7 @@ class SimultaneousEstimator:
                 jac=jac_function,
                 bounds=bounds if self.config.estimation.optimizer == 'L-BFGS-B' else None,
                 callback=early_stopping_wrapper.callback,  # Callback 추가
-                options={
-                    'maxiter': 200,  # Major iteration 최대 횟수
-                    'ftol': 1e-3,    # 함수값 상대적 변화 0.1% 이하면 종료
-                    'gtol': 1e-3,    # 그래디언트 norm 허용 오차
-                    'maxls': 10,     # Line search 최대 횟수 (기본값: 20)
-                    'disp': True
-                }
+                options=optimizer_options
             )
 
             # 최적화 결과 로깅
