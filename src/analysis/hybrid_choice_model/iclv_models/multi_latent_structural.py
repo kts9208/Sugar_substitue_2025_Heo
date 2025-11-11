@@ -434,3 +434,26 @@ class MultiLatentStructural:
 
         return names
 
+    def get_higher_order_lvs(self) -> List[str]:
+        """
+        고차 잠재변수 (2차 이상) 리스트 반환
+
+        계층적 구조에서 hierarchical_paths의 target들이 고차 잠재변수입니다.
+
+        Returns:
+            고차 잠재변수 이름 리스트 (순서 유지)
+            예: ['perceived_benefit', 'purchase_intention']
+        """
+        if not self.is_hierarchical:
+            # 병렬 구조에서는 endogenous_lv만 고차 변수
+            return [self.endogenous_lv]
+
+        # 계층적 구조: hierarchical_paths의 target들을 순서대로 반환
+        higher_order_lvs = []
+        for path in self.hierarchical_paths:
+            target = path['target']
+            if target not in higher_order_lvs:
+                higher_order_lvs.append(target)
+
+        return higher_order_lvs
+

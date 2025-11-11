@@ -590,7 +590,8 @@ class SimultaneousEstimator:
                         params_dict=param_dict,
                         measurement_model=measurement_model,
                         structural_model=structural_model,
-                        choice_model=choice_model
+                        choice_model=choice_model,
+                        ind_id=ind_id  # ✅ 개인 ID 전달 (디버깅용)
                     )
 
                     # 그래디언트 합산 (재귀적으로 처리)
@@ -1334,15 +1335,36 @@ class SimultaneousEstimator:
         if is_multi_latent:
             # 다중 잠재변수: 각 LV별로 파라미터 추가
             for lv_name, meas_config in self.config.measurement_configs.items():
-                # 요인적재량 (zeta)
-                for indicator in meas_config.indicators:
-                    names.append(f"ζ_{lv_name}_{indicator}")
+                # measurement_method 확인
+                method = getattr(meas_config, 'measurement_method', 'ordered_probit')
 
-                # 임계값 (tau)
-                n_thresholds = meas_config.n_categories - 1
-                for indicator in meas_config.indicators:
-                    for j in range(n_thresholds):
-                        names.append(f"τ_{lv_name}_{indicator}_{j+1}")
+                if method == 'continuous_linear':
+                    # ✅ ContinuousLinearMeasurement
+                    # 요인적재량 (zeta)
+                    if meas_config.fix_first_loading:
+                        # 첫 번째 제외
+                        for indicator in meas_config.indicators[1:]:
+                            names.append(f"ζ_{lv_name}_{indicator}")
+                    else:
+                        for indicator in meas_config.indicators:
+                            names.append(f"ζ_{lv_name}_{indicator}")
+
+                    # 오차분산 (sigma_sq)
+                    if not meas_config.fix_error_variance:
+                        for indicator in meas_config.indicators:
+                            names.append(f"σ²_{lv_name}_{indicator}")
+
+                else:
+                    # OrderedProbitMeasurement (기존 방식)
+                    # 요인적재량 (zeta)
+                    for indicator in meas_config.indicators:
+                        names.append(f"ζ_{lv_name}_{indicator}")
+
+                    # 임계값 (tau)
+                    n_thresholds = meas_config.n_categories - 1
+                    for indicator in meas_config.indicators:
+                        for j in range(n_thresholds):
+                            names.append(f"τ_{lv_name}_{indicator}_{j+1}")
         else:
             # 단일 잠재변수
             indicators = self.config.measurement.indicators
@@ -1356,13 +1378,24 @@ class SimultaneousEstimator:
 
         # 구조모델 파라미터 (gamma)
         if is_multi_latent:
-            # 다중 잠재변수: gamma_lv (외생 LV → 내생 LV)
-            for exo_lv in self.config.structural.exogenous_lvs:
-                names.append(f"γ_lv_{exo_lv}")
+            # ✅ 계층적 구조 지원
+            if hasattr(self.config.structural, 'is_hierarchical') and self.config.structural.is_hierarchical:
+                # 계층적 구조: 각 경로마다 파라미터
+                for path in self.config.structural.hierarchical_paths:
+                    target = path['target']
+                    predictors = path['predictors']
 
-            # gamma_x (공변량 → 내생 LV)
-            for cov in self.config.structural.covariates:
-                names.append(f"γ_x_{cov}")
+                    for pred in predictors:
+                        param_name = f"γ_{pred}_to_{target}"
+                        names.append(param_name)
+            else:
+                # 병렬 구조 (하위 호환): gamma_lv (외생 LV → 내생 LV)
+                for exo_lv in self.config.structural.exogenous_lvs:
+                    names.append(f"γ_lv_{exo_lv}")
+
+                # gamma_x (공변량 → 내생 LV)
+                for cov in self.config.structural.covariates:
+                    names.append(f"γ_x_{cov}")
         else:
             # 단일 잠재변수
             sociodem = self.config.structural.sociodemographics
@@ -1378,8 +1411,18 @@ class SimultaneousEstimator:
         for attr in attributes:
             names.append(f"β_{attr}")
 
-        # - 잠재변수 계수 (lambda)
-        names.append("λ")
+        # ✅ 조절효과 지원
+        if hasattr(self.config.choice, 'moderation_enabled') and self.config.choice.moderation_enabled:
+            # 조절효과 모델: lambda_main + lambda_mod_*
+            names.append("λ_main")
+
+            # 조절변수별 lambda_mod
+            if hasattr(self.config.choice, 'moderator_lvs'):
+                for mod_lv in self.config.choice.moderator_lvs:
+                    names.append(f"λ_mod_{mod_lv}")
+        else:
+            # 기본 모델: lambda
+            names.append("λ")
 
         # - 사회인구학적 변수 계수 (선택모델에 포함되는 경우)
         if is_multi_latent:
@@ -1537,32 +1580,94 @@ class SimultaneousEstimator:
         Returns:
             gradient_vector: 그래디언트 벡터
         """
+        print(f"[_pack_gradient] START", flush=True)
+        print(f"[_pack_gradient] grad_dict keys: {list(grad_dict.keys())}", flush=True)
+        print(f"[_pack_gradient] measurement keys: {list(grad_dict['measurement'].keys())}", flush=True)
+        print(f"[_pack_gradient] structural keys: {list(grad_dict['structural'].keys())}", flush=True)
+        print(f"[_pack_gradient] choice keys: {list(grad_dict['choice'].keys())}", flush=True)
+
         gradient_list = []
 
         # 다중 잠재변수 여부 확인
         from .multi_latent_config import MultiLatentConfig
         is_multi_latent = isinstance(self.config, MultiLatentConfig)
 
+        logger.info(f"[_pack_gradient] is_multi_latent: {is_multi_latent}")
+
         if is_multi_latent:
             # 다중 잠재변수: 각 LV별로 그래디언트 추출
             for lv_name in measurement_model.models.keys():
+                logger.info(f"[_pack_gradient] Processing LV: {lv_name}")
                 lv_grad = grad_dict['measurement'][lv_name]
-                gradient_list.append(lv_grad['grad_zeta'])
-                gradient_list.append(lv_grad['grad_tau'].flatten())
+                logger.info(f"[_pack_gradient]   Keys for {lv_name}: {list(lv_grad.keys())}")
 
-            # 구조모델 그래디언트
-            gradient_list.append(grad_dict['structural']['grad_gamma_lv'])
-            gradient_list.append(grad_dict['structural']['grad_gamma_x'])
+                gradient_list.append(lv_grad['grad_zeta'])
+                logger.info(f"[_pack_gradient]   Added grad_zeta, size: {len(lv_grad['grad_zeta'])}")
+
+                # ✅ grad_dict에 있는 키를 기준으로 판단 (measurement_method 속성이 아님)
+                if 'grad_sigma_sq' in lv_grad:
+                    # Continuous Linear 방식
+                    gradient_list.append(lv_grad['grad_sigma_sq'].flatten())
+                    logger.info(f"[_pack_gradient]   Added grad_sigma_sq, size: {len(lv_grad['grad_sigma_sq'].flatten())}")
+                elif 'grad_tau' in lv_grad:
+                    # Ordered Probit 방식
+                    gradient_list.append(lv_grad['grad_tau'].flatten())
+                    logger.info(f"[_pack_gradient]   Added grad_tau, size: {len(lv_grad['grad_tau'].flatten())}")
+                else:
+                    raise KeyError(f"Neither grad_sigma_sq nor grad_tau found for {lv_name}. Available keys: {list(lv_grad.keys())}")
+
+            # ✅ 구조모델 그래디언트: 계층적 vs 병렬
+            is_hierarchical = getattr(structural_model, 'is_hierarchical', False)
+            logger.info(f"[_pack_gradient] Structural model hierarchical: {is_hierarchical}")
+            logger.info(f"[_pack_gradient] Structural gradient keys: {list(grad_dict['structural'].keys())}")
+
+            if is_hierarchical:
+                # 계층적 구조: 각 경로별 gradient
+                for path in structural_model.hierarchical_paths:
+                    target = path['target']
+                    predictors = path['predictors']
+                    param_key = f"grad_gamma_{predictors[0]}_to_{target}"
+                    logger.info(f"[_pack_gradient] Adding structural gradient: {param_key}")
+                    gradient_list.append(np.array([grad_dict['structural'][param_key]]))
+            else:
+                # 병렬 구조: gamma_lv, gamma_x
+                gradient_list.append(grad_dict['structural']['grad_gamma_lv'])
+                gradient_list.append(grad_dict['structural']['grad_gamma_x'])
         else:
             # 단일 잠재변수
             gradient_list.append(grad_dict['grad_zeta'])
-            gradient_list.append(grad_dict['grad_tau'].flatten())
+
+            # ✅ grad_dict에 있는 키를 기준으로 판단
+            if 'grad_sigma_sq' in grad_dict:
+                # Continuous Linear 방식
+                gradient_list.append(grad_dict['grad_sigma_sq'].flatten())
+            elif 'grad_tau' in grad_dict:
+                # Ordered Probit 방식
+                gradient_list.append(grad_dict['grad_tau'].flatten())
+            else:
+                raise KeyError(f"Neither grad_sigma_sq nor grad_tau found. Available keys: {list(grad_dict.keys())}")
+
             gradient_list.append(grad_dict['grad_gamma'])
 
-        # 선택모델 그래디언트 (공통)
+        # ✅ 선택모델 그래디언트: grad_dict 키를 기준으로 판단
         gradient_list.append(np.array([grad_dict['choice']['grad_intercept']]))
         gradient_list.append(grad_dict['choice']['grad_beta'])
-        gradient_list.append(np.array([grad_dict['choice']['grad_lambda']]))
+
+        # grad_dict에 있는 키를 기준으로 조절효과 vs 일반 판단
+        if 'grad_lambda_main' in grad_dict['choice']:
+            # 조절효과: lambda_main + lambda_mod_{moderator}
+            gradient_list.append(np.array([grad_dict['choice']['grad_lambda_main']]))
+
+            # 모든 lambda_mod_* 키 찾기 (정렬하여 순서 보장)
+            lambda_mod_keys = sorted([key for key in grad_dict['choice'].keys() if key.startswith('grad_lambda_mod_')])
+            logger.info(f"[_pack_gradient] Found lambda_mod keys: {lambda_mod_keys}")
+            for key in lambda_mod_keys:
+                gradient_list.append(np.array([grad_dict['choice'][key]]))
+        elif 'grad_lambda' in grad_dict['choice']:
+            # 일반: lambda
+            gradient_list.append(np.array([grad_dict['choice']['grad_lambda']]))
+        else:
+            raise KeyError(f"Neither grad_lambda nor grad_lambda_main found in choice gradients. Available keys: {list(grad_dict['choice'].keys())}")
 
         # 사회인구학적 변수가 선택모델에 포함되는 경우
         if hasattr(self.config.structural, 'include_in_choice') and self.config.structural.include_in_choice:
@@ -1570,8 +1675,19 @@ class SimultaneousEstimator:
             n_sociodem = len(self.config.structural.sociodemographics)
             gradient_list.append(np.zeros(n_sociodem))
 
+        # 🔍 디버깅: 각 gradient 항목의 크기 확인
+        logger.info(f"[_pack_gradient] Number of gradient items: {len(gradient_list)}")
+        total_size = 0
+        for i, item in enumerate(gradient_list):
+            item_size = len(item) if hasattr(item, '__len__') else 1
+            total_size += item_size
+            logger.info(f"  Item {i}: size={item_size}, cumulative={total_size}")
+
         # 벡터로 결합
         gradient_vector = np.concatenate(gradient_list)
+
+        # 🔍 디버깅: gradient 벡터 크기 확인
+        logger.info(f"[_pack_gradient] Gradient vector size: {len(gradient_vector)}, Expected: {len(self.param_scaler.scales) if hasattr(self, 'param_scaler') else 'N/A'}")
 
         return gradient_vector
 

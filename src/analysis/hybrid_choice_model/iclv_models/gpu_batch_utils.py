@@ -78,8 +78,20 @@ def compute_choice_batch_gpu(ind_data: pd.DataFrame,
     # 파라미터 추출
     intercept = params['intercept']
     beta = params['beta']
-    lambda_lv = params['lambda']
-    
+
+    # ✅ 조절효과 지원
+    moderation_enabled = 'lambda_main' in params
+    if moderation_enabled:
+        lambda_main = params['lambda_main']
+        # lambda_mod는 딕셔너리 형태: {'perceived_price': -0.3, 'nutrition_knowledge': 0.2}
+        lambda_mod = {}
+        for key in params:
+            if key.startswith('lambda_mod_'):
+                mod_lv_name = key.replace('lambda_mod_', '')
+                lambda_mod[mod_lv_name] = params[key]
+    else:
+        lambda_lv = params['lambda']
+
     # 선택 변수 찾기
     choice_var = None
     for col in ['choice', 'chosen', 'choice_binary']:
@@ -113,12 +125,12 @@ def compute_choice_batch_gpu(ind_data: pd.DataFrame,
     attributes = np.array(attributes)  # (n_valid_situations, n_attributes)
     choices = np.array(choices)  # (n_valid_situations,)
     n_valid_situations = len(attributes)
-    
+
     # GPU로 전송
     attributes_gpu = cp.asarray(attributes)
     choices_gpu = cp.asarray(choices)
     beta_gpu = cp.asarray(beta)
-    
+
     # 첫 번째 draw에 대해서만 상세 로깅
     log_detail = iteration_logger is not None
 
@@ -132,16 +144,27 @@ def compute_choice_batch_gpu(ind_data: pd.DataFrame,
 
         # 내생 LV 값 (purchase_intention)
         if 'purchase_intention' in lv_dict:
-            lv_value = lv_dict['purchase_intention']
+            main_lv_value = lv_dict['purchase_intention']
         else:
             # 단일 LV인 경우
-            lv_value = list(lv_dict.values())[0]
+            main_lv_value = list(lv_dict.values())[0]
 
         # 상세 로깅 제거 (중복)
 
-        # 효용 계산: V = intercept + beta*X + lambda*LV
-        # (n_choice_situations,)
-        utility = intercept + cp.dot(attributes_gpu, beta_gpu) + lambda_lv * lv_value
+        # 효용 계산
+        if moderation_enabled:
+            # ✅ 조절효과 모델: V = intercept + beta*X + lambda_main*PI + Σ lambda_mod_k * (PI × LV_k)
+            utility = intercept + cp.dot(attributes_gpu, beta_gpu) + lambda_main * main_lv_value
+
+            # 조절효과 항 추가
+            for mod_lv_name, lambda_mod_val in lambda_mod.items():
+                if mod_lv_name in lv_dict:
+                    mod_lv_value = lv_dict[mod_lv_name]
+                    interaction = main_lv_value * mod_lv_value
+                    utility = utility + lambda_mod_val * interaction
+        else:
+            # 기본 모델: V = intercept + beta*X + lambda*LV
+            utility = intercept + cp.dot(attributes_gpu, beta_gpu) + lambda_lv * main_lv_value
 
         # 상세 로깅 제거 (중복)
 

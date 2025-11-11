@@ -9,7 +9,7 @@ print('income=6 문제 확인')
 print('='*70)
 
 # Raw data 로드
-excel_file = 'data/raw/Sugar_substitue_Raw data_250730.xlsx'
+excel_file = 'data/raw/Sugar_substitue_Raw data_251108.xlsx'
 raw_data = pd.read_excel(excel_file, sheet_name='DATA')
 
 # q52가 income 열

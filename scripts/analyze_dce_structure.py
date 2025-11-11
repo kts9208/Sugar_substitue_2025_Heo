@@ -12,7 +12,7 @@ print("DCE 데이터 구조 분석")
 print("=" * 80)
 
 # DATA 시트
-df_data = pd.read_excel('data/raw/Sugar_substitue_Raw data_250730.xlsx', sheet_name='DATA')
+df_data = pd.read_excel('data/raw/Sugar_substitue_Raw data_251108.xlsx', sheet_name='DATA')
 print("\n[1] DATA 시트 - DCE 변수 (q21-q26)")
 print("-" * 80)
 print(f"총 응답자 수: {len(df_data)}")
@@ -33,7 +33,7 @@ print(df_data[dce_cols].describe())
 
 # LABEL 시트
 try:
-    df_label = pd.read_excel('data/raw/Sugar_substitue_Raw data_250730.xlsx', sheet_name='LABEL')
+    df_label = pd.read_excel('data/raw/Sugar_substitue_Raw data_251108.xlsx', sheet_name='LABEL')
     print("\n[2] LABEL 시트 - 변수 라벨")
     print("-" * 80)
     for col in dce_cols:
@@ -45,7 +45,7 @@ except Exception as e:
 
 # CODE 시트
 try:
-    df_code = pd.read_excel('data/raw/Sugar_substitue_Raw data_250730.xlsx', sheet_name='CODE')
+    df_code = pd.read_excel('data/raw/Sugar_substitue_Raw data_251108.xlsx', sheet_name='CODE')
     print("\n[3] CODE 시트 - 코드북")
     print("-" * 80)
     print("전체 CODE 시트 내용:")

@@ -61,7 +61,7 @@ class GPUOrderedProbitMeasurement:
     def __init__(self, config, use_gpu: bool = True):
         """
         초기화
-        
+
         Args:
             config: MeasurementConfig 객체
             use_gpu: GPU 사용 여부 (기본값: True)
@@ -70,10 +70,11 @@ class GPUOrderedProbitMeasurement:
         self.n_indicators = len(config.indicators)
         self.n_categories = config.n_categories
         self.n_thresholds = config.n_categories - 1
-        
+        self.measurement_method = 'ordered_probit'  # ✅ 측정 방법 명시
+
         # GPU 사용 설정
         self.use_gpu = use_gpu and GPU_AVAILABLE
-        
+
         if self.use_gpu:
             self.xp = cp
             logger.info(f"🚀 GPU 모드 활성화: {self.n_indicators}개 지표")
@@ -274,7 +275,15 @@ class GPUMultiLatentMeasurement:
         # 각 잠재변수별 측정모델 생성
         self.models = {}
         for lv_name, config in measurement_configs.items():
-            self.models[lv_name] = GPUOrderedProbitMeasurement(config, use_gpu)
+            # ✅ measurement_method에 따라 적절한 모델 선택
+            method = getattr(config, 'measurement_method', 'ordered_probit')
+
+            if method == 'continuous_linear':
+                self.models[lv_name] = GPUContinuousLinearMeasurement(config, use_gpu)
+            elif method == 'ordered_probit':
+                self.models[lv_name] = GPUOrderedProbitMeasurement(config, use_gpu)
+            else:
+                raise ValueError(f"지원하지 않는 측정 방법: {method}")
 
         if self.use_gpu:
             logger.info(f"🚀 GPU 다중 측정모델: {len(self.models)}개 잠재변수")
@@ -436,6 +445,7 @@ class GPUContinuousLinearMeasurement:
         self.config = config
         self.n_indicators = len(config.indicators)
         self.use_gpu = use_gpu and GPU_AVAILABLE
+        self.measurement_method = 'continuous_linear'  # ✅ 측정 방법 명시
 
         self.zeta = None
         self.sigma_sq = None
@@ -524,6 +534,61 @@ class GPUContinuousLinearMeasurement:
         params['sigma_sq'] = sigma_sq
 
         return params
+
+    def log_likelihood_batch(self, data_batch: np.ndarray, latent_vars: np.ndarray,
+                            params: Dict[str, np.ndarray]) -> np.ndarray:
+        """
+        배치 로그우도 계산 (GPU 최적화)
+
+        여러 개인/draws를 한번에 처리하여 GPU 효율 극대화
+
+        Args:
+            data_batch: (n_batch, n_indicators) 관측 데이터
+            latent_vars: (n_batch,) 잠재변수 값들
+            params: {'zeta': ..., 'sigma_sq': ...}
+
+        Returns:
+            (n_batch,) 로그우도 배열
+        """
+        if not self.use_gpu:
+            # CPU 모드: 순차 처리
+            lls = []
+            for i in range(len(latent_vars)):
+                data_dict = {ind: data_batch[i, j]
+                           for j, ind in enumerate(self.config.indicators)}
+                data_df = pd.DataFrame([data_dict])
+                ll = self.log_likelihood(data_df, latent_vars[i], params)
+                lls.append(ll)
+            return np.array(lls)
+
+        # GPU 모드: 배치 처리
+        zeta = cp.asarray(params['zeta'])      # (n_indicators,)
+        sigma_sq = cp.asarray(params['sigma_sq'])  # (n_indicators,)
+        data_gpu = cp.asarray(data_batch)      # (n_batch, n_indicators)
+        lv_gpu = cp.asarray(latent_vars)       # (n_batch,)
+
+        n_batch = len(latent_vars)
+        ll_batch = cp.zeros(n_batch)
+
+        # 각 지표에 대해
+        for i in range(self.n_indicators):
+            y_obs = data_gpu[:, i]  # (n_batch,)
+
+            # 예측값: Y_pred = ζ * LV
+            y_pred = zeta[i] * lv_gpu  # (n_batch,)
+
+            # 잔차
+            residual = y_obs - y_pred  # (n_batch,)
+
+            # 정규분포 로그우도
+            # log p(y|LV) = -0.5 * log(2π * σ²) - 0.5 * (y - ζ*LV)² / σ²
+            ll_i = -0.5 * cp.log(2 * cp.pi * sigma_sq[i])  # 스칼라
+            ll_i = ll_i - 0.5 * (residual ** 2) / sigma_sq[i]  # (n_batch,)
+
+            ll_batch = ll_batch + ll_i  # (n_batch,)
+
+        # GPU에서 CPU로 변환
+        return cp.asnumpy(ll_batch)
 
     def get_n_parameters(self) -> int:
         """파라미터 수 반환"""

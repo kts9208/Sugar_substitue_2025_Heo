@@ -518,11 +518,29 @@ class GPUBatchEstimator(SimultaneousEstimator):
             self.iteration_logger.info("=" * 80)
             self.iteration_logger.info(f"[파라미터 확인]")
             self.iteration_logger.info(f"  측정모델 zeta (health_concern 처음 3개): {param_dict['measurement']['health_concern']['zeta'][:3]}")
-            self.iteration_logger.info(f"  구조모델 gamma_lv: {param_dict['structural']['gamma_lv']}")
-            self.iteration_logger.info(f"  구조모델 gamma_x: {param_dict['structural']['gamma_x']}")
+
+            # ✅ 계층적 구조 지원
+            if hasattr(self.config.structural, 'is_hierarchical') and self.config.structural.is_hierarchical:
+                # 계층적 구조: 개별 경로 파라미터
+                first_param = list(param_dict['structural'].keys())[0]
+                self.iteration_logger.info(f"  구조모델 (계층적) {first_param}: {param_dict['structural'][first_param]}")
+            else:
+                # 병렬 구조 (하위 호환)
+                self.iteration_logger.info(f"  구조모델 gamma_lv: {param_dict['structural']['gamma_lv']}")
+                self.iteration_logger.info(f"  구조모델 gamma_x: {param_dict['structural']['gamma_x']}")
+
             self.iteration_logger.info(f"  선택모델 intercept: {param_dict['choice']['intercept']}")
             self.iteration_logger.info(f"  선택모델 beta: {param_dict['choice']['beta']}")
-            self.iteration_logger.info(f"  선택모델 lambda: {param_dict['choice']['lambda']}")
+
+            # ✅ 조절효과 지원
+            if 'lambda_main' in param_dict['choice']:
+                self.iteration_logger.info(f"  선택모델 lambda_main: {param_dict['choice']['lambda_main']}")
+                for key in param_dict['choice']:
+                    if key.startswith('lambda_mod_'):
+                        self.iteration_logger.info(f"  선택모델 {key}: {param_dict['choice'][key]}")
+            else:
+                self.iteration_logger.info(f"  선택모델 lambda: {param_dict['choice']['lambda']}")
+
             self.iteration_logger.info("=" * 80)
             self._second_draw_logged = True
 

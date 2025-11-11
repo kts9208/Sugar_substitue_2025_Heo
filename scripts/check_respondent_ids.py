@@ -18,7 +18,7 @@ print(f"  - respondent_id 범위: {df_health['respondent_id'].min()} ~ {df_healt
 print(f"  - respondent_id 샘플: {sorted(df_health['respondent_id'].unique())[:10]}")
 
 # 사회인구학적 데이터
-df = pd.read_excel('data/raw/Sugar_substitue_Raw data_250730.xlsx', sheet_name='DATA')
+df = pd.read_excel('data/raw/Sugar_substitue_Raw data_251108.xlsx', sheet_name='DATA')
 df_sociodem = df[['no']].copy()
 df_sociodem = df_sociodem.rename(columns={'no': 'respondent_id'})
 print("\n사회인구학적 데이터:")

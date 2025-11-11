@@ -276,7 +276,8 @@ class MultiLatentJointGradient:
                                    params_dict: Dict,
                                    measurement_model,
                                    structural_model,
-                                   choice_model) -> Dict:
+                                   choice_model,
+                                   ind_id: int = None) -> Dict:
         """
         개인별 그래디언트 계산 (다중 잠재변수)
 
@@ -288,6 +289,7 @@ class MultiLatentJointGradient:
             measurement_model: 측정모델 객체
             structural_model: 구조모델 객체
             choice_model: 선택모델 객체
+            ind_id: 개인 ID (디버깅용)
 
         Returns:
             개인의 가중평균 그래디언트
@@ -295,7 +297,7 @@ class MultiLatentJointGradient:
         if self.use_gpu and self.gpu_measurement_model is not None:
             return self._compute_individual_gradient_gpu(
                 ind_data, ind_draws, params_dict,
-                measurement_model, structural_model, choice_model
+                measurement_model, structural_model, choice_model, ind_id
             )
         else:
             return self._compute_individual_gradient_cpu(
@@ -444,7 +446,8 @@ class MultiLatentJointGradient:
                                         params_dict: Dict,
                                         measurement_model,
                                         structural_model,
-                                        choice_model) -> Dict:
+                                        choice_model,
+                                        ind_id: int = None) -> Dict:
         """
         개인별 그래디언트 계산 - GPU 배치 버전 (Importance Weighting 적용)
 
@@ -455,22 +458,47 @@ class MultiLatentJointGradient:
         4. GPU 배치 처리로 성능 향상
         """
         n_draws = len(ind_draws)
-        n_exo = structural_model.n_exo
+
+        # ✅ 계층적 구조 지원
+        is_hierarchical = hasattr(structural_model, 'is_hierarchical') and structural_model.is_hierarchical
+
+        if is_hierarchical:
+            # 계층적 구조: 1차 LV 개수
+            n_first_order = len(structural_model.exogenous_lvs)
+            n_higher_order = len(structural_model.get_higher_order_lvs())
+        else:
+            # 병렬 구조 (하위 호환)
+            n_exo = structural_model.n_exo
 
         # 모든 draws의 LV 값 미리 계산
         lvs_list = []
         exo_draws_list = []
 
         for draw_idx in range(n_draws):
-            exo_draws = ind_draws[draw_idx, :n_exo]
-            endo_draw = ind_draws[draw_idx, n_exo]
+            if is_hierarchical:
+                # 계층적 구조: 1차 LV draws + 고차 LV 오차항
+                first_order_draws = ind_draws[draw_idx, :n_first_order]
+                higher_order_errors = ind_draws[draw_idx, n_first_order:]
 
-            latent_vars = structural_model.predict(
-                ind_data, exo_draws, params_dict['structural'], endo_draw
-            )
+                # 고차 LV 오차항을 딕셔너리로 변환
+                higher_order_lvs = structural_model.get_higher_order_lvs()
+                error_dict = {lv_name: higher_order_errors[i] for i, lv_name in enumerate(higher_order_lvs)}
+
+                latent_vars = structural_model.predict(
+                    ind_data, first_order_draws, params_dict['structural'], error_dict
+                )
+                exo_draws_list.append(first_order_draws)
+            else:
+                # 병렬 구조 (하위 호환)
+                exo_draws = ind_draws[draw_idx, :n_exo]
+                endo_draw = ind_draws[draw_idx, n_exo]
+
+                latent_vars = structural_model.predict(
+                    ind_data, exo_draws, params_dict['structural'], endo_draw
+                )
+                exo_draws_list.append(exo_draws)
 
             lvs_list.append(latent_vars)
-            exo_draws_list.append(exo_draws)
 
         # ✅ 1. 각 draw의 결합 likelihood 계산 (importance weighting용)
         ll_batch = self.gpu_grad.compute_joint_likelihood_batch_gpu(
@@ -484,7 +512,7 @@ class MultiLatentJointGradient:
         )
 
         # ✅ 2. Importance weights 계산 (Apollo 방식)
-        weights = self.gpu_grad.compute_importance_weights_gpu(ll_batch)
+        weights = self.gpu_grad.compute_importance_weights_gpu(ll_batch, ind_id)
 
         # ✅ 3. 가중평균 그래디언트 계산
         grad_meas = self.gpu_grad.compute_measurement_gradient_batch_gpu(
@@ -495,25 +523,53 @@ class MultiLatentJointGradient:
             weights  # ✅ weights 전달
         )
 
-        grad_struct = self.gpu_grad.compute_structural_gradient_batch_gpu(
-            ind_data,
-            lvs_list,
-            exo_draws_list,
-            params_dict['structural'],
-            structural_model.covariates,
-            structural_model.endogenous_lv,
-            structural_model.exogenous_lvs,
-            weights  # ✅ weights 전달
-        )
+        # ✅ 구조모델 gradient: 계층적 구조 지원
+        if is_hierarchical:
+            grad_struct = self.gpu_grad.compute_structural_gradient_batch_gpu(
+                ind_data,
+                lvs_list,
+                exo_draws_list,
+                params_dict['structural'],
+                structural_model.covariates,
+                structural_model.endogenous_lv,
+                structural_model.exogenous_lvs,
+                weights,
+                is_hierarchical=True,
+                hierarchical_paths=structural_model.hierarchical_paths
+            )
+        else:
+            grad_struct = self.gpu_grad.compute_structural_gradient_batch_gpu(
+                ind_data,
+                lvs_list,
+                exo_draws_list,
+                params_dict['structural'],
+                structural_model.covariates,
+                structural_model.endogenous_lv,
+                structural_model.exogenous_lvs,
+                weights
+            )
 
-        grad_choice = self.gpu_grad.compute_choice_gradient_batch_gpu(
-            ind_data,
-            lvs_list,
-            params_dict['choice'],
-            structural_model.endogenous_lv,
-            choice_model.config.choice_attributes,
-            weights  # ✅ weights 전달
-        )
+        # ✅ 선택모델 gradient: 조절효과 지원
+        moderation_enabled = hasattr(choice_model.config, 'moderators') and choice_model.config.moderators
+        if moderation_enabled:
+            grad_choice = self.gpu_grad.compute_choice_gradient_batch_gpu(
+                ind_data,
+                lvs_list,
+                params_dict['choice'],
+                structural_model.endogenous_lv,
+                choice_model.config.choice_attributes,
+                weights,
+                moderators=choice_model.config.moderators
+            )
+        else:
+            grad_choice = self.gpu_grad.compute_choice_gradient_batch_gpu(
+                ind_data,
+                lvs_list,
+                params_dict['choice'],
+                structural_model.endogenous_lv,
+                choice_model.config.choice_attributes,
+                weights
+            )
 
         # 결합 그래디언트
         return {

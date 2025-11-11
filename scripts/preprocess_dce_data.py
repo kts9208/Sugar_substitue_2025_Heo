@@ -1,9 +1,9 @@
 """
 DCE 데이터 전처리 스크립트
 
-목적: Wide format (300×6) → Long format (5,400×8) 변환
-입력: 
-  - data/raw/Sugar_substitue_Raw data_250730.xlsx (q21-q26)
+목적: Wide format (326×6) → Long format (5,868×8) 변환
+입력:
+  - data/raw/Sugar_substitue_Raw data_251108.xlsx (q21-q26)
   - data/processed/dce/design_matrix.csv
 출력:
   - data/processed/dce/dce_long_format.csv
