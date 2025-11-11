@@ -209,15 +209,15 @@ class GPUBatchEstimator(SimultaneousEstimator):
             params, measurement_model, structural_model, choice_model
         )
 
-        # 메모리 체크 (Halton draws 가져오기 전)
-        if hasattr(self, 'memory_monitor') and hasattr(self, '_likelihood_call_count'):
-            self.memory_monitor.log_memory_stats(f"Halton draws 가져오기 전 (Iter {self._current_iteration})")
+        # 메모리 체크 (Halton draws 가져오기 전) - 비활성화
+        # if hasattr(self, 'memory_monitor') and hasattr(self, '_likelihood_call_count'):
+        #     self.memory_monitor.log_memory_stats(f"Halton draws 가져오기 전 (Iter {self._current_iteration})")
 
         draws = self.halton_generator.get_draws()
 
-        # 메모리 체크 (Halton draws 가져온 후)
-        if hasattr(self, 'memory_monitor') and hasattr(self, '_likelihood_call_count'):
-            self.memory_monitor.log_memory_stats(f"Halton draws 가져온 후 (Iter {self._current_iteration})")
+        # 메모리 체크 (Halton draws 가져온 후) - 비활성화
+        # if hasattr(self, 'memory_monitor') and hasattr(self, '_likelihood_call_count'):
+        #     self.memory_monitor.log_memory_stats(f"Halton draws 가져온 후 (Iter {self._current_iteration})")
 
         individual_ids = self.data[self.config.individual_id_column].unique()
 
@@ -564,15 +564,41 @@ class GPUBatchEstimator(SimultaneousEstimator):
                     # ContinuousLinearMeasurement
                     n_indicators = len(config.indicators)
 
-                    # 요인적재량 (zeta) - 첫 번째 제외 가능
+                    # 요인적재량 (zeta)
+                    # ✅ 초기값 (external) = internal × scale
+                    # 목표: internal ≈ 1.0 (O(1) 범위)
+                    # external = 1.0 × scale
+                    zeta_scales = {
+                        'health_concern': 0.024,
+                        'perceived_benefit': 0.050,
+                        'perceived_price': 0.120,
+                        'nutrition_knowledge': 0.022,
+                        'purchase_intention': 0.083,
+                    }
+                    zeta_scale = zeta_scales.get(lv_name, 0.05)
+                    zeta_init = 1.0 * zeta_scale  # internal=1.0 → external=scale
+
                     if config.fix_first_loading:
-                        params.extend([1.0] * (n_indicators - 1))
+                        # 첫 번째는 1.0으로 고정 (파라미터 벡터에 포함하지 않음)
+                        params.extend([zeta_init] * (n_indicators - 1))
                     else:
-                        params.extend([1.0] * n_indicators)
+                        params.extend([zeta_init] * n_indicators)
 
                     # 오차분산 (sigma_sq)
+                    # ✅ 초기값 (external) = internal × scale
+                    # 목표: internal ≈ 1.0 (O(1) 범위)
+                    sigma_sq_scales = {
+                        'health_concern': 0.034,
+                        'perceived_benefit': 0.036,
+                        'perceived_price': 0.023,
+                        'nutrition_knowledge': 0.046,
+                        'purchase_intention': 0.026,
+                    }
+                    sigma_sq_scale = sigma_sq_scales.get(lv_name, 0.03)
+                    sigma_sq_init = 1.0 * sigma_sq_scale  # internal=1.0 → external=scale
+
                     if not config.fix_error_variance:
-                        params.extend([1.0] * n_indicators)
+                        params.extend([sigma_sq_init] * n_indicators)
 
                 elif method == 'ordered_probit':
                     # OrderedProbitMeasurement
@@ -630,24 +656,41 @@ class GPUBatchEstimator(SimultaneousEstimator):
 
         # 선택모델 파라미터
         # - 절편
-        params.append(0.0)
+        # ✅ 초기값 (external) = internal × scale
+        # 목표: internal ≈ 1.0
+        params.append(1.0 * 0.290)  # internal=1.0 → external=0.290
 
         # - 속성 계수 (beta)
+        # ✅ 초기값 (external) = internal × scale
         n_attributes = len(self.config.choice.choice_attributes)
-        params.extend([0.0] * n_attributes)
+        for attr in self.config.choice.choice_attributes:
+            if 'price' in attr.lower():
+                # β_price: scale=0.056, internal=-1.0 → external=-0.056
+                params.append(-1.0 * 0.056)
+            elif 'sugar' in attr.lower():
+                # β_sugar_free: scale=0.230, internal=1.0 → external=0.230
+                params.append(1.0 * 0.230)
+            elif 'health' in attr.lower():
+                # β_health_label: scale=0.220, internal=1.0 → external=0.220
+                params.append(1.0 * 0.220)
+            else:
+                # 기타 속성
+                params.append(0.2)
 
         # - 잠재변수 계수
         if hasattr(self.config.choice, 'moderation_enabled') and self.config.choice.moderation_enabled:
             # ✅ 조절효과 모델
-            # lambda_main
-            params.append(1.0)
+            # lambda_main: scale=0.890, internal=1.0 → external=0.890
+            params.append(1.0 * 0.890)
 
             # lambda_mod (조절효과 계수)
             for mod_lv in self.config.choice.moderator_lvs:
                 if 'price' in mod_lv.lower():
-                    params.append(-0.3)  # 부적 조절
+                    # λ_mod_perceived_price: scale=0.470, internal=-1.0 → external=-0.470
+                    params.append(-1.0 * 0.470)
                 elif 'knowledge' in mod_lv.lower():
-                    params.append(0.2)   # 정적 조절
+                    # λ_mod_nutrition_knowledge: scale=1.200, internal=1.0 → external=1.200
+                    params.append(1.0 * 1.200)
                 else:
                     params.append(0.0)
         else:
@@ -676,6 +719,7 @@ class GPUBatchEstimator(SimultaneousEstimator):
 
                     # 요인적재량 (zeta): [-10, 10]
                     if config.fix_first_loading:
+                        # 첫 번째는 고정 (파라미터 벡터에 포함하지 않음)
                         bounds.extend([(-10.0, 10.0)] * (n_indicators - 1))
                     else:
                         bounds.extend([(-10.0, 10.0)] * n_indicators)
@@ -766,16 +810,17 @@ class GPUBatchEstimator(SimultaneousEstimator):
             if not hasattr(self, '_unpack_count'):
                 self._unpack_count = 0
             self._unpack_count += 1
+            # ✅ 파라미터 언팩 로깅 비활성화 (메모리 로깅 포함)
             # 처음 3번만 로깅
-            if self._unpack_count <= 3:
-                self.iteration_logger.info(f"[파라미터 언팩 #{self._unpack_count}] 처음 5개: {params[:5]}, 마지막 5개: {params[-5:]}")
+            # if self._unpack_count <= 3:
+            #     self.iteration_logger.info(f"[파라미터 언팩 #{self._unpack_count}] 처음 5개: {params[:5]}, 마지막 5개: {params[-5:]}")
 
-            # 메모리 체크 (파라미터 언팩 시) - 매번 로깅
-            if hasattr(self, 'memory_monitor'):
-                self.memory_monitor.log_memory_stats(f"파라미터 언팩 #{self._unpack_count}")
-
-                # 항상 임계값 체크 및 필요시 정리
-                mem_info = self.memory_monitor.check_and_cleanup(f"파라미터 언팩 #{self._unpack_count}")
+            # 메모리 체크 (파라미터 언팩 시) - 비활성화
+            # if hasattr(self, 'memory_monitor'):
+            #     self.memory_monitor.log_memory_stats(f"파라미터 언팩 #{self._unpack_count}")
+            #
+            #     # 항상 임계값 체크 및 필요시 정리
+            #     mem_info = self.memory_monitor.check_and_cleanup(f"파라미터 언팩 #{self._unpack_count}")
 
         idx = 0
         param_dict = {

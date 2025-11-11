@@ -29,38 +29,60 @@ class ParameterScaler:
         ∂LL/∂θ_internal = ∂LL/∂θ_external * scale
     """
     
-    def __init__(self, initial_params: np.ndarray, param_names: list, 
+    def __init__(self, initial_params: np.ndarray, param_names: list,
+                 custom_scales: Optional[Dict[str, float]] = None,
                  logger: Optional[logging.Logger] = None):
         """
         Initialize parameter scaler
-        
+
         Args:
             initial_params: Initial parameter values (1D array)
             param_names: List of parameter names
+            custom_scales: Optional dictionary mapping parameter names to custom scale values
+                          If provided, these scales will be used instead of Apollo's default
             logger: Optional logger for debugging
         """
         self.logger = logger or logging.getLogger(__name__)
         self.param_names = param_names
         self.n_params = len(initial_params)
-        
-        # Compute scale factors based on initial parameter values
-        # Apollo R 방식 (scaleHessian = TRUE, default):
-        # - 초기값이 0이 아닌 파라미터: abs(initial_value)로 스케일링
-        # - 초기값이 0인 파라미터: 1.0으로 스케일링 (스케일링 안함)
+
+        # Compute scale factors
         self.scales = np.ones(self.n_params)
 
-        for i, (name, value) in enumerate(zip(param_names, initial_params)):
-            if abs(value) > 1e-10:
-                # Use absolute value of initial parameter as scale
-                self.scales[i] = abs(value)
-            else:
-                # Apollo R 방식: 초기값이 0인 파라미터는 1.0 (스케일링 안함)
-                self.scales[i] = 1.0
-        
-        # Log scaling information
-        self.logger.info("=" * 80)
-        self.logger.info("Apollo-style Parameter Scaling Initialized")
-        self.logger.info("=" * 80)
+        if custom_scales is not None:
+            # ✅ Custom scales 사용 (gradient 균형 최적화)
+            for i, name in enumerate(param_names):
+                if name in custom_scales:
+                    self.scales[i] = custom_scales[name]
+                else:
+                    # Custom scale이 없는 파라미터는 Apollo 방식 사용
+                    value = initial_params[i]
+                    if abs(value) > 1e-10:
+                        self.scales[i] = abs(value)
+                    else:
+                        self.scales[i] = 1.0
+
+            # Log scaling information
+            self.logger.info("=" * 80)
+            self.logger.info("Custom Parameter Scaling Initialized (Gradient-Balanced)")
+            self.logger.info("=" * 80)
+        else:
+            # Apollo R 방식 (scaleHessian = TRUE, default):
+            # - 초기값이 0이 아닌 파라미터: abs(initial_value)로 스케일링
+            # - 초기값이 0인 파라미터: 1.0으로 스케일링 (스케일링 안함)
+            for i, (name, value) in enumerate(zip(param_names, initial_params)):
+                if abs(value) > 1e-10:
+                    # Use absolute value of initial parameter as scale
+                    self.scales[i] = abs(value)
+                else:
+                    # Apollo R 방식: 초기값이 0인 파라미터는 1.0 (스케일링 안함)
+                    self.scales[i] = 1.0
+
+            # Log scaling information
+            self.logger.info("=" * 80)
+            self.logger.info("Apollo-style Parameter Scaling Initialized")
+            self.logger.info("=" * 80)
+
         self.logger.info(f"Total parameters: {self.n_params}")
         self.logger.info("")
         self.logger.info("Scale factors:")

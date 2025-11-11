@@ -333,7 +333,7 @@ def compute_measurement_gradient_batch_gpu(
         # ✅ fix_first_loading 고려: 첫 번째 loading이 고정되면 gradient 제외
         fix_first_loading = getattr(config, 'fix_first_loading', True)
         if fix_first_loading:
-            # 첫 번째 zeta gradient 제외
+            # 첫 번째 zeta는 1.0으로 고정 (gradient 제외)
             grad_zeta_final = cp.asnumpy(grad_zeta_weighted[1:])
         else:
             grad_zeta_final = cp.asnumpy(grad_zeta_weighted)

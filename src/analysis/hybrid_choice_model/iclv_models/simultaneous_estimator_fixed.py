@@ -399,14 +399,18 @@ class SimultaneousEstimator:
             measurement_model, structural_model, choice_model
         )
 
+        # Custom scales 생성 (gradient 균형 최적화)
+        custom_scales = self._get_custom_scales(param_names)
+
         # Apollo-style 파라미터 스케일링 초기화
-        self.iteration_logger.info("")
+        # self.iteration_logger.info("")  # ✅ 빈 로그 비활성화
         self.iteration_logger.info("=" * 80)
-        self.iteration_logger.info("Apollo-style 파라미터 스케일링 초기화")
+        self.iteration_logger.info("파라미터 스케일링 초기화 (Gradient-Balanced)")
         self.iteration_logger.info("=" * 80)
         self.param_scaler = ParameterScaler(
             initial_params=initial_params,
             param_names=param_names,
+            custom_scales=custom_scales,
             logger=self.iteration_logger
         )
 
@@ -423,6 +427,8 @@ class SimultaneousEstimator:
         major_iter_count = [0]  # Major iteration 카운터
         line_search_call_count = [0]  # Line search 내 함수 호출 카운터
         last_major_iter_func_value = [None]  # 마지막 major iteration의 함수값
+        last_major_iter_ftol = [None]  # 마지막 major iteration의 ftol 값
+        last_major_iter_gtol = [None]  # 마지막 major iteration의 gtol 값
         current_major_iter_start_call = [0]  # 현재 major iteration 시작 시 함수 호출 번호
         line_search_func_values = []  # Line search 중 함수값 기록
         line_search_start_func_value = [None]  # Line search 시작 시 함수값
@@ -458,13 +464,13 @@ class SimultaneousEstimator:
             elif calls_since_major_start > 1:
                 # Line search 중
                 line_search_call_count[0] += 1
-                context = f"Line Search 함수 호출 #{line_search_call_count[0]}"
+                context = f"Line Search 함수 호출 #iter{major_iter_count[0] + 1}-{line_search_call_count[0]}"
             else:
                 # 초기 호출
                 context = "초기 함수값 계산"
 
             # 단계 로그: 우도 계산 시작
-            self.iteration_logger.info(f"\n[{context}] [단계 1/2] 전체 우도 계산")
+            self.iteration_logger.info(f"[{context}] [단계 1/2] 전체 우도 계산")
 
             ll = self._joint_log_likelihood(
                 params, measurement_model, structural_model, choice_model
@@ -547,16 +553,16 @@ class SimultaneousEstimator:
             params = self.param_scaler.unscale_parameters(params_scaled)
 
             # 단계 로그: 그래디언트 계산 시작 (모든 호출에서 출력)
-            self.iteration_logger.info(f"\n[단계 2/2] Analytic Gradient 계산 #{grad_call_count[0]}")
+            self.iteration_logger.info(f"[단계 2/2] Analytic Gradient 계산 #{grad_call_count[0]}")
 
-            # 메모리 체크 (그래디언트 계산 전) - 5회마다 로깅
-            if hasattr(self, 'memory_monitor'):
-                # 5회마다 메모리 상태 로깅
-                if grad_call_count[0] % 5 == 1:
-                    self.memory_monitor.log_memory_stats(f"Gradient 계산 #{grad_call_count[0]}")
-
-                # 항상 임계값 체크 및 필요시 정리
-                mem_info = self.memory_monitor.check_and_cleanup(f"Gradient 계산 #{grad_call_count[0]}")
+            # 메모리 체크 (그래디언트 계산 전) - 비활성화
+            # if hasattr(self, 'memory_monitor'):
+            #     # 5회마다 메모리 상태 로깅
+            #     if grad_call_count[0] % 5 == 1:
+            #         self.memory_monitor.log_memory_stats(f"Gradient 계산 #{grad_call_count[0]}")
+            #
+            #     # 항상 임계값 체크 및 필요시 정리
+            #     mem_info = self.memory_monitor.check_and_cleanup(f"Gradient 계산 #{grad_call_count[0]}")
 
             # 파라미터 딕셔너리로 변환
             param_dict = self._unpack_parameters(
@@ -673,10 +679,81 @@ class SimultaneousEstimator:
                 line_search_gradient[0] = neg_grad_scaled.copy()
                 # 다음 함수 호출에서 탐색 방향을 알 수 있으므로, 방향 미분은 나중에 계산
 
+                # ✅ Major iteration 시작 시 파라미터 저장 (탐색 방향 계산용)
+                if not hasattr(gradient_function, 'major_iter_start_params'):
+                    gradient_function.major_iter_start_params = {}
+                gradient_function.major_iter_start_params[major_iter_count[0] + 1] = params_scaled.copy()
+
             # Line search 중이면 Wolfe 조건 계산
             elif calls_since_major_start > 1 and line_search_start_params[0] is not None:
                 # 탐색 방향 계산: d = params_scaled - line_search_start_params
                 search_direction = params_scaled - line_search_start_params[0]
+
+                # ✅ 첫 line search 호출 시 탐색 방향 로깅
+                if line_search_call_count[0] == 1:
+                    iter_num = major_iter_count[0] + 1
+
+                    # 탐색 방향 통계
+                    d_norm = np.linalg.norm(search_direction)
+                    d_max = np.max(np.abs(search_direction))
+
+                    # Gradient와 탐색 방향 비교
+                    grad_norm = np.linalg.norm(neg_grad_scaled)
+
+                    # d = -H^(-1) · grad이므로, 만약 H = I이면 d ≈ -grad
+                    # 상관계수 계산 (방향 유사도)
+                    if grad_norm > 0 and d_norm > 0:
+                        # 정규화된 벡터 간 내적 = 코사인 유사도
+                        cosine_similarity = -np.dot(search_direction, neg_grad_scaled) / (d_norm * grad_norm)
+                    else:
+                        cosine_similarity = 0.0
+
+                    # ✅ 이전 iteration 파라미터와 비교
+                    if hasattr(gradient_function, 'major_iter_start_params') and (iter_num - 1) in gradient_function.major_iter_start_params:
+                        prev_params = gradient_function.major_iter_start_params[iter_num - 1]
+                        param_change = params_scaled - prev_params
+                        param_change_norm = np.linalg.norm(param_change)
+
+                        # 실제 파라미터 변화 = α × d (이전 iteration에서)
+                        # 현재는 새 iteration의 첫 line search이므로, 이전 iteration의 최종 결과
+                        param_change_info = (
+                            f"\n  이전 iteration 대비 파라미터 변화:\n"
+                            f"    - 변화량 norm: {param_change_norm:.6e}\n"
+                            f"    - 변화량 max: {np.max(np.abs(param_change)):.6e}\n"
+                            f"    - 변화 상위 5개 인덱스: {np.argsort(np.abs(param_change))[-5:][::-1]}\n"
+                            f"    - 변화 상위 5개 값: {param_change[np.argsort(np.abs(param_change))[-5:][::-1]]}\n"
+                        )
+                    else:
+                        param_change_info = ""
+
+                    self.iteration_logger.info(
+                        f"\n[탐색 방향 분석 - Iteration #{iter_num}]\n"
+                        f"  탐색 방향 d norm: {d_norm:.6e}\n"
+                        f"  탐색 방향 d max: {d_max:.6e}\n"
+                        f"  Gradient norm: {grad_norm:.6e}\n"
+                        f"  d와 -grad의 코사인 유사도: {cosine_similarity:.6f}\n"
+                        f"    (1.0 = 완전 동일 방향 [H=I], 0.0 = 직교, -1.0 = 반대 방향)\n"
+                        f"  d 상위 5개: {search_direction[:5]}\n"
+                        f"  -grad 상위 5개: {-neg_grad_scaled[:5]}\n"
+                        f"  → Hessian이 방향을 {'거의 조정 안 함' if cosine_similarity > 0.99 else '조정함'}\n"
+                        f"{param_change_info}"
+                    )
+
+                    # ✅ 실제 계산에 사용된 파라미터 값 로깅 (External scale)
+                    params_external = self.param_scaler.unscale_parameters(params_scaled)
+
+                    # 상위 10개 파라미터만 로깅
+                    top_10_indices = np.argsort(np.abs(params_external))[-10:][::-1]
+
+                    self.iteration_logger.info(
+                        f"\n[실제 계산에 사용된 파라미터 값 - Iteration #{iter_num}]\n"
+                        f"  (External scale, 상위 10개)\n"
+                    )
+                    for idx in top_10_indices:
+                        param_name = self.param_names[idx] if hasattr(self, 'param_names') and idx < len(self.param_names) else f"param_{idx}"
+                        self.iteration_logger.info(
+                            f"    [{idx:2d}] {param_name:40s}: {params_external[idx]:+.6e} (internal: {params_scaled[idx]:+.6e})"
+                        )
 
                 # 현재 위치에서 방향 미분: ∇f(x + α·d)^T·d (스케일된 gradient 사용)
                 directional_derivative_new = np.dot(neg_grad_scaled, search_direction)
@@ -725,10 +802,6 @@ class SimultaneousEstimator:
                         f"\n[Wolfe 조건 체크]\n"
                         f"{armijo_msg}"
                         f"  Curvature 조건 (c2={c2}): {'✓ 만족' if curvature_satisfied else '❌ 불만족'}\n"
-                        f"  ∇f(x)^T·d (시작): {dd_start:.6e}\n"
-                        f"  ∇f(x+α·d)^T·d (현재): {dd_new:.6e}\n"
-                        f"  |∇f(x+α·d)^T·d|: {curvature_lhs:.6e}\n"
-                        f"  c2·|∇f(x)^T·d|: {curvature_rhs:.6e}\n"
                         f"  → Strong Wolfe: {'✓ 만족' if strong_wolfe_satisfied else '❌ 불만족'}\n"
                         f"  → Gradient가 {'충분히 평평해짐' if curvature_satisfied else '아직 가파름'}"
                     )
@@ -845,6 +918,12 @@ class SimultaneousEstimator:
                 self.bfgs_iteration_count += 1
                 major_iter_count[0] = self.bfgs_iteration_count
 
+                # ✅ Hessian 추적을 위한 변수 저장
+                if not hasattr(self, 'prev_xk'):
+                    self.prev_xk = None
+                if not hasattr(self, 'prev_grad'):
+                    self.prev_grad = None
+
                 # Major iteration 완료 로깅
                 if self.iteration_logger:
                     # 현재 함수값 계산
@@ -874,9 +953,19 @@ class SimultaneousEstimator:
                         f_prev = last_major_iter_func_value[0]
                         f_curr = current_f
                         rel_change = abs(f_prev - f_curr) / max(abs(f_prev), abs(f_curr), 1.0)
-                        ftol_status = f"ftol = {rel_change:.6e} (기준: 1e-3)"
+
+                        # 이전 ftol 대비 변화량 계산
+                        if last_major_iter_ftol[0] is not None:
+                            ftol_change = rel_change - last_major_iter_ftol[0]
+                            ftol_change_pct = (ftol_change / last_major_iter_ftol[0]) * 100 if last_major_iter_ftol[0] != 0 else 0
+                            ftol_status = f"ftol = {rel_change:.6e} (기준: 1e-3, 변화: {ftol_change:+.2e} [{ftol_change_pct:+.1f}%])"
+                        else:
+                            ftol_status = f"ftol = {rel_change:.6e} (기준: 1e-3)"
+
                         if rel_change <= 1e-3:
                             ftol_status += " ✓ 수렴 조건 만족"
+
+                        last_major_iter_ftol[0] = rel_change
                     else:
                         ftol_status = "ftol = N/A (첫 iteration)"
 
@@ -884,11 +973,71 @@ class SimultaneousEstimator:
                     if self.grad_func:
                         grad = self.grad_func(xk)
                         grad_norm = np.linalg.norm(grad, ord=np.inf)
-                        gtol_status = f"gtol = {grad_norm:.6e} (기준: 1e-3)"
+
+                        # 이전 gtol 대비 변화량 계산
+                        if last_major_iter_gtol[0] is not None:
+                            gtol_change = grad_norm - last_major_iter_gtol[0]
+                            gtol_change_pct = (gtol_change / last_major_iter_gtol[0]) * 100 if last_major_iter_gtol[0] != 0 else 0
+                            gtol_status = f"gtol = {grad_norm:.6e} (기준: 1e-3, 변화: {gtol_change:+.2e} [{gtol_change_pct:+.1f}%])"
+                        else:
+                            gtol_status = f"gtol = {grad_norm:.6e} (기준: 1e-3)"
+
                         if grad_norm <= 1e-3:
                             gtol_status += " ✓ 수렴 조건 만족"
+
+                        last_major_iter_gtol[0] = grad_norm
+
+                        # ✅ 각 파라미터별 gradient 로깅 추가
+                        # 상위 10개 gradient (절대값 기준)
+                        grad_abs = np.abs(grad)
+                        top_indices = np.argsort(grad_abs)[-10:][::-1]  # 내림차순
+
+                        gradient_details = "\n  상위 10개 Gradient (절대값 기준):\n"
+                        for idx in top_indices:
+                            param_name = self.param_names[idx] if hasattr(self, 'param_names') and idx < len(self.param_names) else f"param_{idx}"
+                            gradient_details += f"    [{idx:2d}] {param_name:40s}: {grad[idx]:+.6e}\n"
                     else:
                         gtol_status = "gtol = N/A"
+                        gradient_details = ""
+
+                    # ✅ Hessian 업데이트 정보 로깅
+                    hessian_update_info = ""
+                    if self.prev_xk is not None and self.prev_grad is not None:
+                        # s_k = x_k - x_{k-1}
+                        s_k = xk - self.prev_xk
+                        # y_k = grad_k - grad_{k-1}
+                        current_grad = self.grad_func(xk)
+                        y_k = current_grad - self.prev_grad
+
+                        # s_k, y_k 통계
+                        s_norm = np.linalg.norm(s_k)
+                        y_norm = np.linalg.norm(y_k)
+                        s_y_dot = np.dot(s_k, y_k)
+
+                        # BFGS 업데이트 조건 체크
+                        if s_y_dot > 0:
+                            rho = 1.0 / s_y_dot
+                            hessian_update_info = (
+                                f"\n  Hessian 업데이트 정보:\n"
+                                f"    - s_k (파라미터 변화) norm: {s_norm:.6e}\n"
+                                f"    - y_k (gradient 변화) norm: {y_norm:.6e}\n"
+                                f"    - s_k^T · y_k: {s_y_dot:.6e} (양수 ✓)\n"
+                                f"    - ρ = 1/(s_k^T · y_k): {rho:.6e}\n"
+                                f"    - s_k 상위 5개: {s_k[:5]}\n"
+                                f"    - y_k 상위 5개: {y_k[:5]}\n"
+                            )
+                        else:
+                            hessian_update_info = (
+                                f"\n  ⚠️  Hessian 업데이트 경고:\n"
+                                f"    - s_k^T · y_k: {s_y_dot:.6e} (음수 또는 0 ❌)\n"
+                                f"    - BFGS 업데이트가 건너뛰어질 수 있음!\n"
+                            )
+                    else:
+                        hessian_update_info = "\n  Hessian 업데이트: 첫 iteration (초기 H = I)\n"
+
+                    # 현재 상태 저장 (다음 iteration을 위해)
+                    self.prev_xk = xk.copy()
+                    self.prev_grad = self.grad_func(xk).copy()
 
                     self.iteration_logger.info(
                         f"\n{'='*80}\n"
@@ -900,6 +1049,8 @@ class SimultaneousEstimator:
                         f"  수렴 조건:\n"
                         f"    - {ftol_status}\n"
                         f"    - {gtol_status}\n"
+                        f"{gradient_details}"
+                        f"{hessian_update_info}"
                         f"  Hessian 근사: BFGS 공식으로 업데이트 완료\n"
                         f"{'='*80}"
                     )
@@ -1015,8 +1166,8 @@ class SimultaneousEstimator:
             )
 
             # 최적화 결과 로깅
-            self.logger.info(f"\n최적화 종료: {result.message}")
-            self.iteration_logger.info(f"\n최적화 종료: {result.message}")
+            self.logger.info(f"최적화 종료: {result.message}")
+            self.iteration_logger.info(f"최적화 종료: {result.message}")
             self.logger.info(f"  성공 여부: {result.success}")
             self.iteration_logger.info(f"  성공 여부: {result.success}")
             self.logger.info(f"  Major iterations: {major_iter_count[0]}")
@@ -1071,6 +1222,48 @@ class SimultaneousEstimator:
                 if hasattr(result, 'hess_inv') and result.hess_inv is not None:
                     self.logger.info("Hessian 역행렬: BFGS에서 자동 제공 (추가 계산 0회)")
                     self.iteration_logger.info("Hessian 역행렬: BFGS에서 자동 제공 (추가 계산 0회)")
+
+                    # ✅ Hessian 역행렬 통계 로깅
+                    hess_inv = result.hess_inv
+                    if hasattr(hess_inv, 'todense'):
+                        hess_inv_array = hess_inv.todense()
+                    else:
+                        hess_inv_array = hess_inv
+
+                    # 대각 원소 (각 파라미터의 분산 근사)
+                    diag_elements = np.diag(hess_inv_array)
+
+                    # 비대각 원소 (파라미터 간 공분산)
+                    off_diag_mask = ~np.eye(hess_inv_array.shape[0], dtype=bool)
+                    off_diag_elements = hess_inv_array[off_diag_mask]
+
+                    self.iteration_logger.info(
+                        f"\n{'='*80}\n"
+                        f"최종 Hessian 역행렬 (H^(-1)) 통계\n"
+                        f"{'='*80}\n"
+                        f"  Shape: {hess_inv_array.shape}\n"
+                        f"  대각 원소 (분산 근사):\n"
+                        f"    - 범위: [{np.min(diag_elements):.6e}, {np.max(diag_elements):.6e}]\n"
+                        f"    - 평균: {np.mean(diag_elements):.6e}\n"
+                        f"    - 중앙값: {np.median(diag_elements):.6e}\n"
+                        f"    - 음수 개수: {np.sum(diag_elements < 0)}/{len(diag_elements)}\n"
+                        f"  비대각 원소 (공분산):\n"
+                        f"    - 범위: [{np.min(off_diag_elements):.6e}, {np.max(off_diag_elements):.6e}]\n"
+                        f"    - 평균: {np.mean(off_diag_elements):.6e}\n"
+                        f"    - 절대값 평균: {np.mean(np.abs(off_diag_elements)):.6e}\n"
+                        f"\n  상위 10개 대각 원소 (파라미터 인덱스):\n"
+                    )
+
+                    # 상위 10개 대각 원소
+                    top_10_indices = np.argsort(np.abs(diag_elements))[-10:][::-1]
+                    for idx in top_10_indices:
+                        param_name = self.param_names[idx] if hasattr(self, 'param_names') and idx < len(self.param_names) else f"param_{idx}"
+                        self.iteration_logger.info(
+                            f"    [{idx:2d}] {param_name:40s}: {diag_elements[idx]:+.6e}"
+                        )
+
+                    self.iteration_logger.info(f"{'='*80}\n")
+
                 else:
                     # BFGS hess_inv가 없으면 경고만 출력 (L-BFGS-B의 경우)
                     self.logger.warning("Hessian 역행렬 없음 (L-BFGS-B는 hess_inv 제공 안 함)")
@@ -1114,7 +1307,7 @@ class SimultaneousEstimator:
         self.iteration_logger.info("=" * 70)
 
         # 최적 파라미터 언스케일링 (Internal → External)
-        self.iteration_logger.info("")
+        # self.iteration_logger.info("")  # ✅ 빈 로그 비활성화
         self.iteration_logger.info("=" * 80)
         self.iteration_logger.info("최적 파라미터 언스케일링 (Internal → External)")
         self.iteration_logger.info("=" * 80)
@@ -1439,6 +1632,89 @@ class SimultaneousEstimator:
 
         return names
 
+    def _get_custom_scales(self, param_names: List[str]) -> Dict[str, float]:
+        """
+        Custom scale 값 생성 (gradient 균형 최적화)
+
+        목표: 모든 internal gradient를 50~1,000 범위로
+
+        Args:
+            param_names: 파라미터 이름 리스트
+
+        Returns:
+            custom_scales: 파라미터 이름 → scale 값 매핑
+        """
+        custom_scales = {}
+
+        for name in param_names:
+            # ζ (factor loading) 스케일
+            if name.startswith('ζ_'):
+                if 'health_concern' in name:
+                    custom_scales[name] = 0.024
+                elif 'perceived_benefit' in name:
+                    custom_scales[name] = 0.050
+                elif 'perceived_price' in name:
+                    custom_scales[name] = 0.120
+                elif 'nutrition_knowledge' in name:
+                    custom_scales[name] = 0.022
+                elif 'purchase_intention' in name:
+                    custom_scales[name] = 0.083
+                else:
+                    custom_scales[name] = 0.05  # 기본값
+
+            # σ² (error variance) 스케일
+            elif name.startswith('σ²_'):
+                if 'health_concern' in name:
+                    custom_scales[name] = 0.034
+                elif 'perceived_benefit' in name:
+                    custom_scales[name] = 0.036
+                elif 'perceived_price' in name:
+                    custom_scales[name] = 0.023
+                elif 'nutrition_knowledge' in name:
+                    custom_scales[name] = 0.046
+                elif 'purchase_intention' in name:
+                    custom_scales[name] = 0.026
+                else:
+                    custom_scales[name] = 0.03  # 기본값
+
+            # β (choice model coefficients) 스케일
+            elif name.startswith('β_'):
+                if name == 'β_intercept':
+                    custom_scales[name] = 0.290
+                elif name == 'β_sugar_free':
+                    custom_scales[name] = 0.230
+                elif name == 'β_health_label':
+                    custom_scales[name] = 0.220
+                elif name == 'β_price':
+                    custom_scales[name] = 0.056
+                else:
+                    custom_scales[name] = 0.2  # 기본값
+
+            # λ (latent variable coefficients) 스케일
+            elif name.startswith('λ_'):
+                if name == 'λ_main':
+                    custom_scales[name] = 0.890
+                elif name == 'λ_mod_perceived_price':
+                    custom_scales[name] = 0.470
+                elif name == 'λ_mod_nutrition_knowledge':
+                    custom_scales[name] = 1.200
+                else:
+                    custom_scales[name] = 0.5  # 기본값
+
+            # γ (structural model coefficients) 스케일
+            elif name.startswith('γ_'):
+                custom_scales[name] = 0.5  # 기본값
+
+            # τ (thresholds) 스케일
+            elif name.startswith('τ_'):
+                custom_scales[name] = 1.0  # 스케일링 안함
+
+            # 기타
+            else:
+                custom_scales[name] = 1.0  # 스케일링 안함
+
+        return custom_scales
+
     def _get_initial_parameters(self, measurement_model,
                                 structural_model, choice_model) -> np.ndarray:
         """초기 파라미터 설정"""
@@ -1464,8 +1740,16 @@ class SimultaneousEstimator:
         params.append(0.0)
 
         # - 속성 계수 (beta)
+        # ✅ 초기값을 0이 아닌 값으로 설정하여 parameter scaling 활성화
         n_attributes = len(self.config.choice.choice_attributes)
-        params.extend([0.0] * n_attributes)
+        for attr in self.config.choice.choice_attributes:
+            if 'price' in attr.lower():
+                # 가격 변수: 음수 초기값 (일반적으로 가격 증가 → 효용 감소)
+                # Price는 스케일링되어 2~3 범위 (원본: 2000~3000, ÷1000)
+                params.append(-1.0)
+            else:
+                # 기타 속성: 작은 양수 초기값
+                params.append(0.1)
 
         # - 잠재변수 계수 (lambda)
         params.append(1.0)
@@ -1580,11 +1864,12 @@ class SimultaneousEstimator:
         Returns:
             gradient_vector: 그래디언트 벡터
         """
-        print(f"[_pack_gradient] START", flush=True)
-        print(f"[_pack_gradient] grad_dict keys: {list(grad_dict.keys())}", flush=True)
-        print(f"[_pack_gradient] measurement keys: {list(grad_dict['measurement'].keys())}", flush=True)
-        print(f"[_pack_gradient] structural keys: {list(grad_dict['structural'].keys())}", flush=True)
-        print(f"[_pack_gradient] choice keys: {list(grad_dict['choice'].keys())}", flush=True)
+        # ✅ [_pack_gradient] 디버그 로그 비활성화
+        # print(f"[_pack_gradient] START", flush=True)
+        # print(f"[_pack_gradient] grad_dict keys: {list(grad_dict.keys())}", flush=True)
+        # print(f"[_pack_gradient] measurement keys: {list(grad_dict['measurement'].keys())}", flush=True)
+        # print(f"[_pack_gradient] structural keys: {list(grad_dict['structural'].keys())}", flush=True)
+        # print(f"[_pack_gradient] choice keys: {list(grad_dict['choice'].keys())}", flush=True)
 
         gradient_list = []
 

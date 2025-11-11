@@ -1,14 +1,18 @@
 """
-설탕함량 변수 이진 변환 스크립트
+설탕함량 변수 이진 변환 및 Price 스케일링 스크립트
 
-목적: integrated_data.csv에 sugar_free 변수 추가
-변환: sugar_content ('알반당', '무설탕') → sugar_free (0, 1)
-  - '무설탕' → 1
-  - '알반당' → 0
-  - NaN → NaN (구매안함 대안)
+목적: integrated_data.csv에 sugar_free 변수 추가 및 price 스케일링
+변환:
+  1. sugar_content ('알반당', '무설탕') → sugar_free (0, 1)
+     - '무설탕' → 1
+     - '알반당' → 0
+     - NaN → NaN (구매안함 대안)
+  2. price (2000~3000) → price_scaled (2~3)
+     - price / 1000
 
 Author: Sugar Substitute Research Team
 Date: 2025-11-09
+Updated: 2025-11-11 (Price scaling 추가)
 """
 
 import pandas as pd
@@ -20,7 +24,7 @@ def main():
     """메인 실행 함수"""
     
     print("=" * 80)
-    print("설탕함량 변수 이진 변환")
+    print("설탕함량 변수 이진 변환 및 Price 스케일링")
     print("=" * 80)
     
     # 1. 데이터 로드
@@ -52,13 +56,30 @@ def main():
             return np.nan
     
     df['sugar_free'] = df['sugar_content'].apply(convert_sugar_content)
-    
+
     print(f"   - 변환 완료")
     print(f"   - sugar_free 값 분포:")
     print(df['sugar_free'].value_counts(dropna=False).to_string())
-    
-    # 4. 검증
-    print("\n[4] 변환 검증:")
+
+    # 4. Price 스케일링 (1000으로 나누기)
+    print("\n[4] Price 스케일링 중...")
+
+    # 원본 price 통계
+    print(f"   - 원본 price 통계:")
+    print(f"     Min: {df['price'].min():.3f}, Max: {df['price'].max():.3f}, Mean: {df['price'].mean():.3f}")
+
+    # Price가 이미 스케일링되었는지 확인 (2~3 범위면 이미 스케일링됨)
+    if df['price'].max() > 100:
+        # Price를 1000으로 나누기 (2000~3000 → 2~3)
+        df['price'] = df['price'] / 1000.0
+        print(f"   - 스케일링 완료 (÷ 1000)")
+        print(f"   - 스케일링된 price 통계:")
+        print(f"     Min: {df['price'].min():.3f}, Max: {df['price'].max():.3f}, Mean: {df['price'].mean():.3f}")
+    else:
+        print(f"   - ⚠️  Price가 이미 스케일링되어 있습니다 (건너뛰기)")
+
+    # 5. 검증
+    print("\n[5] 변환 검증:")
     
     # 무설탕 → 1 확인
     sugar_free_count = df[df['sugar_content'] == '무설탕']['sugar_free'].value_counts()
@@ -78,15 +99,15 @@ def main():
     else:
         print(f"   ⚠️  NaN 개수 불일치!")
     
-    # 5. 데이터 미리보기
-    print("\n[5] 데이터 미리보기 (첫 10행):")
+    # 6. 데이터 미리보기
+    print("\n[6] 데이터 미리보기 (첫 10행):")
     print("-" * 80)
-    preview_cols = ['respondent_id', 'choice_set', 'alternative', 
+    preview_cols = ['respondent_id', 'choice_set', 'alternative',
                     'sugar_content', 'sugar_free', 'health_label', 'price', 'choice']
     print(df[preview_cols].head(10).to_string())
-    
-    # 6. 저장
-    print("\n[6] 저장 중...")
+
+    # 7. 저장
+    print("\n[7] 저장 중...")
     
     # 백업 생성
     backup_path = data_path.parent / 'integrated_data_backup.csv'
@@ -99,17 +120,20 @@ def main():
     df.to_csv(data_path, index=False, encoding='utf-8-sig')
     print(f"   - 저장 완료: {data_path}")
     
-    # 7. 최종 요약
-    print("\n[7] 최종 요약:")
+    # 8. 최종 요약
+    print("\n[8] 최종 요약:")
     print(f"   - 총 행 수: {len(df):,}행")
     print(f"   - 총 컬럼 수: {len(df.columns)}개")
     print(f"   - sugar_free 추가: ✅")
-    print(f"   - 무설탕 (1): {(df['sugar_free'] == 1).sum():,}개")
-    print(f"   - 일반당 (0): {(df['sugar_free'] == 0).sum():,}개")
-    print(f"   - NaN: {df['sugar_free'].isna().sum():,}개")
-    
+    print(f"     · 무설탕 (1): {(df['sugar_free'] == 1).sum():,}개")
+    print(f"     · 일반당 (0): {(df['sugar_free'] == 0).sum():,}개")
+    print(f"     · NaN: {df['sugar_free'].isna().sum():,}개")
+    print(f"   - price 스케일링: ✅")
+    print(f"     · 범위: {df['price'].min():.3f} ~ {df['price'].max():.3f}")
+    print(f"     · 평균: {df['price'].mean():.3f}")
+
     print("\n" + "=" * 80)
-    print("설탕함량 변수 이진 변환 완료!")
+    print("설탕함량 변수 이진 변환 및 Price 스케일링 완료!")
     print("=" * 80)
 
 
