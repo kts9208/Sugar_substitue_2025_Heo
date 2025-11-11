@@ -6,7 +6,7 @@ SimultaneousEstimator에서 사용할 GPU 배치 계산 함수들을 제공합�
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List
+from typing import Dict, List, Any
 import logging
 
 logger = logging.getLogger(__name__)
@@ -178,7 +178,7 @@ def compute_structural_batch_gpu(ind_data: pd.DataFrame,
     Args:
         ind_data: 개인 데이터 (1행)
         lvs_list: 각 draw의 잠재변수 값 리스트 [{lv_name: value}, ...]
-        params: 구조모델 파라미터 {'gamma_lv': ..., 'gamma_x': ...}
+        params: 구조모델 파라미터 {'gamma_lv': ..., 'gamma_x': ...} or {'gamma_pred_to_target': ...}
         draws: 개인의 draws (n_draws, n_dimensions)
         structural_model: 구조모델 인스턴스
         iteration_logger: 반복 로거 (상세 로깅용)
@@ -191,9 +191,14 @@ def compute_structural_batch_gpu(ind_data: pd.DataFrame,
 
     n_draws = len(lvs_list)
 
+    # ✅ 계층적 구조 확인
+    if hasattr(structural_model, 'is_hierarchical') and structural_model.is_hierarchical:
+        return _compute_hierarchical_structural_batch_gpu(
+            ind_data, lvs_list, params, draws, structural_model, iteration_logger
+        )
     # 다중 잠재변수 구조모델인지 확인
-    if hasattr(structural_model, 'endogenous_lv'):
-        # 다중 잠재변수
+    elif hasattr(structural_model, 'endogenous_lv'):
+        # 병렬 구조 (하위 호환)
         return _compute_multi_latent_structural_batch_gpu(
             ind_data, lvs_list, params, draws, structural_model, iteration_logger
         )
@@ -202,6 +207,68 @@ def compute_structural_batch_gpu(ind_data: pd.DataFrame,
         return _compute_single_latent_structural_batch_gpu(
             ind_data, lvs_list, params, draws, structural_model, iteration_logger
         )
+
+
+def _compute_hierarchical_structural_batch_gpu(ind_data: pd.DataFrame,
+                                               lvs_list: List[Dict[str, float]],
+                                               params: Dict[str, Any],
+                                               draws: np.ndarray,
+                                               structural_model,
+                                               iteration_logger=None) -> np.ndarray:
+    """계층적 구조모델 우도 계산 (GPU 배치)"""
+
+    n_draws = len(lvs_list)
+    draw_lls = []
+
+    log_detail = iteration_logger is not None
+
+    # 계층적 경로 순회
+    for draw_idx in range(n_draws):
+        lv_dict = lvs_list[draw_idx]
+        draw = draws[draw_idx]
+
+        # 1차 LV draws
+        n_first_order = len(structural_model.exogenous_lvs)
+        exo_draws = draw[:n_first_order]
+
+        # 2차+ LV 오차항
+        higher_order_draws = {}
+        higher_order_lvs = structural_model.get_higher_order_lvs()
+        for i, lv_name in enumerate(higher_order_lvs):
+            higher_order_draws[lv_name] = draw[n_first_order + i]
+
+        # 각 경로에 대한 로그우도 계산
+        total_ll = 0.0
+
+        for path in structural_model.hierarchical_paths:
+            target = path['target']
+            predictors = path['predictors']
+
+            # 예측값 계산
+            lv_mean = 0.0
+            for pred in predictors:
+                param_name = f'gamma_{pred}_to_{target}'
+                gamma = params[param_name]
+                lv_mean += gamma * lv_dict[pred]
+
+            # 실제값
+            target_actual = lv_dict[target]
+
+            # 잔차
+            residual = target_actual - lv_mean
+
+            # 로그우도: log N(target_actual | lv_mean, error_variance)
+            error_var = structural_model.error_variance
+            ll = -0.5 * np.log(2 * np.pi * error_var) - 0.5 * (residual**2) / error_var
+
+            total_ll += ll
+
+            if log_detail and draw_idx == 0:
+                iteration_logger.info(f"  경로 {pred}->{target}: 예측={lv_mean:.4f}, 실제={target_actual:.4f}, LL={ll:.4f}")
+
+        draw_lls.append(total_ll)
+
+    return np.array(draw_lls)
 
 
 def _compute_multi_latent_structural_batch_gpu(ind_data: pd.DataFrame,

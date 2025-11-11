@@ -40,20 +40,27 @@ logger = logging.getLogger(__name__)
 class BinaryProbitChoice:
     """
     Binary Probit 선택모델 (ICLV용)
-    
-    Model:
+
+    ✅ 디폴트: 조절효과 활성화
+
+    기본 모델:
         V = intercept + β*X + λ*LV
         P(Yes) = Φ(V)
-        P(No) = 1 - Φ(V)
-    
+
+    조절효과 모델 (디폴트):
+        V = intercept + β*X + λ_main*LV_main + Σ(λ_mod_i * LV_main * LV_mod_i)
+        P(Yes) = Φ(V)
+
     여기서:
         - V: 효용 (Utility)
         - X: 선택 속성 (Choice attributes, e.g., price, quality)
         - β: 속성 계수 (Attribute coefficients)
-        - λ: 잠재변수 계수 (Latent variable coefficient)
-        - LV: 잠재변수 (Latent Variable)
+        - λ_main: 주효과 계수 (Main effect coefficient)
+        - λ_mod_i: 조절효과 계수 (Moderation effect coefficients)
+        - LV_main: 주 잠재변수 (Main latent variable, e.g., purchase_intention)
+        - LV_mod_i: 조절 잠재변수 (Moderator latent variables, e.g., perceived_price, nutrition_knowledge)
         - Φ: 표준정규 누적분포함수
-    
+
     King (2022) Apollo R 코드 기반:
         op_settings = list(
             outcomeOrdered = Q6ResearchResponse,
@@ -63,72 +70,110 @@ class BinaryProbitChoice:
             coding = c(-1, 0, 1)
         )
         P[['choice']] = apollo_op(op_settings, functionality)
-    
+
     Usage:
         >>> config = ChoiceConfig(
         ...     choice_attributes=['price', 'quality'],
         ...     choice_type='binary',
-        ...     price_variable='price'
+        ...     price_variable='price',
+        ...     moderation_enabled=True,
+        ...     moderator_lvs=['perceived_price', 'nutrition_knowledge'],
+        ...     main_lv='purchase_intention'
         ... )
         >>> model = BinaryProbitChoice(config)
-        >>> 
+        >>>
         >>> # Simultaneous 추정용
-        >>> ll = model.log_likelihood(data, lv, params)
-        >>> 
+        >>> ll = model.log_likelihood(data, lv_dict, params)
+        >>>
         >>> # 예측용
-        >>> probs = model.predict_probabilities(data, lv, params)
+        >>> probs = model.predict_probabilities(data, lv_dict, params)
     """
-    
+
     def __init__(self, config: ChoiceConfig):
         """
         초기화
-        
+
         Args:
             config: 선택모델 설정
         """
         self.config = config
         self.choice_attributes = config.choice_attributes
         self.price_variable = config.price_variable
+
+        # ✅ 조절효과 설정
+        self.moderation_enabled = getattr(config, 'moderation_enabled', False)
+        self.moderator_lvs = getattr(config, 'moderator_lvs', None)
+        self.main_lv = getattr(config, 'main_lv', 'purchase_intention')
+
         self.logger = logging.getLogger(__name__)
-        
+
         self.logger.info(f"BinaryProbitChoice 초기화")
         self.logger.info(f"  선택 속성: {self.choice_attributes}")
         self.logger.info(f"  가격 변수: {self.price_variable}")
+        self.logger.info(f"  조절효과: {self.moderation_enabled}")
+        if self.moderation_enabled:
+            self.logger.info(f"  주 LV: {self.main_lv}")
+            self.logger.info(f"  조절 LV: {self.moderator_lvs}")
     
-    def log_likelihood(self, data: pd.DataFrame, lv: np.ndarray,
+    def log_likelihood(self, data: pd.DataFrame, lv,
                       params: Dict) -> float:
         """
         선택모델 로그우도
-        
-        P(Choice|X, LV) = Φ(V) if choice=1, 1-Φ(V) if choice=0
-        
-        V = intercept + β*X + λ*LV
-        
+
+        ✅ 조절효과 지원
+
+        기본 모델:
+            V = intercept + β*X + λ*LV
+
+        조절효과 모델 (디폴트):
+            V = intercept + β*X + λ_main*LV_main + Σ(λ_mod_i * LV_main * LV_mod_i)
+
         Args:
             data: 선택 데이터 (n_obs, n_vars)
                   'choice' 열 필수 (0 or 1)
-            lv: 잠재변수 값 (n_obs,) 또는 스칼라
-            params: {
-                'intercept': float,
-                'beta': np.ndarray,  # 속성 계수 (n_attributes,)
-                'lambda': float      # 잠재변수 계수
-            }
-        
+            lv: 잠재변수 값
+                - 기본 모델: (n_obs,) 또는 스칼라
+                - 조절효과 모델: Dict[str, np.ndarray] 또는 Dict[str, float]
+                  예: {
+                      'purchase_intention': np.array([0.5, 0.3, ...]),
+                      'perceived_price': np.array([-0.2, 0.1, ...]),
+                      'nutrition_knowledge': np.array([0.8, 0.6, ...])
+                  }
+            params: 파라미터
+                - 기본 모델: {
+                    'intercept': float,
+                    'beta': np.ndarray,
+                    'lambda': float
+                  }
+                - 조절효과 모델: {
+                    'intercept': float,
+                    'beta': np.ndarray,
+                    'lambda_main': float,
+                    'lambda_mod_perceived_price': float,
+                    'lambda_mod_nutrition_knowledge': float
+                  }
+
         Returns:
             로그우도 값 (스칼라)
-        
-        Example:
+
+        Example (조절효과):
             >>> params = {
             ...     'intercept': 0.5,
-            ...     'beta': np.array([-2.0, 0.3]),
-            ...     'lambda': 1.5
+            ...     'beta': np.array([-2.0, 0.3, 0.5]),
+            ...     'lambda_main': 1.0,
+            ...     'lambda_mod_perceived_price': -0.3,
+            ...     'lambda_mod_nutrition_knowledge': 0.2
             ... }
-            >>> ll = model.log_likelihood(data, lv, params)
+            >>> lv_dict = {
+            ...     'purchase_intention': np.array([0.5, 0.3]),
+            ...     'perceived_price': np.array([-0.2, 0.1]),
+            ...     'nutrition_knowledge': np.array([0.8, 0.6])
+            ... }
+            >>> ll = model.log_likelihood(data, lv_dict, params)
         """
         intercept = params['intercept']
         beta = params['beta']
-        lambda_lv = params['lambda']
-        
+
         # 선택 속성 추출
         X = data[self.choice_attributes].values
 
@@ -140,24 +185,70 @@ class BinaryProbitChoice:
         else:
             raise ValueError("데이터에 'choice' 또는 'Choice' 열이 없습니다.")
 
-        # 잠재변수 처리 (스칼라 또는 배열)
-        if np.isscalar(lv):
-            lv_array = np.full(len(data), lv)
-        else:
-            lv_array = lv
-
-        # 🔴 수정: NaN 처리 (opt-out 대안)
-        # NaN이 있는 행은 효용을 0으로 설정 (opt-out 정규화)
+        # NaN 처리 (opt-out 대안)
         has_nan = np.isnan(X).any(axis=1)
 
         # 효용 계산
-        # V = intercept + β*X + λ*LV
         V = np.zeros(len(data))
-        for i in range(len(data)):
-            if has_nan[i]:
-                V[i] = 0.0  # opt-out: 효용 = 0
+
+        if self.moderation_enabled and isinstance(lv, dict):
+            # ✅ 조절효과 모델
+            lambda_main = params.get('lambda_main', params.get('lambda', 1.0))
+
+            # 주 LV 추출
+            lv_main = lv[self.main_lv]
+            if np.isscalar(lv_main):
+                lv_main_array = np.full(len(data), lv_main)
             else:
-                V[i] = intercept + X[i] @ beta + lambda_lv * lv_array[i]
+                lv_main_array = lv_main
+
+            # 조절 LV 추출
+            moderator_arrays = {}
+            for mod_lv in self.moderator_lvs:
+                lv_mod = lv[mod_lv]
+                if np.isscalar(lv_mod):
+                    moderator_arrays[mod_lv] = np.full(len(data), lv_mod)
+                else:
+                    moderator_arrays[mod_lv] = lv_mod
+
+            # 효용 계산: V = intercept + β*X + λ_main*LV_main + Σ(λ_mod_i * LV_main * LV_mod_i)
+            for i in range(len(data)):
+                if has_nan[i]:
+                    V[i] = 0.0  # opt-out: 효용 = 0
+                else:
+                    # 기본 효용
+                    V[i] = intercept + X[i] @ beta + lambda_main * lv_main_array[i]
+
+                    # 조절효과 추가
+                    for mod_lv in self.moderator_lvs:
+                        param_name = f'lambda_mod_{mod_lv}'
+                        if param_name in params:
+                            lambda_mod = params[param_name]
+                            interaction = lv_main_array[i] * moderator_arrays[mod_lv][i]
+                            V[i] += lambda_mod * interaction
+
+        else:
+            # 기본 모델 (하위 호환)
+            lambda_lv = params.get('lambda', params.get('lambda_main', 1.0))
+
+            # 잠재변수 처리 (스칼라 또는 배열)
+            if isinstance(lv, dict):
+                # dict인 경우 main_lv 사용
+                lv_value = lv[self.main_lv]
+            else:
+                lv_value = lv
+
+            if np.isscalar(lv_value):
+                lv_array = np.full(len(data), lv_value)
+            else:
+                lv_array = lv_value
+
+            # 효용 계산: V = intercept + β*X + λ*LV
+            for i in range(len(data)):
+                if has_nan[i]:
+                    V[i] = 0.0  # opt-out: 효용 = 0
+                else:
+                    V[i] = intercept + X[i] @ beta + lambda_lv * lv_array[i]
 
         # 확률 계산
         # P(Yes) = Φ(V), P(No) = 1 - Φ(V)
@@ -175,43 +266,89 @@ class BinaryProbitChoice:
 
         return ll
     
-    def predict_probabilities(self, data: pd.DataFrame, lv: np.ndarray,
+    def predict_probabilities(self, data: pd.DataFrame, lv,
                              params: Dict) -> np.ndarray:
         """
         선택 확률 예측
-        
-        P(Yes) = Φ(intercept + β*X + λ*LV)
-        
+
+        ✅ 조절효과 지원
+
+        기본 모델:
+            P(Yes) = Φ(intercept + β*X + λ*LV)
+
+        조절효과 모델:
+            P(Yes) = Φ(intercept + β*X + λ_main*LV_main + Σ(λ_mod_i * LV_main * LV_mod_i))
+
         Args:
             data: 선택 데이터
-            lv: 잠재변수 값
+            lv: 잠재변수 값 (스칼라/배열 또는 딕셔너리)
             params: 파라미터 딕셔너리
-        
+
         Returns:
             선택 확률 (n_obs,)
-        
+
         Example:
-            >>> probs = model.predict_probabilities(data, lv, params)
+            >>> probs = model.predict_probabilities(data, lv_dict, params)
         """
         intercept = params['intercept']
         beta = params['beta']
-        lambda_lv = params['lambda']
-        
+
         # 선택 속성 추출
         X = data[self.choice_attributes].values
-        
-        # 잠재변수 처리
-        if np.isscalar(lv):
-            lv_array = np.full(len(data), lv)
-        else:
-            lv_array = lv
-        
+
         # 효용 계산
-        V = intercept + X @ beta + lambda_lv * lv_array
-        
+        if self.moderation_enabled and isinstance(lv, dict):
+            # ✅ 조절효과 모델
+            lambda_main = params.get('lambda_main', params.get('lambda', 1.0))
+
+            # 주 LV 추출
+            lv_main = lv[self.main_lv]
+            if np.isscalar(lv_main):
+                lv_main_array = np.full(len(data), lv_main)
+            else:
+                lv_main_array = lv_main
+
+            # 조절 LV 추출
+            moderator_arrays = {}
+            for mod_lv in self.moderator_lvs:
+                lv_mod = lv[mod_lv]
+                if np.isscalar(lv_mod):
+                    moderator_arrays[mod_lv] = np.full(len(data), lv_mod)
+                else:
+                    moderator_arrays[mod_lv] = lv_mod
+
+            # 기본 효용
+            V = intercept + X @ beta + lambda_main * lv_main_array
+
+            # 조절효과 추가
+            for mod_lv in self.moderator_lvs:
+                param_name = f'lambda_mod_{mod_lv}'
+                if param_name in params:
+                    lambda_mod = params[param_name]
+                    interaction = lv_main_array * moderator_arrays[mod_lv]
+                    V += lambda_mod * interaction
+
+        else:
+            # 기본 모델 (하위 호환)
+            lambda_lv = params.get('lambda', params.get('lambda_main', 1.0))
+
+            # 잠재변수 처리
+            if isinstance(lv, dict):
+                lv_value = lv[self.main_lv]
+            else:
+                lv_value = lv
+
+            if np.isscalar(lv_value):
+                lv_array = np.full(len(data), lv_value)
+            else:
+                lv_array = lv_value
+
+            # 효용 계산
+            V = intercept + X @ beta + lambda_lv * lv_array
+
         # 확률 계산
         prob_yes = norm.cdf(V)
-        
+
         return prob_yes
     
     def predict(self, data: pd.DataFrame, lv: np.ndarray,
@@ -239,32 +376,61 @@ class BinaryProbitChoice:
     def get_initial_params(self, data: pd.DataFrame) -> Dict:
         """
         초기 파라미터 생성
-        
+
+        ✅ 조절효과 지원
+
         Args:
             data: 선택 데이터
-        
+
         Returns:
-            {'intercept': float, 'beta': np.ndarray, 'lambda': float}
-        
+            기본 모델:
+                {'intercept': float, 'beta': np.ndarray, 'lambda': float}
+
+            조절효과 모델:
+                {
+                    'intercept': float,
+                    'beta': np.ndarray,
+                    'lambda_main': float,
+                    'lambda_mod_perceived_price': float,
+                    'lambda_mod_nutrition_knowledge': float
+                }
+
         Example:
             >>> params = model.get_initial_params(data)
         """
         n_attributes = len(self.choice_attributes)
-        
+
         # 기본 초기값
         params = {
             'intercept': 0.0,
-            'beta': np.zeros(n_attributes),
-            'lambda': 1.0
+            'beta': np.zeros(n_attributes)
         }
-        
+
         # 가격 변수가 있으면 음수로 초기화
         if self.price_variable in self.choice_attributes:
             price_idx = self.choice_attributes.index(self.price_variable)
             params['beta'][price_idx] = -1.0
-        
+
+        if self.moderation_enabled:
+            # ✅ 조절효과 모델
+            params['lambda_main'] = 1.0
+
+            # 조절효과 초기값
+            for mod_lv in self.moderator_lvs:
+                param_name = f'lambda_mod_{mod_lv}'
+                # 가격은 부적 조절, 지식은 정적 조절 가정
+                if 'price' in mod_lv.lower():
+                    params[param_name] = -0.3
+                elif 'knowledge' in mod_lv.lower():
+                    params[param_name] = 0.2
+                else:
+                    params[param_name] = 0.0
+        else:
+            # 기본 모델 (하위 호환)
+            params['lambda'] = 1.0
+
         self.logger.info(f"초기 파라미터: {params}")
-        
+
         return params
     
     def calculate_wtp(self, params: Dict, attribute: str) -> float:

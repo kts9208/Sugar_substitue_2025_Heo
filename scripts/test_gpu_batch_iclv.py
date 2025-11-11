@@ -94,17 +94,25 @@ def main():
         )
     }
 
-    # 구조모델 설정
+    # 구조모델 설정 (✅ 계층적 구조)
     structural_config = MultiLatentStructuralConfig(
         endogenous_lv='purchase_intention',
         exogenous_lvs=['health_concern', 'perceived_benefit', 'perceived_price', 'nutrition_knowledge'],
-        covariates=['age_std', 'gender', 'income_std'],  # test_iclv_full_data.py와 동일
+        covariates=[],  # ✅ 사회인구학적 변수 제거 (새로운 디폴트)
+        hierarchical_paths=[  # ✅ 계층적 경로 명시
+            {'target': 'perceived_benefit', 'predictors': ['health_concern']},
+            {'target': 'purchase_intention', 'predictors': ['perceived_benefit']}
+        ],
         error_variance=1.0
     )
 
-    # 선택모델 설정
+    # 선택모델 설정 (✅ 조절효과 - 디폴트 사용)
     choice_config = ChoiceConfig(
-        choice_attributes=['sugar_free', 'health_label', 'price']  # test_iclv_full_data.py와 동일
+        choice_attributes=['sugar_free', 'health_label', 'price'],
+        # ✅ 디폴트 값 사용 (명시하지 않아도 자동 적용):
+        # moderation_enabled=True
+        # moderator_lvs=['perceived_price', 'nutrition_knowledge']
+        # main_lv='purchase_intention'
     )
 
     # 추정 설정
@@ -139,11 +147,13 @@ def main():
     )
 
     print("   설정 완료")
-    print(f"   - 잠재변수: {len(measurement_configs)}개 (4개 외생 + 1개 내생)")
+    print(f"   - 잠재변수: {len(measurement_configs)}개 (3개 1차 LV + 2개 고차 LV)")
     total_indicators = sum(len(mc.indicators) for mc in measurement_configs.values())
     print(f"   - 지표 수: {total_indicators}")
-    print(f"   - 측정 방법: 단일평균 (Simple Mean) - 디폴트")
-    print(f"   - 사회인구학적 변수: {len(structural_config.covariates)}")
+    print(f"   - 측정 방법: 연속형 선형 (Continuous Linear)")
+    print(f"   - 구조모델: 계층적 (HC → PB → PI)")
+    print(f"   - 사회인구학적 변수: {len(structural_config.covariates)} (제거됨)")
+    print(f"   - 선택모델: 조절효과 (PI × PP, PI × NK)")
     print(f"   - 선택 속성: {len(choice_config.choice_attributes)}")
     print(f"   - Halton draws: {estimation_config.n_draws}")
     print(f"   - 최대 반복: {estimation_config.max_iterations}")
@@ -273,11 +283,21 @@ def main():
                                     'P. Value': tau_stats['p_value'][i, j]
                                 })
 
-            # 구조모델 파라미터
+            # 구조모델 파라미터 (✅ 계층적 구조)
             if 'structural' in stats:
                 struct = stats['structural']
 
-                # gamma_lv (잠재변수 간 계수)
+                # ✅ 계층적 파라미터 (gamma_pred_to_target)
+                for key, value in struct.items():
+                    if key.startswith('gamma_'):
+                        param_list.append({
+                            'Coefficient': f'γ_{key.replace("gamma_", "")}',
+                            'Estimate': value['estimate'],
+                            'Std. Err.': value['std_error'],
+                            'P. Value': value['p_value']
+                        })
+
+                # 하위 호환: gamma_lv (병렬 구조)
                 if 'gamma_lv' in struct:
                     gamma_lv_stats = struct['gamma_lv']
                     lv_names = ['health_concern', 'perceived_benefit', 'perceived_price', 'nutrition_knowledge']
@@ -289,7 +309,7 @@ def main():
                             'P. Value': gamma_lv_stats['p_value'][i]
                         })
 
-                # gamma_x (사회인구학적 변수)
+                # 하위 호환: gamma_x (사회인구학적 변수)
                 if 'gamma_x' in struct:
                     gamma_x_stats = struct['gamma_x']
                     sociodem_vars = ['age_std', 'gender', 'income_std']
@@ -301,7 +321,7 @@ def main():
                             'P. Value': gamma_x_stats['p_value'][i]
                         })
 
-            # 선택모델 파라미터
+            # 선택모델 파라미터 (✅ 조절효과 지원)
             if 'choice' in stats:
                 choice = stats['choice']
 
@@ -326,7 +346,27 @@ def main():
                             'P. Value': beta_stats['p_value'][i]
                         })
 
-                # lambda
+                # ✅ lambda_main (조절효과 모델)
+                if 'lambda_main' in choice:
+                    param_list.append({
+                        'Coefficient': 'λ_main',
+                        'Estimate': choice['lambda_main']['estimate'],
+                        'Std. Err.': choice['lambda_main']['std_error'],
+                        'P. Value': choice['lambda_main']['p_value']
+                    })
+
+                # ✅ lambda_mod (조절효과 계수)
+                for key in choice.keys():
+                    if key.startswith('lambda_mod_'):
+                        mod_name = key.replace('lambda_mod_', '')
+                        param_list.append({
+                            'Coefficient': f'λ_mod_{mod_name}',
+                            'Estimate': choice[key]['estimate'],
+                            'Std. Err.': choice[key]['std_error'],
+                            'P. Value': choice[key]['p_value']
+                        })
+
+                # 하위 호환: lambda (기본 모델)
                 if 'lambda' in choice:
                     param_list.append({
                         'Coefficient': 'λ',
@@ -360,36 +400,54 @@ def main():
                             'P. Value': 'N/A'
                         })
 
-            # 구조모델 파라미터
-            gamma_lv = result['parameters']['structural']['gamma_lv']
-            lv_names = ['health_concern', 'perceived_benefit', 'perceived_price', 'nutrition_knowledge']
-            for i, lv in enumerate(lv_names):
-                param_list.append({
-                    'Coefficient': f'γ_lv_{lv}',
-                    'Estimate': gamma_lv[i],
-                    'Std. Err.': 'N/A',
-                    'P. Value': 'N/A'
-                })
+            # 구조모델 파라미터 (✅ 계층적 구조)
+            struct_params = result['parameters']['structural']
 
-            gamma_x = result['parameters']['structural']['gamma_x']
-            sociodem_vars = ['age_std', 'gender', 'income_std']
-            for i, var in enumerate(sociodem_vars):
-                param_list.append({
-                    'Coefficient': f'γ_x_{var}',
-                    'Estimate': gamma_x[i],
-                    'Std. Err.': 'N/A',
-                    'P. Value': 'N/A'
-                })
+            # ✅ 계층적 파라미터
+            for key, value in struct_params.items():
+                if key.startswith('gamma_'):
+                    param_list.append({
+                        'Coefficient': f'γ_{key.replace("gamma_", "")}',
+                        'Estimate': value,
+                        'Std. Err.': 'N/A',
+                        'P. Value': 'N/A'
+                    })
 
-            # 선택모델 파라미터
+            # 하위 호환: gamma_lv (병렬 구조)
+            if 'gamma_lv' in struct_params:
+                gamma_lv = struct_params['gamma_lv']
+                lv_names = ['health_concern', 'perceived_benefit', 'perceived_price', 'nutrition_knowledge']
+                for i, lv in enumerate(lv_names):
+                    param_list.append({
+                        'Coefficient': f'γ_lv_{lv}',
+                        'Estimate': gamma_lv[i],
+                        'Std. Err.': 'N/A',
+                        'P. Value': 'N/A'
+                    })
+
+            # 하위 호환: gamma_x (사회인구학적 변수)
+            if 'gamma_x' in struct_params:
+                gamma_x = struct_params['gamma_x']
+                sociodem_vars = ['age_std', 'gender', 'income_std']
+                for i, var in enumerate(sociodem_vars):
+                    param_list.append({
+                        'Coefficient': f'γ_x_{var}',
+                        'Estimate': gamma_x[i],
+                        'Std. Err.': 'N/A',
+                        'P. Value': 'N/A'
+                    })
+
+            # 선택모델 파라미터 (✅ 조절효과 지원)
+            choice_params = result['parameters']['choice']
+
             param_list.append({
                 'Coefficient': 'β_Intercept',
-                'Estimate': result['parameters']['choice']['intercept'],
+                'Estimate': choice_params['intercept'],
                 'Std. Err.': 'N/A',
                 'P. Value': 'N/A'
             })
 
-            beta = result['parameters']['choice']['beta']
+            beta = choice_params['beta']
             choice_attrs = ['sugar_free', 'health_label', 'price']
             for i, attr in enumerate(choice_attrs):
                 param_list.append({
@@ -399,12 +457,34 @@ def main():
                     'P. Value': 'N/A'
                 })
 
-            param_list.append({
-                'Coefficient': 'λ',
-                'Estimate': result['parameters']['choice']['lambda'],
-                'Std. Err.': 'N/A',
-                'P. Value': 'N/A'
-            })
+            # ✅ lambda_main (조절효과 모델)
+            if 'lambda_main' in choice_params:
+                param_list.append({
+                    'Coefficient': 'λ_main',
+                    'Estimate': choice_params['lambda_main'],
+                    'Std. Err.': 'N/A',
+                    'P. Value': 'N/A'
+                })
+
+            # ✅ lambda_mod (조절효과 계수)
+            for key in choice_params.keys():
+                if key.startswith('lambda_mod_'):
+                    mod_name = key.replace('lambda_mod_', '')
+                    param_list.append({
+                        'Coefficient': f'λ_mod_{mod_name}',
+                        'Estimate': choice_params[key],
+                        'Std. Err.': 'N/A',
+                        'P. Value': 'N/A'
+                    })
+
+            # 하위 호환: lambda (기본 모델)
+            if 'lambda' in choice_params:
+                param_list.append({
+                    'Coefficient': 'λ',
+                    'Estimate': choice_params['lambda'],
+                    'Std. Err.': 'N/A',
+                    'P. Value': 'N/A'
+                })
 
         # DataFrame 생성
         df_params = pd.DataFrame(param_list)

@@ -159,7 +159,18 @@ class GPUBatchEstimator(SimultaneousEstimator):
         # 다중 차원 Halton draws 생성 (부모 클래스 호출 전에)
         if self.use_multi_dimensional_draws:
             n_individuals = data[self.config.individual_id_column].nunique()
-            n_dimensions = structural_model.n_exo + 1  # 외생 LV + 내생 LV 오차항
+
+            # ✅ 계층적 구조 지원
+            if structural_model.is_hierarchical:
+                # 1차 LV + 2차+ LV 오차항
+                n_first_order = len(structural_model.exogenous_lvs)
+                n_higher_order = len(structural_model.get_higher_order_lvs())
+                n_dimensions = n_first_order + n_higher_order
+
+                logger.info(f"계층적 구조: 1차 LV={n_first_order}, 2차+ LV={n_higher_order}, 총 차원={n_dimensions}")
+            else:
+                # 병렬 구조 (하위 호환)
+                n_dimensions = structural_model.n_exo + 1  # 외생 LV + 내생 LV 오차항
 
             logger.info(f"다차원 Halton draws 생성 시작... (n_draws={self.config.estimation.n_draws}, n_individuals={n_individuals}, n_dimensions={n_dimensions})")
 
@@ -246,13 +257,29 @@ class GPUBatchEstimator(SimultaneousEstimator):
         else:
             # CPU 순차 처리 (부모 클래스와 동일)
             draw_lls = []
-            
+
             for j in range(n_draws):
                 draw = ind_draws[j]
-                
+
                 # 구조모델: LV 예측
-                if hasattr(structural_model, 'endogenous_lv'):
-                    # 다중 잠재변수
+                if hasattr(structural_model, 'is_hierarchical') and structural_model.is_hierarchical:
+                    # ✅ 계층적 구조
+                    n_first_order = len(structural_model.exogenous_lvs)
+                    exo_draws = draw[:n_first_order]
+
+                    # 2차+ LV 오차항
+                    higher_order_draws = {}
+                    higher_order_lvs = structural_model.get_higher_order_lvs()
+                    for i, lv_name in enumerate(higher_order_lvs):
+                        higher_order_draws[lv_name] = draw[n_first_order + i]
+
+                    lv = structural_model.predict(
+                        ind_data, exo_draws, param_dict['structural'],
+                        higher_order_draws=higher_order_draws
+                    )
+
+                elif hasattr(structural_model, 'endogenous_lv'):
+                    # 병렬 구조 (하위 호환)
                     n_exo = structural_model.n_exo
                     exo_draws = draw[:n_exo]
                     endo_draw = draw[n_exo]
@@ -260,12 +287,12 @@ class GPUBatchEstimator(SimultaneousEstimator):
                 else:
                     # 단일 잠재변수
                     lv = structural_model.predict(ind_data, param_dict['structural'], draw)
-                
+
                 # 측정모델 우도
                 ll_measurement = measurement_model.log_likelihood(
                     ind_data, lv, param_dict['measurement']
                 )
-                
+
                 # 선택모델 우도 (Panel Product)
                 choice_set_lls = []
                 for idx in range(len(ind_data)):
@@ -275,25 +302,33 @@ class GPUBatchEstimator(SimultaneousEstimator):
                         param_dict['choice']
                     )
                     choice_set_lls.append(ll_choice_t)
-                
+
                 ll_choice = sum(choice_set_lls)
-                
+
                 # 구조모델 우도
-                if hasattr(structural_model, 'endogenous_lv'):
+                if hasattr(structural_model, 'is_hierarchical') and structural_model.is_hierarchical:
+                    # ✅ 계층적 구조
                     ll_structural = structural_model.log_likelihood(
-                        ind_data, lv, param_dict['structural'], draw
+                        ind_data, lv, exo_draws, param_dict['structural'],
+                        higher_order_draws=higher_order_draws
+                    )
+                elif hasattr(structural_model, 'endogenous_lv'):
+                    # 병렬 구조
+                    ll_structural = structural_model.log_likelihood(
+                        ind_data, lv, exo_draws, param_dict['structural'], endo_draw
                     )
                 else:
+                    # 단일 잠재변수
                     ll_structural = structural_model.log_likelihood(
                         ind_data, lv, param_dict['structural'], draw
                     )
-                
+
                 # 결합 로그우도
                 draw_ll = ll_measurement + ll_choice + ll_structural
-                
+
                 if not np.isfinite(draw_ll):
                     draw_ll = -1e10
-                
+
                 draw_lls.append(draw_ll)
         
         # 개인 우도: log(1/R * sum(exp(draw_lls)))
@@ -346,15 +381,37 @@ class GPUBatchEstimator(SimultaneousEstimator):
         for j in range(n_draws):
             draw = ind_draws[j]
 
-            if hasattr(structural_model, 'endogenous_lv'):
-                # 다중 잠재변수
+            if hasattr(structural_model, 'is_hierarchical') and structural_model.is_hierarchical:
+                # ✅ 계층적 구조
+                n_first_order = len(structural_model.exogenous_lvs)
+                exo_draws = draw[:n_first_order]
+
+                # 2차+ LV 오차항
+                higher_order_draws = {}
+                higher_order_lvs = structural_model.get_higher_order_lvs()
+                for i, lv_name in enumerate(higher_order_lvs):
+                    higher_order_draws[lv_name] = draw[n_first_order + i]
+
+                lv = structural_model.predict(
+                    ind_data, exo_draws, param_dict['structural'],
+                    higher_order_draws=higher_order_draws
+                )
+
+                if log_detail and j == 0:
+                    self.iteration_logger.info(f"[구조모델 예측 - 계층적] Draw 0:")
+                    self.iteration_logger.info(f"  1차 LV draws: {exo_draws}")
+                    self.iteration_logger.info(f"  2차+ LV 오차항: {higher_order_draws}")
+                    self.iteration_logger.info(f"  예측된 LV: {lv}")
+
+            elif hasattr(structural_model, 'endogenous_lv'):
+                # 병렬 구조 (하위 호환)
                 n_exo = structural_model.n_exo
                 exo_draws = draw[:n_exo]
                 endo_draw = draw[n_exo]
                 lv = structural_model.predict(ind_data, exo_draws, param_dict['structural'], endo_draw)
 
                 if log_detail and j == 0:
-                    self.iteration_logger.info(f"[구조모델 예측] Draw 0:")
+                    self.iteration_logger.info(f"[구조모델 예측 - 병렬] Draw 0:")
                     self.iteration_logger.info(f"  외생 draws: {exo_draws}")
                     self.iteration_logger.info(f"  내생 draw: {endo_draw}")
                     self.iteration_logger.info(f"  예측된 LV: {lv}")
@@ -529,8 +586,17 @@ class GPUBatchEstimator(SimultaneousEstimator):
                 params.extend([-2, -1, 1, 2])
 
         # 구조모델 파라미터
-        if hasattr(self.config.structural, 'n_exo'):
-            # 다중 잠재변수 구조모델
+        if hasattr(self.config.structural, 'is_hierarchical') and self.config.structural.is_hierarchical:
+            # ✅ 계층적 구조
+            for path in self.config.structural.hierarchical_paths:
+                target = path['target']
+                predictors = path['predictors']
+
+                for pred in predictors:
+                    # 초기값: 0.5 (양의 효과 가정)
+                    params.append(0.5)
+        elif hasattr(self.config.structural, 'n_exo'):
+            # 병렬 구조 (하위 호환)
             n_exo = self.config.structural.n_exo
             n_cov = self.config.structural.n_cov
 
@@ -552,8 +618,23 @@ class GPUBatchEstimator(SimultaneousEstimator):
         n_attributes = len(self.config.choice.choice_attributes)
         params.extend([0.0] * n_attributes)
 
-        # - 잠재변수 계수 (lambda)
-        params.append(1.0)
+        # - 잠재변수 계수
+        if hasattr(self.config.choice, 'moderation_enabled') and self.config.choice.moderation_enabled:
+            # ✅ 조절효과 모델
+            # lambda_main
+            params.append(1.0)
+
+            # lambda_mod (조절효과 계수)
+            for mod_lv in self.config.choice.moderator_lvs:
+                if 'price' in mod_lv.lower():
+                    params.append(-0.3)  # 부적 조절
+                elif 'knowledge' in mod_lv.lower():
+                    params.append(0.2)   # 정적 조절
+                else:
+                    params.append(0.0)
+        else:
+            # 기본 모델 (하위 호환)
+            params.append(1.0)
 
         return np.array(params)
 
@@ -609,8 +690,16 @@ class GPUBatchEstimator(SimultaneousEstimator):
                 bounds.extend([(-10.0, 10.0)] * n_thresholds)
 
         # 구조모델 파라미터
-        if hasattr(self.config.structural, 'n_exo'):
-            # 다중 잠재변수 구조모델
+        if hasattr(self.config.structural, 'is_hierarchical') and self.config.structural.is_hierarchical:
+            # ✅ 계층적 구조
+            for path in self.config.structural.hierarchical_paths:
+                predictors = path['predictors']
+
+                for pred in predictors:
+                    # gamma: unbounded
+                    bounds.append((None, None))
+        elif hasattr(self.config.structural, 'n_exo'):
+            # 병렬 구조 (하위 호환)
             n_exo = self.config.structural.n_exo
             n_cov = self.config.structural.n_cov
 
@@ -632,8 +721,18 @@ class GPUBatchEstimator(SimultaneousEstimator):
         n_attributes = len(self.config.choice.choice_attributes)
         bounds.extend([(None, None)] * n_attributes)
 
-        # - 잠재변수 계수 (lambda): unbounded
-        bounds.append((None, None))
+        # - 잠재변수 계수
+        if hasattr(self.config.choice, 'moderation_enabled') and self.config.choice.moderation_enabled:
+            # ✅ 조절효과 모델
+            # lambda_main: unbounded
+            bounds.append((None, None))
+
+            # lambda_mod: unbounded
+            for mod_lv in self.config.choice.moderator_lvs:
+                bounds.append((None, None))
+        else:
+            # 기본 모델 (하위 호환)
+            bounds.append((None, None))
 
         return bounds
 
@@ -645,7 +744,7 @@ class GPUBatchEstimator(SimultaneousEstimator):
         파라미터 벡터를 딕셔너리로 변환 (다중 잠재변수 지원)
         """
         # 디버깅: 파라미터 언팩 호출 확인 (간소화)
-        if hasattr(self, 'iteration_logger'):
+        if hasattr(self, 'iteration_logger') and self.iteration_logger is not None:
             if not hasattr(self, '_unpack_count'):
                 self._unpack_count = 0
             self._unpack_count += 1
@@ -743,8 +842,25 @@ class GPUBatchEstimator(SimultaneousEstimator):
             param_dict['measurement'] = {'zeta': zeta, 'tau': tau}
 
         # 구조모델 파라미터
-        if hasattr(self.config.structural, 'n_exo'):
-            # 다중 잠재변수 구조모델
+        if hasattr(self.config.structural, 'is_hierarchical') and self.config.structural.is_hierarchical:
+            # ✅ 계층적 구조
+            for path in self.config.structural.hierarchical_paths:
+                target = path['target']
+                predictors = path['predictors']
+
+                for pred in predictors:
+                    param_name = f'gamma_{pred}_to_{target}'
+                    param_dict['structural'][param_name] = params[idx]
+                    idx += 1
+
+            # 상세 로깅
+            if hasattr(self, 'iteration_logger') and hasattr(self, '_unpack_count'):
+                if self._unpack_count <= 3:
+                    first_param = list(param_dict['structural'].keys())[0]
+                    self.iteration_logger.info(f"  구조모델 (계층적): {first_param}={param_dict['structural'][first_param]:.6f}")
+
+        elif hasattr(self.config.structural, 'n_exo'):
+            # 병렬 구조 (하위 호환)
             n_exo = self.config.structural.n_exo
             n_cov = self.config.structural.n_cov
 
@@ -778,19 +894,44 @@ class GPUBatchEstimator(SimultaneousEstimator):
         beta = params[idx:idx+n_attributes]
         idx += n_attributes
 
-        lambda_lv = params[idx]
-        idx += 1
+        # 잠재변수 계수
+        if hasattr(self.config.choice, 'moderation_enabled') and self.config.choice.moderation_enabled:
+            # ✅ 조절효과 모델
+            lambda_main = params[idx]
+            idx += 1
 
-        param_dict['choice'] = {
-            'intercept': intercept,
-            'beta': beta,
-            'lambda': lambda_lv
-        }
+            param_dict['choice'] = {
+                'intercept': intercept,
+                'beta': beta,
+                'lambda_main': lambda_main
+            }
 
-        # 상세 로깅 (간소화)
-        if hasattr(self, 'iteration_logger') and hasattr(self, '_unpack_count'):
-            if self._unpack_count <= 3:
-                self.iteration_logger.info(f"  선택모델: intercept={intercept:.6f}, beta[0]={beta[0]:.6f}, lambda={lambda_lv:.6f}")
+            # 조절효과 계수
+            for mod_lv in self.config.choice.moderator_lvs:
+                param_name = f'lambda_mod_{mod_lv}'
+                param_dict['choice'][param_name] = params[idx]
+                idx += 1
+
+            # 상세 로깅
+            if hasattr(self, 'iteration_logger') and hasattr(self, '_unpack_count'):
+                if self._unpack_count <= 3:
+                    first_mod = self.config.choice.moderator_lvs[0]
+                    self.iteration_logger.info(f"  선택모델 (조절): intercept={intercept:.6f}, lambda_main={lambda_main:.6f}, lambda_mod_{first_mod}={param_dict['choice'][f'lambda_mod_{first_mod}']:.6f}")
+        else:
+            # 기본 모델 (하위 호환)
+            lambda_lv = params[idx]
+            idx += 1
+
+            param_dict['choice'] = {
+                'intercept': intercept,
+                'beta': beta,
+                'lambda': lambda_lv
+            }
+
+            # 상세 로깅 (간소화)
+            if hasattr(self, 'iteration_logger') and hasattr(self, '_unpack_count'):
+                if self._unpack_count <= 3:
+                    self.iteration_logger.info(f"  선택모델: intercept={intercept:.6f}, beta[0]={beta[0]:.6f}, lambda={lambda_lv:.6f}")
 
         return param_dict
 
