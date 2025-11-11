@@ -26,6 +26,7 @@ from .gradient_calculator import (
     ChoiceGradient,
     JointGradient
 )
+from .parameter_scaler import ParameterScaler
 
 logger = logging.getLogger(__name__)
 
@@ -266,9 +267,14 @@ class SimultaneousEstimator:
         # 로그 파일 설정
         if log_file is None:
             from pathlib import Path
+            from datetime import datetime
+
             results_dir = Path('results')
             results_dir.mkdir(exist_ok=True)
-            log_file = results_dir / 'iclv_estimation_log.txt'
+
+            # 타임스탬프 생성
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_file = results_dir / f'iclv_estimation_log_{timestamp}.txt'
 
         self._setup_iteration_logger(str(log_file))
 
@@ -388,6 +394,28 @@ class SimultaneousEstimator:
         )
         self.iteration_logger.info(f"초기 파라미터 설정 완료 (총 {len(initial_params)}개)")
 
+        # 파라미터 이름 생성
+        param_names = self._get_parameter_names(
+            measurement_model, structural_model, choice_model
+        )
+
+        # Apollo-style 파라미터 스케일링 초기화
+        self.iteration_logger.info("")
+        self.iteration_logger.info("=" * 80)
+        self.iteration_logger.info("Apollo-style 파라미터 스케일링 초기화")
+        self.iteration_logger.info("=" * 80)
+        self.param_scaler = ParameterScaler(
+            initial_params=initial_params,
+            param_names=param_names,
+            logger=self.iteration_logger
+        )
+
+        # 초기 파라미터를 스케일링 (External → Internal)
+        initial_params_scaled = self.param_scaler.scale_parameters(initial_params)
+
+        # 스케일링 비교 로깅
+        self.param_scaler.log_parameter_comparison(initial_params, initial_params_scaled)
+
         # 결합 우도함수 정의 (단계별 로깅 추가)
         iteration_count = [0]  # Mutable counter
         best_ll = [-np.inf]  # Track best log-likelihood
@@ -402,8 +430,20 @@ class SimultaneousEstimator:
         line_search_gradient = [None]  # Line search 시작 시 gradient
         line_search_directional_derivative = [None]  # ∇f(x)^T·d (시작 시)
 
-        def negative_log_likelihood(params):
+        def negative_log_likelihood(params_scaled):
+            """
+            Negative log-likelihood function (스케일된 파라미터 사용)
+
+            Args:
+                params_scaled: 스케일된 (internal) 파라미터
+
+            Returns:
+                Negative log-likelihood
+            """
             func_call_count[0] += 1
+
+            # 파라미터 언스케일링 (Internal → External)
+            params = self.param_scaler.unscale_parameters(params_scaled)
 
             # Line search 중인지 판단
             # Major iteration 시작 직후 첫 호출이 아니면 line search 중
@@ -414,7 +454,7 @@ class SimultaneousEstimator:
                 context = f"Major Iteration #{major_iter_count[0] + 1} 시작"
                 line_search_call_count[0] = 0
                 line_search_func_values.clear()
-                line_search_start_params[0] = params.copy()
+                line_search_start_params[0] = params_scaled.copy()
             elif calls_since_major_start > 1:
                 # Line search 중
                 line_search_call_count[0] += 1
@@ -488,12 +528,23 @@ class SimultaneousEstimator:
         # Gradient 함수 정의 (Apollo 방식)
         grad_call_count = [0]  # 그래디언트 호출 횟수
 
-        def gradient_function(params):
-            """Analytic gradient 계산 (Apollo 방식)"""
+        def gradient_function(params_scaled):
+            """
+            Analytic gradient 계산 (Apollo 방식, 스케일된 파라미터 사용)
+
+            Args:
+                params_scaled: 스케일된 (internal) 파라미터
+
+            Returns:
+                Gradient w.r.t. scaled parameters
+            """
             if not self.use_analytic_gradient:
                 return None  # 수치적 그래디언트 사용
 
             grad_call_count[0] += 1
+
+            # 파라미터 언스케일링 (Internal → External)
+            params = self.param_scaler.unscale_parameters(params_scaled)
 
             # 단계 로그: 그래디언트 계산 시작 (모든 호출에서 출력)
             self.iteration_logger.info(f"\n[단계 2/2] Analytic Gradient 계산 #{grad_call_count[0]}")
@@ -582,36 +633,52 @@ class SimultaneousEstimator:
             grad_vector = self._pack_gradient(grad_dict, measurement_model, structural_model, choice_model)
 
             # Negative gradient (minimize -LL)
-            neg_grad = -grad_vector
+            neg_grad_external = -grad_vector
+
+            # Gradient 스케일링 (External → Internal)
+            # ∂LL/∂θ_internal = ∂LL/∂θ_external * scale
+            neg_grad_scaled = self.param_scaler.scale_gradient(neg_grad_external)
 
             # Line search 중인지 판단
             calls_since_major_start = func_call_count[0] - current_major_iter_start_call[0]
 
             # Gradient 방향 검증 (첫 번째 호출 시)
             if grad_call_count[0] == 1:
-                grad_norm = np.linalg.norm(neg_grad)
+                grad_norm_external = np.linalg.norm(neg_grad_external)
+                grad_norm_scaled = np.linalg.norm(neg_grad_scaled)
                 self.iteration_logger.info(
-                    f"\n[Gradient 방향 검증]\n"
-                    f"  Gradient norm: {grad_norm:.6e}\n"
-                    f"  Gradient (처음 5개): {neg_grad[:5]}\n"
-                    f"  Gradient (마지막 5개): {neg_grad[-5:]}\n"
+                    f"\n[Gradient 방향 검증 - External (원본)]\n"
+                    f"  Gradient norm: {grad_norm_external:.6e}\n"
+                    f"  Gradient max: {np.max(np.abs(neg_grad_external)):.6e}\n"
+                    f"  Gradient (처음 5개): {neg_grad_external[:5]}\n"
+                    f"  Gradient (마지막 5개): {neg_grad_external[-5:]}\n"
+                )
+                self.iteration_logger.info(
+                    f"\n[Gradient 방향 검증 - Internal (스케일됨)]\n"
+                    f"  Gradient norm: {grad_norm_scaled:.6e}\n"
+                    f"  Gradient max: {np.max(np.abs(neg_grad_scaled)):.6e}\n"
+                    f"  Gradient (처음 5개): {neg_grad_scaled[:5]}\n"
+                    f"  Gradient (마지막 5개): {neg_grad_scaled[-5:]}\n"
                     f"  주의: scipy는 이 gradient를 사용하여 descent direction을 계산합니다.\n"
                     f"       d = -H^(-1) · gradient이므로, gradient가 양수면 d는 음수 방향입니다."
                 )
 
+                # 스케일링 비교 로깅
+                self.param_scaler.log_gradient_comparison(neg_grad_external, neg_grad_scaled)
+
             # Line search 시작 시 방향 미분 저장
             if calls_since_major_start == 1:
-                # Major iteration 시작 시 gradient 저장
-                line_search_gradient[0] = neg_grad.copy()
+                # Major iteration 시작 시 gradient 저장 (스케일된 gradient 사용)
+                line_search_gradient[0] = neg_grad_scaled.copy()
                 # 다음 함수 호출에서 탐색 방향을 알 수 있으므로, 방향 미분은 나중에 계산
 
             # Line search 중이면 Wolfe 조건 계산
             elif calls_since_major_start > 1 and line_search_start_params[0] is not None:
-                # 탐색 방향 계산: d = params - line_search_start_params
-                search_direction = params - line_search_start_params[0]
+                # 탐색 방향 계산: d = params_scaled - line_search_start_params
+                search_direction = params_scaled - line_search_start_params[0]
 
-                # 현재 위치에서 방향 미분: ∇f(x + α·d)^T·d
-                directional_derivative_new = np.dot(neg_grad, search_direction)
+                # 현재 위치에서 방향 미분: ∇f(x + α·d)^T·d (스케일된 gradient 사용)
+                directional_derivative_new = np.dot(neg_grad_scaled, search_direction)
 
                 # Line search 시작 시 방향 미분 계산 (첫 line search 호출 시)
                 if line_search_directional_derivative[0] is None and line_search_gradient[0] is not None:
@@ -665,18 +732,19 @@ class SimultaneousEstimator:
                         f"  → Gradient가 {'충분히 평평해짐' if curvature_satisfied else '아직 가파름'}"
                     )
 
-            return neg_grad
+            # 스케일된 gradient 반환 (optimizer는 internal parameters에 대해 작동)
+            return neg_grad_scaled
 
         print("=" * 70, flush=True)
         if use_gradient:
             print(f"최적화 시작: {self.config.estimation.optimizer} (gradient-based)", flush=True)
             if self.use_analytic_gradient:
-                print("Analytic gradient 사용 (Apollo 방식)", flush=True)
+                print("Analytic gradient 사용 (Apollo 방식 + Parameter Scaling)", flush=True)
             else:
                 print("수치적 그래디언트 사용 (2-point finite difference)", flush=True)
         else:
             print("최적화 시작: Nelder-Mead (gradient-free)", flush=True)
-        print(f"초기 파라미터 개수: {len(initial_params)}", flush=True)
+        print(f"초기 파라미터 개수: {len(initial_params_scaled)}", flush=True)
         self.iteration_logger.info(f"최대 반복 횟수: {self.config.estimation.max_iterations}")
         self.iteration_logger.info("=" * 70)
 
@@ -913,12 +981,12 @@ class SimultaneousEstimator:
                     'maxiter': 200,  # Major iteration 최대 횟수
                     'ftol': 1e-3,    # 함수값 상대적 변화 0.1% 이하면 종료
                     'gtol': 1e-3,    # 그래디언트 norm 허용 오차
-                    'c1': 1e-3,      # Armijo 조건 파라미터 (기본값: 1e-4, 완화: 1e-3)
-                    'c2': 0.5,       # Curvature 조건 파라미터 (기본값: 0.9, 강화: 0.5)
+                    'c1': 1e-4,      # Armijo 조건 파라미터 (scipy 기본값)
+                    'c2': 0.9,       # Curvature 조건 파라미터 (scipy 기본값)
                     'disp': True
                 }
-                self.logger.info(f"BFGS 옵션: c1={optimizer_options['c1']}, c2={optimizer_options['c2']}")
-                self.iteration_logger.info(f"BFGS 옵션: c1={optimizer_options['c1']}, c2={optimizer_options['c2']}")
+                self.logger.info(f"BFGS 옵션: c1={optimizer_options['c1']}, c2={optimizer_options['c2']} (scipy 기본값)")
+                self.iteration_logger.info(f"BFGS 옵션: c1={optimizer_options['c1']}, c2={optimizer_options['c2']} (scipy 기본값)")
             elif self.config.estimation.optimizer == 'L-BFGS-B':
                 optimizer_options = {
                     'maxiter': 200,  # Major iteration 최대 횟수
@@ -937,7 +1005,7 @@ class SimultaneousEstimator:
 
             result = optimize.minimize(
                 early_stopping_wrapper.objective,  # Wrapper의 objective 사용
-                initial_params,
+                initial_params_scaled,  # 스케일된 초기 파라미터 사용
                 method=self.config.estimation.optimizer,
                 jac=jac_function,
                 bounds=bounds if self.config.estimation.optimizer == 'L-BFGS-B' else None,
@@ -1022,7 +1090,7 @@ class SimultaneousEstimator:
 
             result = optimize.minimize(
                 negative_log_likelihood,
-                initial_params,
+                initial_params_scaled,  # 스케일된 초기 파라미터 사용
                 method='Nelder-Mead',
                 options={
                     'maxiter': self.config.estimation.max_iterations,
@@ -1043,6 +1111,21 @@ class SimultaneousEstimator:
         self.iteration_logger.info(f"최종 로그우도: {-result.fun:.4f}")
         self.iteration_logger.info(f"반복 횟수: {iteration_count[0]}")
         self.iteration_logger.info("=" * 70)
+
+        # 최적 파라미터 언스케일링 (Internal → External)
+        self.iteration_logger.info("")
+        self.iteration_logger.info("=" * 80)
+        self.iteration_logger.info("최적 파라미터 언스케일링 (Internal → External)")
+        self.iteration_logger.info("=" * 80)
+
+        optimal_params_scaled = result.x
+        optimal_params_external = self.param_scaler.unscale_parameters(optimal_params_scaled)
+
+        # 스케일링 비교 로깅
+        self.param_scaler.log_parameter_comparison(optimal_params_external, optimal_params_scaled)
+
+        # result.x를 external parameters로 교체
+        result.x = optimal_params_external
 
         # 결과 처리
         self.results = self._process_results(
@@ -1237,41 +1320,117 @@ class SimultaneousEstimator:
 
         return bounds
 
+    def _get_parameter_names(self, measurement_model,
+                             structural_model, choice_model) -> List[str]:
+        """파라미터 이름 리스트 생성 (스케일링용)"""
+
+        names = []
+
+        # 다중 잠재변수 여부 확인
+        from .multi_latent_config import MultiLatentConfig
+        is_multi_latent = isinstance(self.config, MultiLatentConfig)
+
+        # 측정모델 파라미터
+        if is_multi_latent:
+            # 다중 잠재변수: 각 LV별로 파라미터 추가
+            for lv_name, meas_config in self.config.measurement_configs.items():
+                # 요인적재량 (zeta)
+                for indicator in meas_config.indicators:
+                    names.append(f"ζ_{lv_name}_{indicator}")
+
+                # 임계값 (tau)
+                n_thresholds = meas_config.n_categories - 1
+                for indicator in meas_config.indicators:
+                    for j in range(n_thresholds):
+                        names.append(f"τ_{lv_name}_{indicator}_{j+1}")
+        else:
+            # 단일 잠재변수
+            indicators = self.config.measurement.indicators
+            for indicator in indicators:
+                names.append(f"ζ_{indicator}")
+
+            n_thresholds = self.config.measurement.n_categories - 1
+            for indicator in indicators:
+                for j in range(n_thresholds):
+                    names.append(f"τ_{indicator}_{j+1}")
+
+        # 구조모델 파라미터 (gamma)
+        if is_multi_latent:
+            # 다중 잠재변수: gamma_lv (외생 LV → 내생 LV)
+            for exo_lv in self.config.structural.exogenous_lvs:
+                names.append(f"γ_lv_{exo_lv}")
+
+            # gamma_x (공변량 → 내생 LV)
+            for cov in self.config.structural.covariates:
+                names.append(f"γ_x_{cov}")
+        else:
+            # 단일 잠재변수
+            sociodem = self.config.structural.sociodemographics
+            for var in sociodem:
+                names.append(f"γ_{var}")
+
+        # 선택모델 파라미터
+        # - 절편
+        names.append("β_intercept")
+
+        # - 속성 계수 (beta)
+        attributes = self.config.choice.choice_attributes
+        for attr in attributes:
+            names.append(f"β_{attr}")
+
+        # - 잠재변수 계수 (lambda)
+        names.append("λ")
+
+        # - 사회인구학적 변수 계수 (선택모델에 포함되는 경우)
+        if is_multi_latent:
+            # 다중 잠재변수: covariates 사용
+            if hasattr(self.config.structural, 'include_in_choice'):
+                if self.config.structural.include_in_choice:
+                    for var in self.config.structural.covariates:
+                        names.append(f"β_{var}")
+        else:
+            # 단일 잠재변수
+            if self.config.structural.include_in_choice:
+                for var in sociodem:
+                    names.append(f"β_{var}")
+
+        return names
+
     def _get_initial_parameters(self, measurement_model,
                                 structural_model, choice_model) -> np.ndarray:
         """초기 파라미터 설정"""
-        
+
         params = []
-        
+
         # 측정모델 파라미터
         # - 요인적재량 (zeta)
         n_indicators = len(self.config.measurement.indicators)
         params.extend([1.0] * n_indicators)  # zeta
-        
+
         # - 임계값 (tau)
         n_thresholds = self.config.measurement.n_categories - 1
         for _ in range(n_indicators):
             params.extend([-2, -1, 1, 2])  # 5점 척도 기본값
-        
+
         # 구조모델 파라미터 (gamma)
         n_sociodem = len(self.config.structural.sociodemographics)
         params.extend([0.0] * n_sociodem)
-        
+
         # 선택모델 파라미터
         # - 절편
         params.append(0.0)
-        
+
         # - 속성 계수 (beta)
         n_attributes = len(self.config.choice.choice_attributes)
         params.extend([0.0] * n_attributes)
-        
+
         # - 잠재변수 계수 (lambda)
         params.append(1.0)
-        
+
         # - 사회인구학적 변수 계수 (선택모델에 포함되는 경우)
         if self.config.structural.include_in_choice:
             params.extend([0.0] * n_sociodem)
-        
+
         return np.array(params)
     
 

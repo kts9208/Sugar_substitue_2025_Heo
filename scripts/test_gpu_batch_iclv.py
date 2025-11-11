@@ -10,6 +10,7 @@ import pandas as pd
 import numpy as np
 import time
 from pathlib import Path
+from datetime import datetime
 
 # 프로젝트 루트를 경로에 추가
 project_root = Path(__file__).parent.parent
@@ -224,8 +225,11 @@ def main():
         output_dir = project_root / 'results'
         output_dir.mkdir(exist_ok=True)
 
+        # 타임스탬프 생성 (CSV와 동일한 타임스탬프 사용)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
         # 파라미터 저장 (npy)
-        params_file = output_dir / 'gpu_batch_iclv_params.npy'
+        params_file = output_dir / f'gpu_batch_iclv_params_{timestamp}.npy'
         np.save(params_file, result['raw_params'])
 
         # 파라미터를 DataFrame으로 변환 (다중 잠재변수 지원)
@@ -398,16 +402,19 @@ def main():
         # DataFrame 생성
         df_params = pd.DataFrame(param_list)
 
-        # 로그 파일에서 초기 LL 읽기
+        # 로그 파일에서 초기 LL 읽기 (가장 최근 로그 파일 사용)
         initial_ll = 'N/A'
         try:
-            log_file = output_dir / 'gpu_batch_iclv_estimation_log.txt'
-            with open(log_file, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if 'Iter    1:' in line and 'LL =' in line:
-                        ll_str = line.split('LL =')[1].split('(')[0].strip()
-                        initial_ll = f"{float(ll_str):.2f}"
-                        break
+            # 가장 최근 로그 파일 찾기
+            log_files = sorted(output_dir.glob('iclv_estimation_log_*.txt'), reverse=True)
+            if log_files:
+                log_file = log_files[0]
+                with open(log_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if 'Iter    1:' in line and 'LL =' in line:
+                            ll_str = line.split('LL =')[1].split('(')[0].strip()
+                            initial_ll = f"{float(ll_str):.2f}"
+                            break
         except Exception as e:
             print(f"   ⚠️  초기 LL 읽기 실패: {e}")
 
@@ -427,8 +434,11 @@ def main():
         df_stats = pd.DataFrame(stats_list)
         df_combined = pd.concat([df_params, df_stats], ignore_index=True)
 
+        # 타임스탬프 생성
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
         # CSV 저장 (상세 파라미터)
-        csv_file = output_dir / 'gpu_batch_iclv_results.csv'
+        csv_file = output_dir / f'gpu_batch_iclv_results_{timestamp}.csv'
         df_combined.to_csv(csv_file, index=False, encoding='utf-8-sig')
 
         # 요약정보 저장 (CSV)
@@ -447,7 +457,7 @@ def main():
             summary_data['Value'].append(str(n_iter))
 
         df_summary = pd.DataFrame(summary_data)
-        summary_file = output_dir / 'gpu_batch_iclv_summary.csv'
+        summary_file = output_dir / f'gpu_batch_iclv_summary_{timestamp}.csv'
         df_summary.to_csv(summary_file, index=False, encoding='utf-8-sig')
 
         print(f"\n결과 저장:")
