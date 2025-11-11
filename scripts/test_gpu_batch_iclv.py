@@ -60,31 +60,37 @@ def main():
     print("\n2. ICLV 설정...")
 
     # 측정모델 설정 (5개 잠재변수)
+    # 🔴 measurement_method='continuous_linear'을 디폴트로 설정 (SEM 방식)
     measurement_configs = {
         'health_concern': MeasurementConfig(
             latent_variable='health_concern',
             indicators=['q6', 'q7', 'q8', 'q9', 'q10', 'q11'],
-            n_categories=5  # test_iclv_full_data.py와 동일하게 5로 설정
+            n_categories=5,
+            measurement_method='continuous_linear'  # 디폴트: 연속형 선형 측정모델
         ),
         'perceived_benefit': MeasurementConfig(
             latent_variable='perceived_benefit',
             indicators=['q12', 'q13', 'q14', 'q15', 'q16', 'q17'],
-            n_categories=5
+            n_categories=5,
+            measurement_method='continuous_linear'  # 디폴트: 연속형 선형 측정모델
         ),
         'perceived_price': MeasurementConfig(
             latent_variable='perceived_price',
             indicators=['q27', 'q28', 'q29'],
-            n_categories=5
+            n_categories=5,
+            measurement_method='continuous_linear'  # 디폴트: 연속형 선형 측정모델
         ),
         'nutrition_knowledge': MeasurementConfig(
             latent_variable='nutrition_knowledge',
             indicators=[f'q{i}' for i in range(30, 50)],  # q30-q49
-            n_categories=5  # 🔴 수정: 2 → 5 (실제 데이터가 5점 척도)
+            n_categories=5,
+            measurement_method='continuous_linear'  # 디폴트: 연속형 선형 측정모델
         ),
         'purchase_intention': MeasurementConfig(
             latent_variable='purchase_intention',
             indicators=['q18', 'q19', 'q20'],
-            n_categories=5
+            n_categories=5,
+            measurement_method='continuous_linear'  # 디폴트: 연속형 선형 측정모델
         )
     }
 
@@ -136,6 +142,7 @@ def main():
     print(f"   - 잠재변수: {len(measurement_configs)}개 (4개 외생 + 1개 내생)")
     total_indicators = sum(len(mc.indicators) for mc in measurement_configs.values())
     print(f"   - 지표 수: {total_indicators}")
+    print(f"   - 측정 방법: 단일평균 (Simple Mean) - 디폴트")
     print(f"   - 사회인구학적 변수: {len(structural_config.covariates)}")
     print(f"   - 선택 속성: {len(choice_config.choice_attributes)}")
     print(f"   - Halton draws: {estimation_config.n_draws}")

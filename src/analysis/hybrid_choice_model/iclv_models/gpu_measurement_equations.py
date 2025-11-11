@@ -413,3 +413,129 @@ class GPUMultiLatentMeasurement:
             total += n_indicators + (n_indicators * n_thresholds)
         return total
 
+
+class GPUContinuousLinearMeasurement:
+    """
+    GPU 가속 연속형 선형 측정모델
+
+    CuPy를 사용하여 GPU에서 로그우도를 계산합니다.
+
+    Model:
+        Y_i = ζ_i * LV + ε_i
+        ε_i ~ N(0, σ²_i)
+    """
+
+    def __init__(self, config, use_gpu: bool = True):
+        """
+        초기화
+
+        Args:
+            config: MeasurementConfig 객체
+            use_gpu: GPU 사용 여부
+        """
+        self.config = config
+        self.n_indicators = len(config.indicators)
+        self.use_gpu = use_gpu and GPU_AVAILABLE
+
+        self.zeta = None
+        self.sigma_sq = None
+        self.fitted = False
+
+        if self.use_gpu:
+            self.xp = cp
+            logger.info(f"🚀 GPU ContinuousLinear: {self.n_indicators}개 지표")
+        else:
+            self.xp = np
+            logger.info(f"💻 CPU ContinuousLinear: {self.n_indicators}개 지표")
+
+    def log_likelihood(self, data: pd.DataFrame, latent_var: float,
+                      params: Dict[str, np.ndarray]) -> float:
+        """
+        로그우도 계산 (GPU 가속)
+
+        Args:
+            data: 관측지표 데이터
+            latent_var: 잠재변수 값
+            params: {'zeta': ..., 'sigma_sq': ...}
+
+        Returns:
+            로그우도 값
+        """
+        zeta = params['zeta']
+        sigma_sq = params['sigma_sq']
+
+        if self.use_gpu:
+            # GPU 계산
+            zeta_gpu = cp.asarray(zeta)
+            sigma_sq_gpu = cp.asarray(sigma_sq)
+            latent_var_gpu = cp.asarray(latent_var)
+        else:
+            zeta_gpu = zeta
+            sigma_sq_gpu = sigma_sq
+            latent_var_gpu = latent_var
+
+        total_ll = 0.0
+        first_row = data.iloc[0]
+
+        for i, indicator in enumerate(self.config.indicators):
+            if indicator not in first_row.index:
+                continue
+
+            y_obs = first_row[indicator]
+
+            if pd.isna(y_obs):
+                continue
+
+            # 예측값
+            if self.use_gpu:
+                y_pred = float(zeta_gpu[i] * latent_var_gpu)
+            else:
+                y_pred = zeta_gpu[i] * latent_var_gpu
+
+            # 잔차
+            residual = y_obs - y_pred
+
+            # 정규분포 로그우도
+            if self.use_gpu:
+                ll_i = -0.5 * cp.log(2 * cp.pi * sigma_sq_gpu[i])
+                ll_i += -0.5 * (residual ** 2) / sigma_sq_gpu[i]
+                ll_i = float(cp.asnumpy(ll_i))
+            else:
+                ll_i = -0.5 * np.log(2 * np.pi * sigma_sq_gpu[i])
+                ll_i += -0.5 * (residual ** 2) / sigma_sq_gpu[i]
+
+            total_ll += ll_i
+
+        return total_ll
+
+    def initialize_parameters(self) -> Dict[str, np.ndarray]:
+        """파라미터 초기화"""
+        params = {}
+
+        # 요인적재량
+        zeta = np.ones(self.n_indicators)
+        if self.config.fix_first_loading:
+            zeta[0] = 1.0
+
+        params['zeta'] = zeta
+
+        # 오차분산
+        sigma_sq = np.ones(self.n_indicators) * self.config.initial_error_variance
+        params['sigma_sq'] = sigma_sq
+
+        return params
+
+    def get_n_parameters(self) -> int:
+        """파라미터 수 반환"""
+        n_params = 0
+
+        if self.config.fix_first_loading:
+            n_params += self.n_indicators - 1
+        else:
+            n_params += self.n_indicators
+
+        if not self.config.fix_error_variance:
+            n_params += self.n_indicators
+
+        return n_params
+

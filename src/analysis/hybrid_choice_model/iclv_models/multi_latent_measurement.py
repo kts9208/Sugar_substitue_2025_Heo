@@ -13,7 +13,7 @@ import pandas as pd
 from typing import Dict, List
 import logging
 
-from .measurement_equations import OrderedProbitMeasurement
+from .measurement_equations import OrderedProbitMeasurement, ContinuousLinearMeasurement
 from .multi_latent_config import MultiLatentConfig
 
 logger = logging.getLogger(__name__)
@@ -22,19 +22,23 @@ logger = logging.getLogger(__name__)
 class MultiLatentMeasurement:
     """
     다중 잠재변수 측정모델 컨테이너
-    
-    기존 OrderedProbitMeasurement를 재사용하여 5개 잠재변수의 측정모델을 관리합니다.
-    
+
+    여러 측정 방법을 지원하여 5개 잠재변수의 측정모델을 관리합니다.
+
+    지원 측정 방법:
+        - ordered_probit: 순서형 프로빗 (리커트 척도를 순서형으로 처리)
+        - continuous_linear: 연속형 선형 (리커트 척도를 연속형으로 처리, SEM 방식)
+
     측정방정식:
         LV_j =~ ζ_j1*Ind_j1 + ζ_j2*Ind_j2 + ... + ζ_jk*Ind_jk
-    
+
     로그우도:
         LL = Σ_j LL_j(Indicators_j | LV_j)
-    
+
     Example:
         >>> configs = {
-        ...     'health_concern': MeasurementConfig(...),
-        ...     'perceived_benefit': MeasurementConfig(...),
+        ...     'health_concern': MeasurementConfig(..., measurement_method='continuous_linear'),
+        ...     'perceived_benefit': MeasurementConfig(..., measurement_method='ordered_probit'),
         ...     ...
         ... }
         >>> model = MultiLatentMeasurement(configs)
@@ -44,17 +48,17 @@ class MultiLatentMeasurement:
         ...     ...
         ... }
         >>> params = {
-        ...     'health_concern': {'zeta': ..., 'tau': ...},
-        ...     'perceived_benefit': {'zeta': ..., 'tau': ...},
+        ...     'health_concern': {'zeta': ..., 'sigma_sq': ...},  # continuous_linear
+        ...     'perceived_benefit': {'zeta': ..., 'tau': ...},    # ordered_probit
         ...     ...
         ... }
         >>> ll = model.log_likelihood(data, latent_vars, params)
     """
-    
+
     def __init__(self, measurement_configs: Dict[str, 'MeasurementConfig']):
         """
         초기화
-        
+
         Args:
             measurement_configs: 잠재변수별 측정모델 설정
                 {
@@ -67,12 +71,21 @@ class MultiLatentMeasurement:
         """
         self.configs = measurement_configs
         self.models = {}
-        
-        # 각 잠재변수에 대해 기존 OrderedProbitMeasurement 생성
+
+        # 각 잠재변수에 대해 측정모델 생성 (measurement_method에 따라 선택)
         for lv_name, config in measurement_configs.items():
-            self.models[lv_name] = OrderedProbitMeasurement(config)
-            logger.info(f"측정모델 생성: {lv_name} ({len(config.indicators)}개 지표)")
-        
+            # measurement_method 확인 (기본값: continuous_linear)
+            method = getattr(config, 'measurement_method', 'continuous_linear')
+
+            if method == 'continuous_linear':
+                self.models[lv_name] = ContinuousLinearMeasurement(config)
+                logger.info(f"측정모델 생성 (연속형 선형): {lv_name} ({len(config.indicators)}개 지표)")
+            elif method == 'ordered_probit':
+                self.models[lv_name] = OrderedProbitMeasurement(config)
+                logger.info(f"측정모델 생성 (순서형 프로빗): {lv_name} ({len(config.indicators)}개 지표)")
+            else:
+                raise ValueError(f"지원하지 않는 측정 방법: {method}")
+
         self.n_latent_vars = len(self.models)
         logger.info(f"MultiLatentMeasurement 초기화 완료: {self.n_latent_vars}개 잠재변수")
     
@@ -154,23 +167,34 @@ class MultiLatentMeasurement:
         info = {}
         for lv_name, model in self.models.items():
             n_indicators = model.n_indicators
-            n_thresholds = model.n_thresholds
-            n_zeta = n_indicators
-            n_tau = n_indicators * n_thresholds
-            
-            info[lv_name] = {
-                'n_indicators': n_indicators,
-                'n_zeta': n_zeta,
-                'n_tau': n_tau,
-                'total': n_zeta + n_tau
-            }
-        
+
+            # SimpleMeanMeasurement인 경우 파라미터 없음
+            if isinstance(model, SimpleMeanMeasurement):
+                info[lv_name] = {
+                    'n_indicators': n_indicators,
+                    'n_zeta': 0,
+                    'n_tau': 0,
+                    'total': 0
+                }
+            else:
+                # OrderedProbitMeasurement인 경우
+                n_thresholds = model.n_thresholds
+                n_zeta = n_indicators
+                n_tau = n_indicators * n_thresholds
+
+                info[lv_name] = {
+                    'n_indicators': n_indicators,
+                    'n_zeta': n_zeta,
+                    'n_tau': n_tau,
+                    'total': n_zeta + n_tau
+                }
+
         return info
     
     def initialize_parameters(self) -> Dict[str, Dict[str, np.ndarray]]:
         """
         측정모델 파라미터 초기화
-        
+
         Returns:
             {
                 'health_concern': {
@@ -179,26 +203,34 @@ class MultiLatentMeasurement:
                 },
                 ...
             }
+
+            Note: SimpleMeanMeasurement는 빈 딕셔너리 반환
         """
         params = {}
-        
+
         for lv_name, model in self.models.items():
+            # SimpleMeanMeasurement인 경우 빈 딕셔너리
+            if isinstance(model, SimpleMeanMeasurement):
+                params[lv_name] = {}
+                continue
+
+            # OrderedProbitMeasurement인 경우
             n_indicators = model.n_indicators
             n_thresholds = model.n_thresholds
-            
+
             # 요인적재량 초기값: 모두 1.0 (첫 번째는 고정)
             zeta = np.ones(n_indicators)
-            
+
             # 임계값 초기값: 균등 간격
             tau = np.zeros((n_indicators, n_thresholds))
             for i in range(n_indicators):
                 tau[i, :] = np.linspace(-2, 2, n_thresholds)
-            
+
             params[lv_name] = {
                 'zeta': zeta,
                 'tau': tau
             }
-        
+
         return params
     
     def validate_parameters(self, params: Dict[str, Dict[str, np.ndarray]]) -> bool:

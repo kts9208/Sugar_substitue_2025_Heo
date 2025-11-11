@@ -482,21 +482,43 @@ class GPUBatchEstimator(SimultaneousEstimator):
         if hasattr(self.config, 'measurement_configs'):
             # 다중 잠재변수
             for lv_name, config in self.config.measurement_configs.items():
-                n_indicators = len(config.indicators)
-                n_thresholds = config.n_categories - 1
+                # measurement_method 확인
+                method = getattr(config, 'measurement_method', 'continuous_linear')
 
-                # 요인적재량 (zeta)
-                params.extend([1.0] * n_indicators)
+                if method == 'continuous_linear':
+                    # ContinuousLinearMeasurement
+                    n_indicators = len(config.indicators)
 
-                # 임계값 (tau)
-                for _ in range(n_indicators):
-                    if n_thresholds == 4:
-                        params.extend([-2, -1, 1, 2])  # 5점 척도
-                    elif n_thresholds == 1:
-                        params.extend([0.0])  # 2점 척도
+                    # 요인적재량 (zeta) - 첫 번째 제외 가능
+                    if config.fix_first_loading:
+                        params.extend([1.0] * (n_indicators - 1))
                     else:
-                        # 일반적인 경우
-                        params.extend(list(range(-n_thresholds//2 + 1, n_thresholds//2 + 1)))
+                        params.extend([1.0] * n_indicators)
+
+                    # 오차분산 (sigma_sq)
+                    if not config.fix_error_variance:
+                        params.extend([1.0] * n_indicators)
+
+                elif method == 'ordered_probit':
+                    # OrderedProbitMeasurement
+                    n_indicators = len(config.indicators)
+                    n_thresholds = config.n_categories - 1
+
+                    # 요인적재량 (zeta)
+                    params.extend([1.0] * n_indicators)
+
+                    # 임계값 (tau)
+                    for _ in range(n_indicators):
+                        if n_thresholds == 4:
+                            params.extend([-2, -1, 1, 2])  # 5점 척도
+                        elif n_thresholds == 1:
+                            params.extend([0.0])  # 2점 척도
+                        else:
+                            # 일반적인 경우
+                            params.extend(list(range(-n_thresholds//2 + 1, n_thresholds//2 + 1)))
+
+                else:
+                    raise ValueError(f"지원하지 않는 측정 방법: {method}")
         else:
             # 단일 잠재변수
             n_indicators = len(self.config.measurement.indicators)
@@ -546,15 +568,37 @@ class GPUBatchEstimator(SimultaneousEstimator):
         if hasattr(self.config, 'measurement_configs'):
             # 다중 잠재변수
             for lv_name, config in self.config.measurement_configs.items():
-                n_indicators = len(config.indicators)
-                n_thresholds = config.n_categories - 1
+                # measurement_method 확인
+                method = getattr(config, 'measurement_method', 'continuous_linear')
 
-                # 요인적재량 (zeta): [0.1, 10]
-                bounds.extend([(0.1, 10.0)] * n_indicators)
+                if method == 'continuous_linear':
+                    # ContinuousLinearMeasurement
+                    n_indicators = len(config.indicators)
 
-                # 임계값 (tau): [-10, 10]
-                for _ in range(n_indicators):
-                    bounds.extend([(-10.0, 10.0)] * n_thresholds)
+                    # 요인적재량 (zeta): [-10, 10]
+                    if config.fix_first_loading:
+                        bounds.extend([(-10.0, 10.0)] * (n_indicators - 1))
+                    else:
+                        bounds.extend([(-10.0, 10.0)] * n_indicators)
+
+                    # 오차분산 (sigma_sq): [0.01, 100]
+                    if not config.fix_error_variance:
+                        bounds.extend([(0.01, 100.0)] * n_indicators)
+
+                elif method == 'ordered_probit':
+                    # OrderedProbitMeasurement
+                    n_indicators = len(config.indicators)
+                    n_thresholds = config.n_categories - 1
+
+                    # 요인적재량 (zeta): [0.1, 10]
+                    bounds.extend([(0.1, 10.0)] * n_indicators)
+
+                    # 임계값 (tau): [-10, 10]
+                    for _ in range(n_indicators):
+                        bounds.extend([(-10.0, 10.0)] * n_thresholds)
+
+                else:
+                    raise ValueError(f"지원하지 않는 측정 방법: {method}")
         else:
             # 단일 잠재변수
             n_indicators = len(self.config.measurement.indicators)
@@ -627,26 +671,62 @@ class GPUBatchEstimator(SimultaneousEstimator):
         if hasattr(self.config, 'measurement_configs'):
             # 다중 잠재변수
             for lv_idx, (lv_name, config) in enumerate(self.config.measurement_configs.items()):
-                n_indicators = len(config.indicators)
-                n_thresholds = config.n_categories - 1
+                # measurement_method 확인
+                method = getattr(config, 'measurement_method', 'continuous_linear')
 
-                # 요인적재량 (zeta)
-                zeta = params[idx:idx+n_indicators]
-                idx += n_indicators
+                if method == 'continuous_linear':
+                    # ContinuousLinearMeasurement
+                    n_indicators = len(config.indicators)
 
-                # 임계값 (tau)
-                tau_list = []
-                for i in range(n_indicators):
-                    tau_list.append(params[idx:idx+n_thresholds])
-                    idx += n_thresholds
-                tau = np.array(tau_list)
+                    # 요인적재량 (zeta)
+                    if config.fix_first_loading:
+                        zeta = np.ones(n_indicators)
+                        zeta[0] = 1.0  # 고정
+                        zeta[1:] = params[idx:idx + n_indicators - 1]
+                        idx += n_indicators - 1
+                    else:
+                        zeta = params[idx:idx + n_indicators]
+                        idx += n_indicators
 
-                param_dict['measurement'][lv_name] = {'zeta': zeta, 'tau': tau}
+                    # 오차분산 (sigma_sq)
+                    if config.fix_error_variance:
+                        sigma_sq = np.ones(n_indicators) * config.initial_error_variance
+                    else:
+                        sigma_sq = params[idx:idx + n_indicators]
+                        idx += n_indicators
 
-                # 첫 번째 LV에 대해서만 상세 로깅 (간소화)
-                if hasattr(self, 'iteration_logger') and hasattr(self, '_unpack_count'):
-                    if self._unpack_count <= 3 and lv_idx == 0:
-                        self.iteration_logger.info(f"  측정모델 {lv_name}: zeta[0]={zeta[0]:.4f}, tau[0,0]={tau[0,0]:.4f}")
+                    param_dict['measurement'][lv_name] = {'zeta': zeta, 'sigma_sq': sigma_sq}
+
+                    # 첫 번째 LV에 대해서만 상세 로깅
+                    if hasattr(self, 'iteration_logger') and hasattr(self, '_unpack_count'):
+                        if self._unpack_count <= 3 and lv_idx == 0:
+                            self.iteration_logger.info(f"  측정모델 {lv_name}: zeta[0]={zeta[0]:.4f}, sigma_sq[0]={sigma_sq[0]:.4f}")
+
+                elif method == 'ordered_probit':
+                    # OrderedProbitMeasurement
+                    n_indicators = len(config.indicators)
+                    n_thresholds = config.n_categories - 1
+
+                    # 요인적재량 (zeta)
+                    zeta = params[idx:idx+n_indicators]
+                    idx += n_indicators
+
+                    # 임계값 (tau)
+                    tau_list = []
+                    for i in range(n_indicators):
+                        tau_list.append(params[idx:idx+n_thresholds])
+                        idx += n_thresholds
+                    tau = np.array(tau_list)
+
+                    param_dict['measurement'][lv_name] = {'zeta': zeta, 'tau': tau}
+
+                    # 첫 번째 LV에 대해서만 상세 로깅
+                    if hasattr(self, 'iteration_logger') and hasattr(self, '_unpack_count'):
+                        if self._unpack_count <= 3 and lv_idx == 0:
+                            self.iteration_logger.info(f"  측정모델 {lv_name}: zeta[0]={zeta[0]:.4f}, tau[0,0]={tau[0,0]:.4f}")
+
+                else:
+                    raise ValueError(f"지원하지 않는 측정 방법: {method}")
         else:
             # 단일 잠재변수
             n_indicators = len(self.config.measurement.indicators)

@@ -299,27 +299,212 @@ class OrderedProbitMeasurement:
     def _unpack_parameters(self, param_vector: np.ndarray) -> Dict[str, np.ndarray]:
         """벡터를 파라미터로 변환"""
         idx = 0
-        
+
         # zeta
         zeta = param_vector[idx:idx + self.n_indicators]
         idx += self.n_indicators
-        
+
         # tau
         tau = param_vector[idx:].reshape(self.n_indicators, self.n_thresholds)
-        
+
         return {'zeta': zeta, 'tau': tau}
 
+    def get_n_parameters(self) -> int:
+        """
+        총 파라미터 수 반환
 
-def estimate_measurement_model(data: pd.DataFrame, config, 
+        Returns:
+            파라미터 수 (zeta + tau)
+        """
+        # zeta: n_indicators
+        # tau: n_indicators * n_thresholds
+        return self.n_indicators + (self.n_indicators * self.n_thresholds)
+
+
+class ContinuousLinearMeasurement:
+    """
+    연속형 선형 측정모델 (Continuous Linear Measurement)
+
+    리커트 척도를 연속형 변수로 간주하여 측정하는 SEM 방식의 측정모델입니다.
+
+    Model:
+        Y_i = ζ_i * LV + ε_i
+        ε_i ~ N(0, σ²_i)
+
+    여기서:
+        - Y_i: 관측지표 (리커트 척도 값)
+        - ζ_i: 요인적재량 (factor loading)
+        - LV: 잠재변수 (latent variable)
+        - ε_i: 측정오차
+        - σ²_i: 오차분산
+
+    Parameters:
+        - zeta: 요인적재량 (n_indicators,)
+        - sigma_sq: 오차분산 (n_indicators,)
+
+    Total parameters: 2 * n_indicators (첫 번째 적재량 고정 시 2*n - 1)
+
+    Reference:
+        - Bollen, K. A. (1989). Structural Equations with Latent Variables.
+        - Jöreskog, K. G. (1970). A general method for analysis of covariance structures.
+    """
+
+    def __init__(self, config):
+        """
+        초기화
+
+        Args:
+            config: MeasurementConfig 객체
+                - indicators: 관측지표 리스트
+                - fix_first_loading: 첫 번째 적재량 고정 여부
+                - fix_error_variance: 오차분산 고정 여부
+        """
+        self.config = config
+        self.n_indicators = len(config.indicators)
+
+        # 파라미터 (추정 후 저장)
+        self.zeta = None      # 요인적재량 (n_indicators,)
+        self.sigma_sq = None  # 오차분산 (n_indicators,)
+
+        self.fitted = False
+
+        logger.info(f"ContinuousLinearMeasurement 초기화: {self.n_indicators}개 지표")
+
+    def log_likelihood(self, data: pd.DataFrame, latent_var: float,
+                      params: Dict[str, np.ndarray]) -> float:
+        """
+        로그우도 계산 (정규분포 기반)
+
+        Args:
+            data: 관측지표 데이터
+            latent_var: 잠재변수 값 (스칼라)
+            params: 파라미터 딕셔너리
+                - 'zeta': 요인적재량 (n_indicators,)
+                - 'sigma_sq': 오차분산 (n_indicators,)
+
+        Returns:
+            로그우도 값
+        """
+        zeta = params['zeta']
+        sigma_sq = params['sigma_sq']
+
+        total_ll = 0.0
+
+        # 첫 번째 행만 사용 (지표는 개인 특성)
+        first_row = data.iloc[0]
+
+        # 각 지표에 대해
+        for i, indicator in enumerate(self.config.indicators):
+            if indicator not in first_row.index:
+                continue
+
+            y_obs = first_row[indicator]
+
+            if pd.isna(y_obs):
+                continue
+
+            # 예측값: Y_pred = ζ_i * LV
+            y_pred = zeta[i] * latent_var
+
+            # 잔차
+            residual = y_obs - y_pred
+
+            # 정규분포 로그우도
+            # log N(y | μ, σ²) = -0.5 * log(2π * σ²) - 0.5 * (y - μ)² / σ²
+            ll_i = -0.5 * np.log(2 * np.pi * sigma_sq[i])
+            ll_i += -0.5 * (residual ** 2) / sigma_sq[i]
+
+            total_ll += ll_i
+
+        return total_ll
+
+    def initialize_parameters(self) -> Dict[str, np.ndarray]:
+        """
+        파라미터 초기화
+
+        Returns:
+            {
+                'zeta': np.ndarray (n_indicators,),
+                'sigma_sq': np.ndarray (n_indicators,)
+            }
+        """
+        params = {}
+
+        # 요인적재량 초기화
+        if self.config.initial_loadings is not None:
+            zeta = np.array([
+                self.config.initial_loadings.get(ind, 1.0)
+                for ind in self.config.indicators
+            ])
+        else:
+            # 기본값: 모두 1.0
+            zeta = np.ones(self.n_indicators)
+
+        # 첫 번째 적재량 고정 (식별)
+        if self.config.fix_first_loading:
+            zeta[0] = 1.0
+
+        params['zeta'] = zeta
+
+        # 오차분산 초기화
+        sigma_sq = np.ones(self.n_indicators) * self.config.initial_error_variance
+        params['sigma_sq'] = sigma_sq
+
+        return params
+
+    def get_n_parameters(self) -> int:
+        """
+        추정할 파라미터 수 반환
+
+        Returns:
+            파라미터 수
+        """
+        n_params = 0
+
+        # 요인적재량
+        if self.config.fix_first_loading:
+            n_params += self.n_indicators - 1  # 첫 번째 고정
+        else:
+            n_params += self.n_indicators
+
+        # 오차분산
+        if not self.config.fix_error_variance:
+            n_params += self.n_indicators
+
+        return n_params
+
+    def get_parameter_bounds(self) -> List[Tuple[float, float]]:
+        """
+        파라미터 제약조건 (bounds)
+
+        Returns:
+            [(lower, upper), ...] 리스트
+        """
+        bounds = []
+
+        # 요인적재량: [-10, 10]
+        start_idx = 1 if self.config.fix_first_loading else 0
+        for i in range(start_idx, self.n_indicators):
+            bounds.append((-10.0, 10.0))
+
+        # 오차분산: [0.01, 100] (양수)
+        if not self.config.fix_error_variance:
+            for i in range(self.n_indicators):
+                bounds.append((0.01, 100.0))
+
+        return bounds
+
+
+def estimate_measurement_model(data: pd.DataFrame, config,
                                initial_params: Optional[Dict[str, np.ndarray]] = None) -> Tuple[OrderedProbitMeasurement, Dict[str, Any]]:
     """
     측정모델 추정 헬퍼 함수
-    
+
     Args:
         data: 관측지표 데이터
         config: MeasurementConfig 객체
         initial_params: 초기 파라미터 (선택)
-    
+
     Returns:
         (모델 객체, 추정 결과)
     """

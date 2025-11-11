@@ -12,25 +12,32 @@ from pathlib import Path
 @dataclass
 class MeasurementConfig:
     """측정모델 설정"""
-    
+
     # 잠재변수
     latent_variable: str
-    
+
     # 관측지표
     indicators: List[str]
-    
-    # 지표 유형
-    indicator_type: Literal['ordered', 'continuous', 'binary'] = 'ordered'
-    
+
+    # 측정 방법
+    measurement_method: Literal['ordered_probit', 'continuous_linear'] = 'continuous_linear'
+
+    # 지표 유형 (하위 호환성 유지)
+    indicator_type: Literal['ordered', 'continuous', 'binary'] = 'continuous'
+
     # Ordered Probit 설정
     n_categories: int = 5  # 리커트 척도 범주 수
-    
+
+    # Continuous Linear 설정
+    fix_first_loading: bool = True      # 첫 번째 적재량 고정 (식별)
+    fix_error_variance: bool = False    # 오차분산 고정 여부
+    initial_error_variance: float = 1.0 # 초기 오차분산
+
     # 초기값
     initial_loadings: Optional[Dict[str, float]] = None
-    initial_thresholds: Optional[List[float]] = None
-    
-    # 제약조건
-    fix_first_loading: bool = True  # 첫 번째 적재량 고정 (식별)
+    initial_thresholds: Optional[List[float]] = None  # Ordered Probit용
+
+    # 제약조건 (하위 호환성)
     fix_lv_variance: bool = True    # 잠재변수 분산 고정
 
 
