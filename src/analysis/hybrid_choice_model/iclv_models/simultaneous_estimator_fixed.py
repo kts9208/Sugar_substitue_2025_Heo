@@ -613,9 +613,12 @@ class SimultaneousEstimator:
             # 파라미터 언스케일링 (Internal → External)
             params = self.param_scaler.unscale_parameters(params_scaled)
 
+            # Line search 중인지 판단 (gradient_function에서도 계산 필요)
+            calls_since_major_start = func_call_count[0] - current_major_iter_start_call[0]
+
             # 단계 로그: 그래디언트 계산 시작 (모든 호출에서 출력)
             # Major iteration 번호 포함
-            context_str = f"iter{major_iter_count[0]}-{calls_since_major_start[0]}" if major_iter_count[0] > 0 else "init"
+            context_str = f"iter{major_iter_count[0]}-{calls_since_major_start}" if major_iter_count[0] > 0 else "init"
             self.iteration_logger.info(f"[단계 2/2] Analytic Gradient 계산 #{context_str}")
 
             # 메모리 체크 (그래디언트 계산 전) - 비활성화
