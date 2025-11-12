@@ -314,24 +314,40 @@ def main():
                 # 측정모델 파라미터 (다중 잠재변수)
                 if 'measurement' in stats:
                     for lv_name, lv_stats in stats['measurement'].items():
-                        # zeta
+                        # zeta (요인적재량)
                         if 'zeta' in lv_stats:
                             zeta_stats = lv_stats['zeta']
                             for i in range(len(zeta_stats['estimate'])):
+                                # 지표 이름 가져오기
+                                indicator_name = measurement_configs[lv_name].indicators[i]
                                 param_list.append({
-                                    'Coefficient': f'ζ_{lv_name}_{i+1}',
+                                    'Coefficient': f'ζ_{lv_name}_{indicator_name}',
                                     'Estimate': zeta_stats['estimate'][i],
                                     'Std. Err.': zeta_stats['std_error'][i],
                                     'P. Value': zeta_stats['p_value'][i]
                                 })
 
-                        # tau
+                        # sigma_sq (오차분산) - continuous_linear 방식
+                        if 'sigma_sq' in lv_stats:
+                            sigma_sq_stats = lv_stats['sigma_sq']
+                            for i in range(len(sigma_sq_stats['estimate'])):
+                                # 지표 이름 가져오기
+                                indicator_name = measurement_configs[lv_name].indicators[i]
+                                param_list.append({
+                                    'Coefficient': f'σ²_{lv_name}_{indicator_name}',
+                                    'Estimate': sigma_sq_stats['estimate'][i],
+                                    'Std. Err.': sigma_sq_stats['std_error'][i],
+                                    'P. Value': sigma_sq_stats['p_value'][i]
+                                })
+
+                        # tau (임계값) - ordered_probit 방식
                         if 'tau' in lv_stats:
                             tau_stats = lv_stats['tau']
                             for i in range(tau_stats['estimate'].shape[0]):
+                                indicator_name = measurement_configs[lv_name].indicators[i]
                                 for j in range(tau_stats['estimate'].shape[1]):
                                     param_list.append({
-                                        'Coefficient': f'τ_{lv_name}_{i+1},{j+1}',
+                                        'Coefficient': f'τ_{lv_name}_{indicator_name}_{j+1}',
                                         'Estimate': tau_stats['estimate'][i, j],
                                         'Std. Err.': tau_stats['std_error'][i, j],
                                         'P. Value': tau_stats['p_value'][i, j]
@@ -435,24 +451,43 @@ def main():
 
                 # 측정모델 파라미터 (다중 잠재변수)
                 for lv_name, lv_params in result['parameters']['measurement'].items():
+                    # zeta (요인적재량)
                     zeta = lv_params['zeta']
                     for i, val in enumerate(zeta):
+                        # 지표 이름 가져오기
+                        indicator_name = measurement_configs[lv_name].indicators[i]
                         param_list.append({
-                            'Coefficient': f'ζ_{lv_name}_{i+1}',
+                            'Coefficient': f'ζ_{lv_name}_{indicator_name}',
                             'Estimate': val,
                             'Std. Err.': 'N/A',
                             'P. Value': 'N/A'
                         })
 
-                    tau = lv_params['tau']
-                    for i in range(tau.shape[0]):
-                        for j in range(tau.shape[1]):
+                    # sigma_sq (오차분산) - continuous_linear 방식
+                    if 'sigma_sq' in lv_params:
+                        sigma_sq = lv_params['sigma_sq']
+                        for i, val in enumerate(sigma_sq):
+                            # 지표 이름 가져오기
+                            indicator_name = measurement_configs[lv_name].indicators[i]
                             param_list.append({
-                                'Coefficient': f'τ_{lv_name}_{i+1},{j+1}',
-                                'Estimate': tau[i, j],
+                                'Coefficient': f'σ²_{lv_name}_{indicator_name}',
+                                'Estimate': val,
                                 'Std. Err.': 'N/A',
                                 'P. Value': 'N/A'
                             })
+
+                    # tau (임계값) - ordered_probit 방식
+                    if 'tau' in lv_params:
+                        tau = lv_params['tau']
+                        for i in range(tau.shape[0]):
+                            indicator_name = measurement_configs[lv_name].indicators[i]
+                            for j in range(tau.shape[1]):
+                                param_list.append({
+                                    'Coefficient': f'τ_{lv_name}_{indicator_name}_{j+1}',
+                                    'Estimate': tau[i, j],
+                                    'Std. Err.': 'N/A',
+                                    'P. Value': 'N/A'
+                                })
 
                 # 구조모델 파라미터 (✅ 계층적 구조)
                 struct_params = result['parameters']['structural']

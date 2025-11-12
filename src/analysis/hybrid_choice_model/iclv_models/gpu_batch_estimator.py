@@ -1073,3 +1073,117 @@ class GPUBatchEstimator(SimultaneousEstimator):
 
         return param_dict
 
+    def _structure_statistics(self, estimates, std_errors, t_stats, p_values,
+                              measurement_model, structural_model, choice_model):
+        """
+        파라미터별 통계량을 구조화된 딕셔너리로 변환 (다중 잠재변수 지원)
+
+        Args:
+            estimates: 추정값 벡터
+            std_errors: 표준오차 벡터
+            t_stats: t-통계량 벡터
+            p_values: p-value 벡터
+            measurement_model: 측정모델
+            structural_model: 구조모델
+            choice_model: 선택모델
+
+        Returns:
+            구조화된 통계량 딕셔너리
+            {
+                'measurement': {
+                    'lv_name1': {'zeta': {...}, 'sigma_sq': {...}},
+                    'lv_name2': {'zeta': {...}, 'sigma_sq': {...}},
+                    ...
+                },
+                'structural': {'gamma_pred_to_target': {...}, ...},
+                'choice': {'intercept': {...}, 'beta': {...}, 'lambda_main': {...}, ...}
+            }
+        """
+        # 파라미터 언팩 (다중 잠재변수 지원)
+        param_dict = self._unpack_parameters(
+            estimates, measurement_model, structural_model, choice_model
+        )
+
+        # 동일한 방식으로 표준오차, t-통계량, p-value 언팩
+        se_dict = self._unpack_parameters(
+            std_errors, measurement_model, structural_model, choice_model
+        )
+        t_dict = self._unpack_parameters(
+            t_stats, measurement_model, structural_model, choice_model
+        )
+        p_dict = self._unpack_parameters(
+            p_values, measurement_model, structural_model, choice_model
+        )
+
+        # 구조화된 결과 생성
+        structured = {
+            'measurement': {},
+            'structural': {},
+            'choice': {}
+        }
+
+        # 측정모델 (다중 잠재변수 지원)
+        if 'measurement' in param_dict:
+            if hasattr(self.config, 'measurement_configs'):
+                # 다중 잠재변수
+                for lv_name in param_dict['measurement'].keys():
+                    structured['measurement'][lv_name] = {}
+
+                    # zeta (요인적재량)
+                    if 'zeta' in param_dict['measurement'][lv_name]:
+                        structured['measurement'][lv_name]['zeta'] = {
+                            'estimate': param_dict['measurement'][lv_name]['zeta'],
+                            'std_error': se_dict['measurement'][lv_name]['zeta'],
+                            't_statistic': t_dict['measurement'][lv_name]['zeta'],
+                            'p_value': p_dict['measurement'][lv_name]['zeta']
+                        }
+
+                    # sigma_sq (오차분산) - continuous_linear 방식
+                    if 'sigma_sq' in param_dict['measurement'][lv_name]:
+                        structured['measurement'][lv_name]['sigma_sq'] = {
+                            'estimate': param_dict['measurement'][lv_name]['sigma_sq'],
+                            'std_error': se_dict['measurement'][lv_name]['sigma_sq'],
+                            't_statistic': t_dict['measurement'][lv_name]['sigma_sq'],
+                            'p_value': p_dict['measurement'][lv_name]['sigma_sq']
+                        }
+
+                    # tau (임계값) - ordered_probit 방식
+                    if 'tau' in param_dict['measurement'][lv_name]:
+                        structured['measurement'][lv_name]['tau'] = {
+                            'estimate': param_dict['measurement'][lv_name]['tau'],
+                            'std_error': se_dict['measurement'][lv_name]['tau'],
+                            't_statistic': t_dict['measurement'][lv_name]['tau'],
+                            'p_value': p_dict['measurement'][lv_name]['tau']
+                        }
+            else:
+                # 단일 잠재변수 (하위 호환)
+                for key in param_dict['measurement']:
+                    structured['measurement'][key] = {
+                        'estimate': param_dict['measurement'][key],
+                        'std_error': se_dict['measurement'][key],
+                        't_statistic': t_dict['measurement'][key],
+                        'p_value': p_dict['measurement'][key]
+                    }
+
+        # 구조모델 (계층적 구조 지원)
+        if 'structural' in param_dict:
+            for key in param_dict['structural']:
+                structured['structural'][key] = {
+                    'estimate': param_dict['structural'][key],
+                    'std_error': se_dict['structural'][key],
+                    't_statistic': t_dict['structural'][key],
+                    'p_value': p_dict['structural'][key]
+                }
+
+        # 선택모델 (조절효과 지원)
+        if 'choice' in param_dict:
+            for key in param_dict['choice']:
+                structured['choice'][key] = {
+                    'estimate': param_dict['choice'][key],
+                    'std_error': se_dict['choice'][key],
+                    't_statistic': t_dict['choice'][key],
+                    'p_value': p_dict['choice'][key]
+                }
+
+        return structured
+
