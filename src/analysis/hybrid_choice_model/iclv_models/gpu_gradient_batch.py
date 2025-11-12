@@ -251,86 +251,86 @@ def compute_measurement_gradient_batch_gpu(
             tau_gpu = cp.asarray(tau)  # (n_indicators, n_thresholds)
             grad_tau_batch = cp.zeros((n_draws, n_indicators, n_thresholds))
 
-        # ✅ 수정: 모든 행 처리 (첫 번째 행만이 아님)
-        for idx in range(len(ind_data)):
-            row = ind_data.iloc[idx]
+        # ✅ 측정모델은 개인 수준 데이터이므로 첫 번째 행만 사용
+        # (DCE long format으로 인해 동일한 값이 여러 행에 복제되어 있음)
+        row = ind_data.iloc[0]
 
-            # 지표별로 처리
-            for i, indicator in enumerate(config.indicators):
-                if indicator not in row.index:
-                    continue
+        # 지표별로 처리
+        for i, indicator in enumerate(config.indicators):
+            if indicator not in row.index:
+                continue
 
-                y = row[indicator]
-                if pd.isna(y):
-                    continue
+            y = row[indicator]
+            if pd.isna(y):
+                continue
 
-                if measurement_method == 'continuous_linear':
-                    # ✅ Continuous Linear: Y = ζ * LV + ε, ε ~ N(0, σ²)
-                    # log L = -0.5 * log(2π * σ²) - 0.5 * (y - ζ*LV)² / σ²
+            if measurement_method == 'continuous_linear':
+                # ✅ Continuous Linear: Y = ζ * LV + ε, ε ~ N(0, σ²)
+                # log L = -0.5 * log(2π * σ²) - 0.5 * (y - ζ*LV)² / σ²
 
-                    # 예측값: y_pred = ζ_i * LV
-                    y_pred = zeta_gpu[i] * lv_values_gpu  # (n_draws,)
+                # 예측값: y_pred = ζ_i * LV
+                y_pred = zeta_gpu[i] * lv_values_gpu  # (n_draws,)
 
-                    # 잔차: residual = y - y_pred
-                    residual = y - y_pred  # (n_draws,)
+                # 잔차: residual = y - y_pred
+                residual = y - y_pred  # (n_draws,)
 
-                    # 상세 로깅 (첫 번째 LV, 첫 번째 지표, 첫 번째 행만)
-                    if iteration_logger and log_level == 'DETAILED' and lv_idx == 0 and i == 0 and idx == 0:
-                        iteration_logger.info(f"\n    [지표 {indicator} 계산 예시]")
-                        iteration_logger.info(f"      - 관측값 y: {y:.4f}")
-                        iteration_logger.info(f"      - zeta[{i}]: {float(zeta_gpu[i]):.6f}")
-                        iteration_logger.info(f"      - sigma_sq[{i}]: {float(sigma_sq_gpu[i]):.6f}")
-                        iteration_logger.info(f"      - LV (draw 0): {float(lv_values_gpu[0]):.4f}")
-                        iteration_logger.info(f"      - 예측값 (draw 0): {float(y_pred[0]):.4f}")
-                        iteration_logger.info(f"      - 잔차 (draw 0): {float(residual[0]):.4f}")
+                # 상세 로깅 (첫 번째 LV, 첫 번째 지표만)
+                if iteration_logger and log_level == 'DETAILED' and lv_idx == 0 and i == 0:
+                    iteration_logger.info(f"\n    [지표 {indicator} 계산 예시]")
+                    iteration_logger.info(f"      - 관측값 y: {y:.4f}")
+                    iteration_logger.info(f"      - zeta[{i}]: {float(zeta_gpu[i]):.6f}")
+                    iteration_logger.info(f"      - sigma_sq[{i}]: {float(sigma_sq_gpu[i]):.6f}")
+                    iteration_logger.info(f"      - LV (draw 0): {float(lv_values_gpu[0]):.4f}")
+                    iteration_logger.info(f"      - 예측값 (draw 0): {float(y_pred[0]):.4f}")
+                    iteration_logger.info(f"      - 잔차 (draw 0): {float(residual[0]):.4f}")
 
-                    # ∂ log L / ∂ζ_i = (y - ζ*LV) * LV / σ²
-                    grad_zeta_batch[:, i] += residual * lv_values_gpu / sigma_sq_gpu[i]
+                # ∂ log L / ∂ζ_i = (y - ζ*LV) * LV / σ²
+                grad_zeta_batch[:, i] = residual * lv_values_gpu / sigma_sq_gpu[i]
 
-                    # ∂ log L / ∂σ²_i = -0.5 / σ² + 0.5 * (y - ζ*LV)² / σ⁴
-                    grad_sigma_sq_batch[:, i] += -0.5 / sigma_sq_gpu[i] + 0.5 * (residual ** 2) / (sigma_sq_gpu[i] ** 2)
+                # ∂ log L / ∂σ²_i = -0.5 / σ² + 0.5 * (y - ζ*LV)² / σ⁴
+                grad_sigma_sq_batch[:, i] = -0.5 / sigma_sq_gpu[i] + 0.5 * (residual ** 2) / (sigma_sq_gpu[i] ** 2)
 
+            else:
+                # Ordered Probit (기존 방식)
+                k = int(y) - 1  # 1-5 → 0-4
+
+                # V = zeta_i * LV (broadcasting)
+                V = zeta_gpu[i] * lv_values_gpu  # (n_draws,)
+
+                # tau_i for this indicator
+                tau_i = tau_gpu[i]  # (n_thresholds,)
+
+                # P(Y=k) 계산
+                if k == 0:
+                    # P(Y=1) = Φ(τ_1 - V)
+                    prob = cp_ndtr(tau_i[0] - V)
+                    phi_upper = cp_norm_pdf(tau_i[0] - V)
+                    phi_lower = cp.zeros_like(V)
+                elif k == config.n_categories - 1:
+                    # P(Y=5) = 1 - Φ(τ_4 - V)
+                    prob = 1 - cp_ndtr(tau_i[-1] - V)
+                    phi_upper = cp.zeros_like(V)
+                    phi_lower = cp_norm_pdf(tau_i[-1] - V)
                 else:
-                    # Ordered Probit (기존 방식)
-                    k = int(y) - 1  # 1-5 → 0-4
+                    # P(Y=k) = Φ(τ_k - V) - Φ(τ_{k-1} - V)
+                    prob = cp_ndtr(tau_i[k] - V) - cp_ndtr(tau_i[k-1] - V)
+                    phi_upper = cp_norm_pdf(tau_i[k] - V)
+                    phi_lower = cp_norm_pdf(tau_i[k-1] - V)
 
-                    # V = zeta_i * LV (broadcasting)
-                    V = zeta_gpu[i] * lv_values_gpu  # (n_draws,)
+                # 수치 안정성
+                prob = cp.clip(prob, 1e-10, 1 - 1e-10)
 
-                    # tau_i for this indicator
-                    tau_i = tau_gpu[i]  # (n_thresholds,)
+                # ∂ log L / ∂ζ_i = (φ_upper - φ_lower) / P * (-LV)
+                grad_zeta_batch[:, i] = (phi_upper - phi_lower) / prob * (-lv_values_gpu)
 
-                    # P(Y=k) 계산
-                    if k == 0:
-                        # P(Y=1) = Φ(τ_1 - V)
-                        prob = cp_ndtr(tau_i[0] - V)
-                        phi_upper = cp_norm_pdf(tau_i[0] - V)
-                        phi_lower = cp.zeros_like(V)
-                    elif k == config.n_categories - 1:
-                        # P(Y=5) = 1 - Φ(τ_4 - V)
-                        prob = 1 - cp_ndtr(tau_i[-1] - V)
-                        phi_upper = cp.zeros_like(V)
-                        phi_lower = cp_norm_pdf(tau_i[-1] - V)
-                    else:
-                        # P(Y=k) = Φ(τ_k - V) - Φ(τ_{k-1} - V)
-                        prob = cp_ndtr(tau_i[k] - V) - cp_ndtr(tau_i[k-1] - V)
-                        phi_upper = cp_norm_pdf(tau_i[k] - V)
-                        phi_lower = cp_norm_pdf(tau_i[k-1] - V)
-
-                    # 수치 안정성
-                    prob = cp.clip(prob, 1e-10, 1 - 1e-10)
-
-                    # ∂ log L / ∂ζ_i = (φ_upper - φ_lower) / P * (-LV)
-                    grad_zeta_batch[:, i] += (phi_upper - phi_lower) / prob * (-lv_values_gpu)
-
-                    # ∂ log L / ∂τ_k
-                    if k == 0:
-                        grad_tau_batch[:, i, 0] += phi_upper / prob
-                    elif k == config.n_categories - 1:
-                        grad_tau_batch[:, i, -1] += -phi_lower / prob
-                    else:
-                        grad_tau_batch[:, i, k] += phi_upper / prob
-                        grad_tau_batch[:, i, k-1] += -phi_lower / prob
+                # ∂ log L / ∂τ_k
+                if k == 0:
+                    grad_tau_batch[:, i, 0] = phi_upper / prob
+                elif k == config.n_categories - 1:
+                    grad_tau_batch[:, i, -1] = -phi_lower / prob
+                else:
+                    grad_tau_batch[:, i, k] = phi_upper / prob
+                    grad_tau_batch[:, i, k-1] = -phi_lower / prob
 
         # ✅ 수정: 가중평균 적용 (단순 합산이 아님)
         # grad_weighted = Σ_r w_r * grad_r
