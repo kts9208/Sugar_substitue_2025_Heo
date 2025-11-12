@@ -177,7 +177,9 @@ def compute_measurement_gradient_batch_gpu(
     ind_data: pd.DataFrame,
     lvs_list: List[Dict[str, float]],
     params: Dict[str, Dict],
-    weights: np.ndarray
+    weights: np.ndarray,
+    iteration_logger=None,
+    log_level: str = 'DETAILED'
 ) -> Dict[str, Dict]:
     """
     측정모델 그래디언트를 GPU 배치로 계산 (가중평균 적용)
@@ -193,6 +195,8 @@ def compute_measurement_gradient_batch_gpu(
         lvs_list: 각 draw의 잠재변수 값 [{lv_name: value}, ...]
         params: 측정모델 파라미터
         weights: Importance weights (n_draws,)
+        iteration_logger: 로거 (optional)
+        log_level: 로깅 레벨 ('MINIMAL', 'MODERATE', 'DETAILED')
 
     Returns:
         각 LV의 그래디언트 {lv_name: {'grad_zeta': ..., 'grad_tau': ...}} or
@@ -205,8 +209,11 @@ def compute_measurement_gradient_batch_gpu(
     weights_gpu = cp.asarray(weights)  # (n_draws,)
     gradients = {}
 
+    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+        iteration_logger.info("\n[측정모델 그래디언트 계산]")
+
     # 각 잠재변수별로 처리
-    for lv_name in params.keys():
+    for lv_idx, lv_name in enumerate(params.keys()):
         zeta = params[lv_name]['zeta']
         n_indicators = len(zeta)
 
@@ -214,10 +221,20 @@ def compute_measurement_gradient_batch_gpu(
         measurement_method = getattr(gpu_measurement_model.models[lv_name], 'measurement_method', 'ordered_probit')
         config = gpu_measurement_model.models[lv_name].config
 
+        if iteration_logger and log_level == 'DETAILED' and lv_idx == 0:
+            iteration_logger.info(f"  잠재변수: {lv_name}")
+            iteration_logger.info(f"    - 측정 방법: {measurement_method}")
+            iteration_logger.info(f"    - 지표 수: {n_indicators}")
+            iteration_logger.info(f"    - zeta (처음 3개): {zeta[:min(3, len(zeta))]}")
+
         # LV 값들을 배열로 변환
         lv_values = np.array([lvs[lv_name] for lvs in lvs_list])
         lv_values_gpu = cp.asarray(lv_values)  # (n_draws,)
         zeta_gpu = cp.asarray(zeta)  # (n_indicators,)
+
+        if iteration_logger and log_level == 'DETAILED' and lv_idx == 0:
+            iteration_logger.info(f"    - LV 값 범위: [{float(cp.min(lv_values_gpu)):.4f}, {float(cp.max(lv_values_gpu)):.4f}]")
+            iteration_logger.info(f"    - LV 값 평균: {float(cp.mean(lv_values_gpu)):.4f}")
 
         # 그래디언트 초기화 (각 draw별)
         grad_zeta_batch = cp.zeros((n_draws, n_indicators))
@@ -256,6 +273,16 @@ def compute_measurement_gradient_batch_gpu(
 
                     # 잔차: residual = y - y_pred
                     residual = y - y_pred  # (n_draws,)
+
+                    # 상세 로깅 (첫 번째 LV, 첫 번째 지표, 첫 번째 행만)
+                    if iteration_logger and log_level == 'DETAILED' and lv_idx == 0 and i == 0 and idx == 0:
+                        iteration_logger.info(f"\n    [지표 {indicator} 계산 예시]")
+                        iteration_logger.info(f"      - 관측값 y: {y:.4f}")
+                        iteration_logger.info(f"      - zeta[{i}]: {float(zeta_gpu[i]):.6f}")
+                        iteration_logger.info(f"      - sigma_sq[{i}]: {float(sigma_sq_gpu[i]):.6f}")
+                        iteration_logger.info(f"      - LV (draw 0): {float(lv_values_gpu[0]):.4f}")
+                        iteration_logger.info(f"      - 예측값 (draw 0): {float(y_pred[0]):.4f}")
+                        iteration_logger.info(f"      - 잔차 (draw 0): {float(residual[0]):.4f}")
 
                     # ∂ log L / ∂ζ_i = (y - ζ*LV) * LV / σ²
                     grad_zeta_batch[:, i] += residual * lv_values_gpu / sigma_sq_gpu[i]
@@ -309,6 +336,12 @@ def compute_measurement_gradient_batch_gpu(
         # grad_weighted = Σ_r w_r * grad_r
         grad_zeta_weighted = cp.sum(weights_gpu[:, None] * grad_zeta_batch, axis=0)
 
+        if iteration_logger and log_level == 'DETAILED' and lv_idx == 0:
+            iteration_logger.info(f"\n    [가중평균 적용 전후]")
+            iteration_logger.info(f"      - grad_zeta_batch (draw 0, 처음 3개): {[float(x) for x in grad_zeta_batch[0, :min(3, n_indicators)]]}")
+            iteration_logger.info(f"      - weights (처음 5개): {[float(x) for x in weights_gpu[:5]]}")
+            iteration_logger.info(f"      - grad_zeta_weighted (처음 3개): {[float(x) for x in grad_zeta_weighted[:min(3, n_indicators)]]}")
+
         # NaN 체크
         if cp.any(cp.isnan(grad_zeta_weighted)):
             logger.warning(f"NaN detected in grad_zeta for {lv_name}")
@@ -316,6 +349,9 @@ def compute_measurement_gradient_batch_gpu(
 
         if measurement_method == 'continuous_linear':
             grad_sigma_sq_weighted = cp.sum(weights_gpu[:, None] * grad_sigma_sq_batch, axis=0)
+
+            if iteration_logger and log_level == 'DETAILED' and lv_idx == 0:
+                iteration_logger.info(f"      - grad_sigma_sq_weighted (처음 3개): {[float(x) for x in grad_sigma_sq_weighted[:min(3, n_indicators)]]}")
 
             if cp.any(cp.isnan(grad_sigma_sq_weighted)):
                 logger.warning(f"NaN detected in grad_sigma_sq for {lv_name}")
@@ -345,12 +381,22 @@ def compute_measurement_gradient_batch_gpu(
                 'grad_zeta': grad_zeta_final,
                 'grad_sigma_sq': cp.asnumpy(grad_sigma_sq_weighted)
             }
+
+            if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+                iteration_logger.info(f"\n  [{lv_name}] 최종 그래디언트:")
+                iteration_logger.info(f"    - grad_zeta: 범위=[{float(cp.min(grad_zeta_weighted)):.4f}, {float(cp.max(grad_zeta_weighted)):.4f}], norm={float(cp.linalg.norm(grad_zeta_weighted)):.4f}")
+                iteration_logger.info(f"    - grad_sigma_sq: 범위=[{float(cp.min(grad_sigma_sq_weighted)):.4f}, {float(cp.max(grad_sigma_sq_weighted)):.4f}], norm={float(cp.linalg.norm(grad_sigma_sq_weighted)):.4f}")
         else:
             grad_tau_weighted = cp.clip(grad_tau_weighted, -1e6, 1e6)
             gradients[lv_name] = {
                 'grad_zeta': grad_zeta_final,
                 'grad_tau': cp.asnumpy(grad_tau_weighted)
             }
+
+            if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+                iteration_logger.info(f"\n  [{lv_name}] 최종 그래디언트:")
+                iteration_logger.info(f"    - grad_zeta: 범위=[{float(cp.min(grad_zeta_weighted)):.4f}, {float(cp.max(grad_zeta_weighted)):.4f}], norm={float(cp.linalg.norm(grad_zeta_weighted)):.4f}")
+                iteration_logger.info(f"    - grad_tau: 범위=[{float(cp.min(grad_tau_weighted)):.4f}, {float(cp.max(grad_tau_weighted)):.4f}], norm={float(cp.linalg.norm(grad_tau_weighted)):.4f}")
 
     return gradients
 
@@ -366,7 +412,9 @@ def compute_structural_gradient_batch_gpu(
     weights: np.ndarray,
     error_variance: float = 1.0,
     is_hierarchical: bool = False,
-    hierarchical_paths: List[Dict] = None
+    hierarchical_paths: List[Dict] = None,
+    iteration_logger=None,
+    log_level: str = 'DETAILED'
 ) -> Dict[str, np.ndarray]:
     """
     구조모델 그래디언트를 GPU 배치로 계산 (가중평균 적용)
@@ -389,6 +437,8 @@ def compute_structural_gradient_batch_gpu(
         error_variance: 오차 분산
         is_hierarchical: 계층적 구조 여부
         hierarchical_paths: 계층적 경로 정보
+        iteration_logger: 로거 (optional)
+        log_level: 로깅 레벨 ('MINIMAL', 'MODERATE', 'DETAILED')
 
     Returns:
         병렬 구조: {'grad_gamma_lv': ..., 'grad_gamma_x': ...}
@@ -400,17 +450,25 @@ def compute_structural_gradient_batch_gpu(
     n_draws = len(lvs_list)
     weights_gpu = cp.asarray(weights)  # (n_draws,)
 
+    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+        iteration_logger.info("\n[구조모델 그래디언트 계산]")
+        iteration_logger.info(f"  구조 유형: {'계층적' if is_hierarchical else '병렬'}")
+
     if is_hierarchical:
         # ✅ 계층적 구조: 각 경로별로 gradient 계산
         gradients = {}
 
-        for path in hierarchical_paths:
+        for path_idx, path in enumerate(hierarchical_paths):
             target = path['target']
             predictors = path['predictors']
             param_key = f"gamma_{predictors[0]}_to_{target}"
 
             # 파라미터 추출
             gamma = params[param_key]
+
+            if iteration_logger and log_level == 'DETAILED' and path_idx == 0:
+                iteration_logger.info(f"\n  [경로 {path_idx + 1}] {predictors[0]} → {target}")
+                iteration_logger.info(f"    - gamma: {gamma:.6f}")
 
             # LV 값 추출
             target_values = np.array([lvs[target] for lvs in lvs_list])
@@ -427,6 +485,13 @@ def compute_structural_gradient_batch_gpu(
             # 잔차
             residual = target_gpu - mu  # (n_draws,)
 
+            if iteration_logger and log_level == 'DETAILED' and path_idx == 0:
+                iteration_logger.info(f"    - predictor (draw 0): {float(pred_gpu[0]):.4f}")
+                iteration_logger.info(f"    - target (draw 0): {float(target_gpu[0]):.4f}")
+                iteration_logger.info(f"    - 예측값 μ (draw 0): {float(mu[0]):.4f}")
+                iteration_logger.info(f"    - 잔차 (draw 0): {float(residual[0]):.4f}")
+                iteration_logger.info(f"    - 잔차 범위: [{float(cp.min(residual)):.4f}, {float(cp.max(residual)):.4f}]")
+
             # ∂ log L / ∂γ = Σ_r w_r * (target - μ)_r / σ² * predictor_r
             weighted_residual = weights_gpu * residual / error_variance  # (n_draws,)
             grad_gamma = cp.sum(weighted_residual * pred_gpu)  # 스칼라
@@ -440,6 +505,9 @@ def compute_structural_gradient_batch_gpu(
             grad_gamma = cp.clip(grad_gamma, -1e6, 1e6)
 
             gradients[f'grad_{param_key}'] = cp.asnumpy(grad_gamma).item()
+
+            if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+                iteration_logger.info(f"    - grad_{param_key}: {gradients[f'grad_{param_key}']:.6f}")
 
         return gradients
 
@@ -506,7 +574,9 @@ def compute_choice_gradient_batch_gpu(
     endogenous_lv: str,
     choice_attributes: List[str],
     weights: np.ndarray,
-    moderators: List[str] = None
+    moderators: List[str] = None,
+    iteration_logger=None,
+    log_level: str = 'DETAILED'
 ) -> Dict[str, np.ndarray]:
     """
     선택모델 그래디언트를 GPU 배치로 계산 (가중평균 + 배치 처리)
@@ -525,6 +595,8 @@ def compute_choice_gradient_batch_gpu(
         choice_attributes: 선택 속성 리스트
         weights: Importance weights (n_draws,)
         moderators: 조절변수 LV 이름 리스트 (optional)
+        iteration_logger: 로거 (optional)
+        log_level: 로깅 레벨 ('MINIMAL', 'MODERATE', 'DETAILED')
 
     Returns:
         기본: {'grad_intercept': ..., 'grad_beta': ..., 'grad_lambda': ...}
@@ -536,6 +608,10 @@ def compute_choice_gradient_batch_gpu(
     n_draws = len(lvs_list)
     n_choice_situations = len(ind_data)
     n_attributes = len(choice_attributes)
+
+    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+        iteration_logger.info("\n[선택모델 그래디언트 계산]")
+        iteration_logger.info(f"  선택 상황 수: {n_choice_situations}")
 
     intercept = params['intercept']
     beta = params['beta']
@@ -550,8 +626,22 @@ def compute_choice_gradient_batch_gpu(
             if key.startswith('lambda_mod_'):
                 mod_lv_name = key.replace('lambda_mod_', '')
                 lambda_mod[mod_lv_name] = params[key]
+
+        if iteration_logger and log_level == 'DETAILED':
+            iteration_logger.info(f"  조절효과 모델:")
+            iteration_logger.info(f"    - intercept: {intercept:.6f}")
+            iteration_logger.info(f"    - beta: {beta[:min(3, len(beta))]}")
+            iteration_logger.info(f"    - lambda_main: {lambda_main:.6f}")
+            for mod_lv_name, lambda_mod_val in lambda_mod.items():
+                iteration_logger.info(f"    - lambda_mod_{mod_lv_name}: {lambda_mod_val:.6f}")
     else:
         lambda_lv = params['lambda']
+
+        if iteration_logger and log_level == 'DETAILED':
+            iteration_logger.info(f"  기본 모델:")
+            iteration_logger.info(f"    - intercept: {intercept:.6f}")
+            iteration_logger.info(f"    - beta: {beta[:min(3, len(beta))]}")
+            iteration_logger.info(f"    - lambda: {lambda_lv:.6f}")
 
     weights_gpu = cp.asarray(weights)  # (n_draws,)
 
@@ -638,6 +728,14 @@ def compute_choice_gradient_batch_gpu(
     # Sign: (n_draws, n_situations)
     sign_batch = cp.where(choices_gpu[None, :] == 1, 1.0, -1.0)
 
+    if iteration_logger and log_level == 'DETAILED':
+        iteration_logger.info(f"\n  [중간 계산 값 (draw 0, situation 0)]")
+        iteration_logger.info(f"    - V: {float(V_batch[0, 0]):.4f}")
+        iteration_logger.info(f"    - Φ(V): {float(prob_batch[0, 0]):.4f}")
+        iteration_logger.info(f"    - φ(V): {float(phi_batch[0, 0]):.4f}")
+        iteration_logger.info(f"    - choice: {int(choices_gpu[0])}")
+        iteration_logger.info(f"    - Mills ratio: {float(mills_batch[0, 0]):.4f}")
+
     # Weighted mills: (n_draws, n_situations)
     weighted_mills = weights_gpu[:, None] * sign_batch * mills_batch
 
@@ -698,6 +796,14 @@ def compute_choice_gradient_batch_gpu(
         for mod_lv_name in grad_lambda_mod.keys():
             grad_lambda_mod[mod_lv_name] = np.clip(grad_lambda_mod[mod_lv_name], -1e6, 1e6)
 
+        if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+            iteration_logger.info(f"\n  [최종 그래디언트]")
+            iteration_logger.info(f"    - grad_intercept: {grad_intercept:.6f}")
+            iteration_logger.info(f"    - grad_beta: {cp.asnumpy(grad_beta)[:min(3, len(grad_beta))]}")
+            iteration_logger.info(f"    - grad_lambda_main: {grad_lambda_main:.6f}")
+            for mod_lv_name, grad_val in grad_lambda_mod.items():
+                iteration_logger.info(f"    - grad_lambda_mod_{mod_lv_name}: {grad_val:.6f}")
+
         # 결과 반환
         result = {
             'grad_intercept': grad_intercept,
@@ -710,6 +816,12 @@ def compute_choice_gradient_batch_gpu(
         return result
     else:
         grad_lambda = np.clip(grad_lambda, -1e6, 1e6)
+
+        if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+            iteration_logger.info(f"\n  [최종 그래디언트]")
+            iteration_logger.info(f"    - grad_intercept: {grad_intercept:.6f}")
+            iteration_logger.info(f"    - grad_beta: {cp.asnumpy(grad_beta)[:min(3, len(grad_beta))]}")
+            iteration_logger.info(f"    - grad_lambda: {grad_lambda:.6f}")
 
         return {
             'grad_intercept': grad_intercept,

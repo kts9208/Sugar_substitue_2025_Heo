@@ -132,6 +132,15 @@ class EstimationConfig:
     # Gradient 설정 (Apollo 방식)
     use_analytic_gradient: bool = True  # True: analytic gradient, False: numerical gradient
 
+    # Parameter Scaling 설정
+    use_parameter_scaling: bool = True  # True: parameter scaling 활성화, False: 비활성화
+
+    # Gradient 로깅 설정
+    gradient_log_level: Literal['MINIMAL', 'MODERATE', 'DETAILED'] = 'DETAILED'
+    # - MINIMAL: 최종 그래디언트 norm만 로깅
+    # - MODERATE: 개인별 그래디언트 요약 로깅
+    # - DETAILED: 모든 중간 계산 과정 포함 (디폴트)
+
     # 병렬처리 설정
     use_parallel: bool = False  # 개인별 우도 계산 병렬화
     n_cores: Optional[int] = None  # None이면 CPU 코어 수 자동 감지

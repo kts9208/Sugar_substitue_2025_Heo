@@ -186,6 +186,75 @@ class GPUBatchEstimator(SimultaneousEstimator):
         # 부모 클래스의 estimate 호출
         return super().estimate(data, measurement_model, structural_model, choice_model, log_file)
     
+    def _log_parameters(self, param_dict: Dict, iteration: int):
+        """
+        파라미터 값 로깅
+
+        Args:
+            param_dict: 파라미터 딕셔너리
+            iteration: 현재 iteration 번호
+        """
+        if not hasattr(self, 'iteration_logger') or self.iteration_logger is None:
+            return
+
+        # 로깅 레벨 확인
+        log_level = getattr(self.config.estimation, 'gradient_log_level', 'DETAILED')
+
+        if log_level not in ['MODERATE', 'DETAILED']:
+            return
+
+        self.iteration_logger.info("\n" + "="*80)
+        self.iteration_logger.info(f"Iteration {iteration} - 파라미터 값")
+        self.iteration_logger.info("="*80)
+
+        # 측정모델 파라미터
+        self.iteration_logger.info("\n[측정모델 파라미터]")
+        for lv_idx, (lv_name, lv_params) in enumerate(param_dict['measurement'].items()):
+            if log_level == 'DETAILED' or lv_idx == 0:
+                self.iteration_logger.info(f"  {lv_name}:")
+                zeta = lv_params['zeta']
+                # 전체 파라미터 출력 (초기값 설정용)
+                self.iteration_logger.info(f"    - zeta: {zeta}")
+
+                if 'sigma_sq' in lv_params:
+                    sigma_sq = lv_params['sigma_sq']
+                    self.iteration_logger.info(f"    - sigma_sq: {sigma_sq}")
+                elif 'tau' in lv_params:
+                    tau = lv_params['tau']
+                    self.iteration_logger.info(f"    - tau shape: {tau.shape}")
+
+        # 구조모델 파라미터
+        self.iteration_logger.info("\n[구조모델 파라미터]")
+        if hasattr(self.config.structural, 'is_hierarchical') and self.config.structural.is_hierarchical:
+            # 계층적 구조
+            for key, value in param_dict['structural'].items():
+                if key.startswith('gamma_'):
+                    self.iteration_logger.info(f"  {key}: {value:.6f}")
+        else:
+            # 병렬 구조
+            if 'gamma_lv' in param_dict['structural']:
+                self.iteration_logger.info(f"  gamma_lv: {param_dict['structural']['gamma_lv']}")
+            if 'gamma_x' in param_dict['structural']:
+                self.iteration_logger.info(f"  gamma_x: {param_dict['structural']['gamma_x']}")
+
+        # 선택모델 파라미터
+        self.iteration_logger.info("\n[선택모델 파라미터]")
+        choice_params = param_dict['choice']
+        self.iteration_logger.info(f"  intercept: {choice_params['intercept']:.6f}")
+        self.iteration_logger.info(f"  beta: {choice_params['beta']}")
+
+        if 'lambda_main' in choice_params:
+            # 조절효과 모델
+            self.iteration_logger.info(f"  lambda_main: {choice_params['lambda_main']:.6f}")
+            for key in choice_params:
+                if key.startswith('lambda_mod_'):
+                    self.iteration_logger.info(f"  {key}: {choice_params[key]:.6f}")
+        else:
+            # 기본 모델
+            self.iteration_logger.info(f"  lambda: {choice_params['lambda']:.6f}")
+
+        self.iteration_logger.info("="*80)
+
     def _joint_log_likelihood(self, params: np.ndarray,
                              measurement_model,
                              structural_model,
@@ -208,6 +277,10 @@ class GPUBatchEstimator(SimultaneousEstimator):
         param_dict = self._unpack_parameters(
             params, measurement_model, structural_model, choice_model
         )
+
+        # 파라미터 로깅 (처음 3번 또는 10의 배수 iteration)
+        if self._current_iteration <= 3 or self._current_iteration % 10 == 0:
+            self._log_parameters(param_dict, self._current_iteration)
 
         # 메모리 체크 (Halton draws 가져오기 전) - 비활성화
         # if hasattr(self, 'memory_monitor') and hasattr(self, '_likelihood_call_count'):
@@ -550,7 +623,16 @@ class GPUBatchEstimator(SimultaneousEstimator):
                                 structural_model, choice_model) -> np.ndarray:
         """
         초기 파라미터 설정 (다중 잠재변수 지원)
+
+        ✅ Iteration 40 기반 예상 수렴값 사용
         """
+        from .initial_values_iter40 import (
+            get_zeta_initial_value,
+            get_sigma_sq_initial_value,
+            ZETA_INITIAL_VALUES,
+            SIGMA_SQ_INITIAL_VALUES
+        )
+
         params = []
 
         # 다중 잠재변수 측정모델 파라미터
@@ -565,40 +647,34 @@ class GPUBatchEstimator(SimultaneousEstimator):
                     n_indicators = len(config.indicators)
 
                     # 요인적재량 (zeta)
-                    # ✅ 초기값 (external) = internal × scale
-                    # 목표: internal ≈ 1.0 (O(1) 범위)
-                    # external = 1.0 × scale
-                    zeta_scales = {
-                        'health_concern': 0.024,
-                        'perceived_benefit': 0.050,
-                        'perceived_price': 0.120,
-                        'nutrition_knowledge': 0.022,
-                        'purchase_intention': 0.083,
-                    }
-                    zeta_scale = zeta_scales.get(lv_name, 0.05)
-                    zeta_init = 1.0 * zeta_scale  # internal=1.0 → external=scale
-
-                    if config.fix_first_loading:
-                        # 첫 번째는 1.0으로 고정 (파라미터 벡터에 포함하지 않음)
-                        params.extend([zeta_init] * (n_indicators - 1))
+                    # ✅ Iteration 40 기반 초기값 사용
+                    if lv_name in ZETA_INITIAL_VALUES:
+                        zeta_values = ZETA_INITIAL_VALUES[lv_name]['values']
+                        if config.fix_first_loading:
+                            # 첫 번째는 1.0으로 고정 (파라미터 벡터에 포함하지 않음)
+                            params.extend(zeta_values)
+                        else:
+                            # 첫 번째도 포함
+                            params.extend([1.0] + zeta_values)
                     else:
-                        params.extend([zeta_init] * n_indicators)
+                        # 기본값 (이전 방식)
+                        zeta_init = get_zeta_initial_value(lv_name, default=0.05)
+                        if config.fix_first_loading:
+                            params.extend([zeta_init] * (n_indicators - 1))
+                        else:
+                            params.extend([zeta_init] * n_indicators)
 
                     # 오차분산 (sigma_sq)
-                    # ✅ 초기값 (external) = internal × scale
-                    # 목표: internal ≈ 1.0 (O(1) 범위)
-                    sigma_sq_scales = {
-                        'health_concern': 0.034,
-                        'perceived_benefit': 0.036,
-                        'perceived_price': 0.023,
-                        'nutrition_knowledge': 0.046,
-                        'purchase_intention': 0.026,
-                    }
-                    sigma_sq_scale = sigma_sq_scales.get(lv_name, 0.03)
-                    sigma_sq_init = 1.0 * sigma_sq_scale  # internal=1.0 → external=scale
-
-                    if not config.fix_error_variance:
-                        params.extend([sigma_sq_init] * n_indicators)
+                    # ✅ Iteration 40 기반 초기값 사용
+                    if lv_name in SIGMA_SQ_INITIAL_VALUES:
+                        sigma_sq_values = SIGMA_SQ_INITIAL_VALUES[lv_name]['values']
+                        if not config.fix_error_variance:
+                            params.extend(sigma_sq_values)
+                    else:
+                        # 기본값 (이전 방식)
+                        sigma_sq_init = get_sigma_sq_initial_value(lv_name, default=0.03)
+                        if not config.fix_error_variance:
+                            params.extend([sigma_sq_init] * n_indicators)
 
                 elif method == 'ordered_probit':
                     # OrderedProbitMeasurement
@@ -632,13 +708,17 @@ class GPUBatchEstimator(SimultaneousEstimator):
         # 구조모델 파라미터
         if hasattr(self.config.structural, 'is_hierarchical') and self.config.structural.is_hierarchical:
             # ✅ 계층적 구조
+            from .initial_values_iter40 import get_gamma_initial_value
+
             for path in self.config.structural.hierarchical_paths:
                 target = path['target']
                 predictors = path['predictors']
 
                 for pred in predictors:
-                    # 초기값: 0.5 (양의 효과 가정)
-                    params.append(0.5)
+                    # ✅ Iteration 40 기반 초기값 사용
+                    path_name = f'{pred}_to_{target}'
+                    gamma_init = get_gamma_initial_value(path_name, default=0.5)
+                    params.append(gamma_init)
         elif hasattr(self.config.structural, 'n_exo'):
             # 병렬 구조 (하위 호환)
             n_exo = self.config.structural.n_exo
@@ -655,42 +735,37 @@ class GPUBatchEstimator(SimultaneousEstimator):
             params.extend([0.0] * n_sociodem)
 
         # 선택모델 파라미터
+        from .initial_values_iter40 import get_choice_initial_value
+
         # - 절편
-        # ✅ 초기값 (external) = internal × scale
-        # 목표: internal ≈ 1.0
-        params.append(1.0 * 0.290)  # internal=1.0 → external=0.290
+        # ✅ Iteration 40 기반 초기값 사용
+        params.append(get_choice_initial_value('intercept', default=0.22))
 
         # - 속성 계수 (beta)
-        # ✅ 초기값 (external) = internal × scale
+        # ✅ Iteration 40 기반 초기값 사용
         n_attributes = len(self.config.choice.choice_attributes)
         for attr in self.config.choice.choice_attributes:
             if 'price' in attr.lower():
-                # β_price: scale=0.056, internal=-1.0 → external=-0.056
-                params.append(-1.0 * 0.056)
+                params.append(get_choice_initial_value('beta_price', default=-0.13))
             elif 'sugar' in attr.lower():
-                # β_sugar_free: scale=0.230, internal=1.0 → external=0.230
-                params.append(1.0 * 0.230)
+                params.append(get_choice_initial_value('beta_sugar_free', default=0.23))
             elif 'health' in attr.lower():
-                # β_health_label: scale=0.220, internal=1.0 → external=0.220
-                params.append(1.0 * 0.220)
+                params.append(get_choice_initial_value('beta_health_label', default=0.22))
             else:
                 # 기타 속성
                 params.append(0.2)
 
         # - 잠재변수 계수
         if hasattr(self.config.choice, 'moderation_enabled') and self.config.choice.moderation_enabled:
-            # ✅ 조절효과 모델
-            # lambda_main: scale=0.890, internal=1.0 → external=0.890
-            params.append(1.0 * 0.890)
+            # ✅ 조절효과 모델 - Iteration 40 기반 초기값 사용
+            params.append(get_choice_initial_value('lambda_main', default=0.87))
 
             # lambda_mod (조절효과 계수)
             for mod_lv in self.config.choice.moderator_lvs:
                 if 'price' in mod_lv.lower():
-                    # λ_mod_perceived_price: scale=0.470, internal=-1.0 → external=-0.470
-                    params.append(-1.0 * 0.470)
+                    params.append(get_choice_initial_value('lambda_mod_perceived_price', default=-0.51))
                 elif 'knowledge' in mod_lv.lower():
-                    # λ_mod_nutrition_knowledge: scale=1.200, internal=1.0 → external=1.200
-                    params.append(1.0 * 1.200)
+                    params.append(get_choice_initial_value('lambda_mod_nutrition_knowledge', default=1.18))
                 else:
                     params.append(0.0)
         else:

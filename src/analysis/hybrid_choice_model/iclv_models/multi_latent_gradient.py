@@ -459,6 +459,15 @@ class MultiLatentJointGradient:
         """
         n_draws = len(ind_draws)
 
+        # 로깅 설정 가져오기
+        iteration_logger = getattr(self, 'iteration_logger', None)
+        log_level = 'MINIMAL'  # 기본값
+        if hasattr(self, 'config') and hasattr(self.config, 'estimation'):
+            log_level = getattr(self.config.estimation, 'gradient_log_level', 'MINIMAL')
+
+        # 첫 번째 개인에 대해서만 상세 로깅
+        should_log = (ind_id is not None and not hasattr(self, '_first_gradient_logged'))
+
         # ✅ 계층적 구조 지원
         is_hierarchical = hasattr(structural_model, 'is_hierarchical') and structural_model.is_hierarchical
 
@@ -520,7 +529,9 @@ class MultiLatentJointGradient:
             ind_data,
             lvs_list,
             params_dict['measurement'],
-            weights  # ✅ weights 전달
+            weights,  # ✅ weights 전달
+            iteration_logger=iteration_logger if should_log else None,
+            log_level=log_level if should_log else 'MINIMAL'
         )
 
         # ✅ 구조모델 gradient: 계층적 구조 지원
@@ -535,7 +546,9 @@ class MultiLatentJointGradient:
                 structural_model.exogenous_lvs,
                 weights,
                 is_hierarchical=True,
-                hierarchical_paths=structural_model.hierarchical_paths
+                hierarchical_paths=structural_model.hierarchical_paths,
+                iteration_logger=iteration_logger if should_log else None,
+                log_level=log_level if should_log else 'MINIMAL'
             )
         else:
             grad_struct = self.gpu_grad.compute_structural_gradient_batch_gpu(
@@ -546,7 +559,9 @@ class MultiLatentJointGradient:
                 structural_model.covariates,
                 structural_model.endogenous_lv,
                 structural_model.exogenous_lvs,
-                weights
+                weights,
+                iteration_logger=iteration_logger if should_log else None,
+                log_level=log_level if should_log else 'MINIMAL'
             )
 
         # ✅ 선택모델 gradient: 조절효과 지원
@@ -559,7 +574,9 @@ class MultiLatentJointGradient:
                 structural_model.endogenous_lv,
                 choice_model.config.choice_attributes,
                 weights,
-                moderators=choice_model.config.moderators
+                moderators=choice_model.config.moderators,
+                iteration_logger=iteration_logger if should_log else None,
+                log_level=log_level if should_log else 'MINIMAL'
             )
         else:
             grad_choice = self.gpu_grad.compute_choice_gradient_batch_gpu(
@@ -568,8 +585,14 @@ class MultiLatentJointGradient:
                 params_dict['choice'],
                 structural_model.endogenous_lv,
                 choice_model.config.choice_attributes,
-                weights
+                weights,
+                iteration_logger=iteration_logger if should_log else None,
+                log_level=log_level if should_log else 'MINIMAL'
             )
+
+        # 첫 번째 그래디언트 로깅 완료 표시
+        if should_log:
+            self._first_gradient_logged = True
 
         # 결합 그래디언트
         return {

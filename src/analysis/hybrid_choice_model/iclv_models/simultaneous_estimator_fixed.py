@@ -229,6 +229,47 @@ class SimultaneousEstimator:
 
         self.iteration_logger.addHandler(self.log_file_handler)
 
+        # CSV 로그 파일 설정 (파라미터 및 그래디언트 값 저장용)
+        import csv
+        csv_log_path = log_file_path.replace('.txt', '_params_grads.csv')
+        self.csv_log_file = open(csv_log_path, 'w', newline='', encoding='utf-8')
+        self.csv_writer = None  # 첫 번째 기록 시 헤더와 함께 초기화
+        self.csv_log_path = csv_log_path
+
+    def _log_params_grads_to_csv(self, iteration, params, grads):
+        """
+        파라미터와 그래디언트 값을 CSV 파일에 기록
+
+        Args:
+            iteration: Major iteration 번호
+            params: 파라미터 값 배열 (external scale)
+            grads: 그래디언트 값 배열
+        """
+        import csv
+
+        # 첫 번째 기록 시 헤더 작성
+        if self.csv_writer is None:
+            fieldnames = ['iteration']
+
+            # 파라미터 이름 추가
+            for idx in range(len(params)):
+                param_name = self.param_names[idx] if hasattr(self, 'param_names') and idx < len(self.param_names) else f"param_{idx}"
+                fieldnames.append(f'{param_name}_value')
+                fieldnames.append(f'{param_name}_grad')
+
+            self.csv_writer = csv.DictWriter(self.csv_log_file, fieldnames=fieldnames)
+            self.csv_writer.writeheader()
+
+        # 데이터 행 작성
+        row = {'iteration': iteration}
+        for idx in range(len(params)):
+            param_name = self.param_names[idx] if hasattr(self, 'param_names') and idx < len(self.param_names) else f"param_{idx}"
+            row[f'{param_name}_value'] = params[idx]
+            row[f'{param_name}_grad'] = grads[idx]
+
+        self.csv_writer.writerow(row)
+        self.csv_log_file.flush()  # 즉시 디스크에 기록
+
         # 콘솔 핸들러 제거 (중복 방지 - 파일만 사용)
         # console_handler = logging.StreamHandler()
         # console_handler.setLevel(logging.INFO)
@@ -377,6 +418,9 @@ class SimultaneousEstimator:
                     use_gpu=use_gpu_gradient,
                     gpu_measurement_model=gpu_measurement_model
                 )
+                # ✅ iteration_logger와 config 전달
+                self.joint_grad.iteration_logger = self.iteration_logger
+                self.joint_grad.config = self.config
                 self.iteration_logger.info("다중 잠재변수 JointGradient 초기화 완료")
             else:
                 # 단일 잠재변수
@@ -399,26 +443,41 @@ class SimultaneousEstimator:
             measurement_model, structural_model, choice_model
         )
 
-        # Custom scales 생성 (gradient 균형 최적화)
-        custom_scales = self._get_custom_scales(param_names)
+        # 파라미터 스케일링 설정 확인
+        use_parameter_scaling = getattr(self.config.estimation, 'use_parameter_scaling', True)
 
-        # Apollo-style 파라미터 스케일링 초기화
-        # self.iteration_logger.info("")  # ✅ 빈 로그 비활성화
-        self.iteration_logger.info("=" * 80)
-        self.iteration_logger.info("파라미터 스케일링 초기화 (Gradient-Balanced)")
-        self.iteration_logger.info("=" * 80)
-        self.param_scaler = ParameterScaler(
-            initial_params=initial_params,
-            param_names=param_names,
-            custom_scales=custom_scales,
-            logger=self.iteration_logger
-        )
+        if use_parameter_scaling:
+            # Custom scales 생성 (gradient 균형 최적화)
+            custom_scales = self._get_custom_scales(param_names)
 
-        # 초기 파라미터를 스케일링 (External → Internal)
-        initial_params_scaled = self.param_scaler.scale_parameters(initial_params)
+            # Apollo-style 파라미터 스케일링 초기화
+            self.iteration_logger.info("=" * 80)
+            self.iteration_logger.info("파라미터 스케일링 초기화 (Gradient-Balanced)")
+            self.iteration_logger.info("=" * 80)
+            self.param_scaler = ParameterScaler(
+                initial_params=initial_params,
+                param_names=param_names,
+                custom_scales=custom_scales,
+                logger=self.iteration_logger
+            )
 
-        # 스케일링 비교 로깅
-        self.param_scaler.log_parameter_comparison(initial_params, initial_params_scaled)
+            # 초기 파라미터를 스케일링 (External → Internal)
+            initial_params_scaled = self.param_scaler.scale_parameters(initial_params)
+
+            # 스케일링 비교 로깅
+            self.param_scaler.log_parameter_comparison(initial_params, initial_params_scaled)
+        else:
+            # 스케일링 비활성화: 항등 스케일러 사용
+            self.iteration_logger.info("=" * 80)
+            self.iteration_logger.info("파라미터 스케일링 비활성화")
+            self.iteration_logger.info("=" * 80)
+            self.param_scaler = ParameterScaler(
+                initial_params=initial_params,
+                param_names=param_names,
+                custom_scales={name: 1.0 for name in param_names},  # 모든 스케일을 1.0으로 설정
+                logger=self.iteration_logger
+            )
+            initial_params_scaled = initial_params  # 스케일링 없음
 
         # 결합 우도함수 정의 (단계별 로깅 추가)
         iteration_count = [0]  # Mutable counter
@@ -553,7 +612,9 @@ class SimultaneousEstimator:
             params = self.param_scaler.unscale_parameters(params_scaled)
 
             # 단계 로그: 그래디언트 계산 시작 (모든 호출에서 출력)
-            self.iteration_logger.info(f"[단계 2/2] Analytic Gradient 계산 #{grad_call_count[0]}")
+            # Major iteration 번호 포함
+            context_str = f"iter{iteration_count[0]}-{calls_since_major_start[0]}" if iteration_count[0] > 0 else "init"
+            self.iteration_logger.info(f"[단계 2/2] Analytic Gradient 계산 #{context_str}")
 
             # 메모리 체크 (그래디언트 계산 전) - 비활성화
             # if hasattr(self, 'memory_monitor'):
@@ -739,21 +800,19 @@ class SimultaneousEstimator:
                         f"{param_change_info}"
                     )
 
-                    # ✅ 실제 계산에 사용된 파라미터 값 로깅 (External scale)
-                    params_external = self.param_scaler.unscale_parameters(params_scaled)
-
-                    # 상위 10개 파라미터만 로깅
-                    top_10_indices = np.argsort(np.abs(params_external))[-10:][::-1]
-
-                    self.iteration_logger.info(
-                        f"\n[실제 계산에 사용된 파라미터 값 - Iteration #{iter_num}]\n"
-                        f"  (External scale, 상위 10개)\n"
-                    )
-                    for idx in top_10_indices:
-                        param_name = self.param_names[idx] if hasattr(self, 'param_names') and idx < len(self.param_names) else f"param_{idx}"
-                        self.iteration_logger.info(
-                            f"    [{idx:2d}] {param_name:40s}: {params_external[idx]:+.6e} (internal: {params_scaled[idx]:+.6e})"
-                        )
+                    # ✅ 실제 계산에 사용된 파라미터 값 로깅 비활성화 (요청사항 4)
+                    # params_external = self.param_scaler.unscale_parameters(params_scaled)
+                    # top_10_indices = np.argsort(np.abs(params_external))[-10:][::-1]
+                    # self.iteration_logger.info(
+                    #     f"\n[실제 계산에 사용된 파라미터 값 - Iteration #{iter_num}]\n"
+                    #     f"  (External scale, 상위 10개)\n"
+                    # )
+                    # for idx in top_10_indices:
+                    #     param_name = self.param_names[idx] if hasattr(self, 'param_names') and idx < len(self.param_names) else f"param_{idx}"
+                    #     self.iteration_logger.info(
+                    #         f"    [{idx:2d}] {param_name:40s}: {params_external[idx]:+.6e} (internal: {params_scaled[idx]:+.6e})"
+                    #     )
+                    pass
 
                 # 현재 위치에서 방향 미분: ∇f(x + α·d)^T·d (스케일된 gradient 사용)
                 directional_derivative_new = np.dot(neg_grad_scaled, search_direction)
@@ -794,17 +853,17 @@ class SimultaneousEstimator:
                     # Strong Wolfe 조건 = Armijo + Curvature
                     strong_wolfe_satisfied = (armijo_satisfied and curvature_satisfied) if armijo_satisfied is not None else curvature_satisfied
 
-                    armijo_msg = ""
-                    if armijo_satisfied is not None:
-                        armijo_msg = f"  Armijo 조건 (c1={c1}): {'✓ 만족' if armijo_satisfied else '❌ 불만족'}\n"
-
-                    self.iteration_logger.info(
-                        f"\n[Wolfe 조건 체크]\n"
-                        f"{armijo_msg}"
-                        f"  Curvature 조건 (c2={c2}): {'✓ 만족' if curvature_satisfied else '❌ 불만족'}\n"
-                        f"  → Strong Wolfe: {'✓ 만족' if strong_wolfe_satisfied else '❌ 불만족'}\n"
-                        f"  → Gradient가 {'충분히 평평해짐' if curvature_satisfied else '아직 가파름'}"
-                    )
+                    # Wolfe 조건 체크 로깅 비활성화 (요청사항 1)
+                    # armijo_msg = ""
+                    # if armijo_satisfied is not None:
+                    #     armijo_msg = f"  Armijo 조건 (c1={c1}): {'✓ 만족' if armijo_satisfied else '❌ 불만족'}\n"
+                    # self.iteration_logger.info(
+                    #     f"\n[Wolfe 조건 체크]\n"
+                    #     f"{armijo_msg}"
+                    #     f"  Curvature 조건 (c2={c2}): {'✓ 만족' if curvature_satisfied else '❌ 불만족'}\n"
+                    #     f"  → Strong Wolfe: {'✓ 만족' if strong_wolfe_satisfied else '❌ 불만족'}\n"
+                    #     f"  → Gradient가 {'충분히 평평해짐' if curvature_satisfied else '아직 가파름'}"
+                    # )
 
             # 스케일된 gradient 반환 (optimizer는 internal parameters에 대해 작동)
             return neg_grad_scaled
@@ -987,15 +1046,17 @@ class SimultaneousEstimator:
 
                         last_major_iter_gtol[0] = grad_norm
 
-                        # ✅ 각 파라미터별 gradient 로깅 추가
-                        # 상위 10개 gradient (절대값 기준)
-                        grad_abs = np.abs(grad)
-                        top_indices = np.argsort(grad_abs)[-10:][::-1]  # 내림차순
+                        # ✅ 전체 파라미터 값과 그래디언트 값 로깅 (요청사항 3)
+                        # 상위 10개 대신 전체 파라미터 출력
+                        params_external = self.param_scaler.unscale_parameters(xk)
 
-                        gradient_details = "\n  상위 10개 Gradient (절대값 기준):\n"
-                        for idx in top_indices:
+                        gradient_details = "\n  전체 파라미터 값 및 그래디언트:\n"
+                        for idx in range(len(params_external)):
                             param_name = self.param_names[idx] if hasattr(self, 'param_names') and idx < len(self.param_names) else f"param_{idx}"
-                            gradient_details += f"    [{idx:2d}] {param_name:40s}: {grad[idx]:+.6e}\n"
+                            gradient_details += f"    [{idx:2d}] {param_name:50s}: param={params_external[idx]:+12.6e}, grad={grad[idx]:+12.6e}\n"
+
+                        # CSV 파일에 기록 (요청사항 5)
+                        self._log_params_grads_to_csv(iteration_count[0], params_external, grad)
                     else:
                         gtol_status = "gtol = N/A"
                         gradient_details = ""
@@ -2052,6 +2113,11 @@ class SimultaneousEstimator:
                 self.logger.warning(f"표준오차 계산 실패: {e}")
                 import traceback
                 self.logger.debug(traceback.format_exc())
+
+        # CSV 로그 파일 닫기
+        if hasattr(self, 'csv_log_file') and self.csv_log_file:
+            self.csv_log_file.close()
+            self.logger.info(f"CSV 로그 파일 저장 완료: {self.csv_log_path}")
 
         return results
 

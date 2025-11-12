@@ -127,7 +127,9 @@ def main():
         n_cores=None,
         early_stopping=False,  # ✅ 조기 종료 비활성화 (정상 종료 테스트)
         early_stopping_patience=999,
-        early_stopping_tol=1e-6
+        early_stopping_tol=1e-6,
+        gradient_log_level='DETAILED',  # ✅ 상세 그래디언트 로깅 활성화
+        use_parameter_scaling=False  # ✅ 파라미터 스케일링 비활성화
     )
 
     # 통합 설정
