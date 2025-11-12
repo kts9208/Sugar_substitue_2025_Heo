@@ -493,9 +493,26 @@ class MultiLatentJointGradient:
                 higher_order_lvs = structural_model.get_higher_order_lvs()
                 error_dict = {lv_name: higher_order_errors[i] for i, lv_name in enumerate(higher_order_lvs)}
 
+                # ✅ 디버깅: error_dict 확인 (첫 번째 draw만)
+                if should_log and draw_idx == 0 and iteration_logger:
+                    iteration_logger.info(f"[그래디언트 계산] Draw {draw_idx}:")
+                    iteration_logger.info(f"  higher_order_lvs: {higher_order_lvs}")
+                    iteration_logger.info(f"  higher_order_errors: {higher_order_errors}")
+                    iteration_logger.info(f"  error_dict: {error_dict}")
+                    # predict() 함수 내부 디버깅 활성화
+                    structural_model._debug_predict = True
+
+                # ✅ 수정: higher_order_draws를 키워드 인자로 명시적으로 전달
                 latent_vars = structural_model.predict(
-                    ind_data, first_order_draws, params_dict['structural'], error_dict
+                    ind_data, first_order_draws, params_dict['structural'],
+                    endo_draw=None, higher_order_draws=error_dict
                 )
+
+                # ✅ 디버깅: 예측된 LV 값 확인 (첫 번째 draw만)
+                if should_log and draw_idx == 0 and iteration_logger:
+                    iteration_logger.info(f"  예측된 LV: {latent_vars}")
+                    # predict() 함수 내부 디버깅 비활성화
+                    structural_model._debug_predict = False
                 exo_draws_list.append(first_order_draws)
             else:
                 # 병렬 구조 (하위 호환)

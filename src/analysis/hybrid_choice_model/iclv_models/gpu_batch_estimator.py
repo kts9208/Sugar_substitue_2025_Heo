@@ -624,9 +624,9 @@ class GPUBatchEstimator(SimultaneousEstimator):
         """
         초기 파라미터 설정 (다중 잠재변수 지원)
 
-        ✅ Iteration 40 기반 예상 수렴값 사용
+        ✅ 최종 수렴값 (Iteration 24) 기반 초기값 사용
         """
-        from .initial_values_iter40 import (
+        from .initial_values_final import (
             get_zeta_initial_value,
             get_sigma_sq_initial_value,
             ZETA_INITIAL_VALUES,
@@ -708,14 +708,14 @@ class GPUBatchEstimator(SimultaneousEstimator):
         # 구조모델 파라미터
         if hasattr(self.config.structural, 'is_hierarchical') and self.config.structural.is_hierarchical:
             # ✅ 계층적 구조
-            from .initial_values_iter40 import get_gamma_initial_value
+            from .initial_values_final import get_gamma_initial_value
 
             for path in self.config.structural.hierarchical_paths:
                 target = path['target']
                 predictors = path['predictors']
 
                 for pred in predictors:
-                    # ✅ Iteration 40 기반 초기값 사용
+                    # ✅ 최종 수렴값 기반 초기값 사용
                     path_name = f'{pred}_to_{target}'
                     gamma_init = get_gamma_initial_value(path_name, default=0.5)
                     params.append(gamma_init)
@@ -735,37 +735,37 @@ class GPUBatchEstimator(SimultaneousEstimator):
             params.extend([0.0] * n_sociodem)
 
         # 선택모델 파라미터
-        from .initial_values_iter40 import get_choice_initial_value
+        from .initial_values_final import get_choice_initial_value
 
         # - 절편
-        # ✅ Iteration 40 기반 초기값 사용
-        params.append(get_choice_initial_value('intercept', default=0.22))
+        # ✅ 최종 수렴값 기반 초기값 사용
+        params.append(get_choice_initial_value('intercept', default=0.0))
 
         # - 속성 계수 (beta)
-        # ✅ Iteration 40 기반 초기값 사용
+        # ✅ 최종 수렴값 기반 초기값 사용
         n_attributes = len(self.config.choice.choice_attributes)
         for attr in self.config.choice.choice_attributes:
             if 'price' in attr.lower():
-                params.append(get_choice_initial_value('beta_price', default=-0.13))
+                params.append(get_choice_initial_value('beta_price', default=-0.26))
             elif 'sugar' in attr.lower():
                 params.append(get_choice_initial_value('beta_sugar_free', default=0.23))
             elif 'health' in attr.lower():
-                params.append(get_choice_initial_value('beta_health_label', default=0.22))
+                params.append(get_choice_initial_value('beta_health_label', default=0.23))
             else:
                 # 기타 속성
                 params.append(0.2)
 
         # - 잠재변수 계수
         if hasattr(self.config.choice, 'moderation_enabled') and self.config.choice.moderation_enabled:
-            # ✅ 조절효과 모델 - Iteration 40 기반 초기값 사용
-            params.append(get_choice_initial_value('lambda_main', default=0.87))
+            # ✅ 조절효과 모델 - 최종 수렴값 기반 초기값 사용
+            params.append(get_choice_initial_value('lambda_main', default=0.45))
 
             # lambda_mod (조절효과 계수)
             for mod_lv in self.config.choice.moderator_lvs:
                 if 'price' in mod_lv.lower():
-                    params.append(get_choice_initial_value('lambda_mod_perceived_price', default=-0.51))
+                    params.append(get_choice_initial_value('lambda_mod_perceived_price', default=-1.50))
                 elif 'knowledge' in mod_lv.lower():
-                    params.append(get_choice_initial_value('lambda_mod_nutrition_knowledge', default=1.18))
+                    params.append(get_choice_initial_value('lambda_mod_nutrition_knowledge', default=1.05))
                 else:
                     params.append(0.0)
         else:

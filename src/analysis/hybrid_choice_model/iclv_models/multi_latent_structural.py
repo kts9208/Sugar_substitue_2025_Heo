@@ -159,7 +159,7 @@ class MultiLatentStructural:
                 higher_order_draws = {}
 
             # 계층적 경로 순서대로 계산
-            for path in self.hierarchical_paths:
+            for path_idx, path in enumerate(self.hierarchical_paths):
                 target = path['target']
                 predictors = path['predictors']
 
@@ -175,7 +175,20 @@ class MultiLatentStructural:
 
                 # 오차항 추가
                 error_draw = higher_order_draws.get(target, 0.0)
-                latent_vars[target] = lv_mean + np.sqrt(self.error_variance) * error_draw
+                error_term = np.sqrt(self.error_variance) * error_draw
+                latent_vars[target] = lv_mean + error_term
+
+                # ✅ 디버깅: 첫 번째 경로만 로깅 (디버깅 플래그가 설정된 경우에만)
+                if path_idx == 0 and hasattr(self, '_debug_predict') and self._debug_predict:
+                    print(f"[predict() 디버깅] 경로: {predictors} → {target}")
+                    print(f"  higher_order_draws type: {type(higher_order_draws)}")
+                    print(f"  higher_order_draws dict: {higher_order_draws}")
+                    print(f"  target key: '{target}'")
+                    print(f"  lv_mean = {lv_mean}")
+                    print(f"  error_draw = {error_draw}")
+                    print(f"  error_variance = {self.error_variance}")
+                    print(f"  error_term = {error_term}")
+                    print(f"  latent_vars[{target}] = {latent_vars[target]}")
 
         else:
             # 병렬 구조 (하위 호환)

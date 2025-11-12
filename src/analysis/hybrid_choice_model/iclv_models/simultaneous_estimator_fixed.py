@@ -442,6 +442,8 @@ class SimultaneousEstimator:
         param_names = self._get_parameter_names(
             measurement_model, structural_model, choice_model
         )
+        # ✅ self.param_names로 저장 (EarlyStoppingWrapper에서 사용)
+        self.param_names = param_names
 
         # 파라미터 스케일링 설정 확인
         use_parameter_scaling = getattr(self.config.estimation, 'use_parameter_scaling', True)
@@ -613,7 +615,7 @@ class SimultaneousEstimator:
 
             # 단계 로그: 그래디언트 계산 시작 (모든 호출에서 출력)
             # Major iteration 번호 포함
-            context_str = f"iter{iteration_count[0]}-{calls_since_major_start[0]}" if iteration_count[0] > 0 else "init"
+            context_str = f"iter{major_iter_count[0]}-{calls_since_major_start[0]}" if major_iter_count[0] > 0 else "init"
             self.iteration_logger.info(f"[단계 2/2] Analytic Gradient 계산 #{context_str}")
 
             # 메모리 체크 (그래디언트 계산 전) - 비활성화
@@ -899,7 +901,7 @@ class SimultaneousEstimator:
             → BFGS가 정상 종료하면 result.hess_inv 자동 제공 (추가 계산 0회!)
             """
 
-            def __init__(self, func, grad_func, patience=5, tol=1e-6, logger=None, iteration_logger=None):
+            def __init__(self, func, grad_func, patience=5, tol=1e-6, logger=None, iteration_logger=None, param_scaler=None, param_names=None, parent_estimator=None):
                 """
                 Args:
                     func: 목적 함수 (negative log-likelihood)
@@ -908,6 +910,9 @@ class SimultaneousEstimator:
                     tol: LL 변화 허용 오차 (절대값)
                     logger: 메인 로거
                     iteration_logger: 반복 로거
+                    param_scaler: 파라미터 스케일러 (외부 클래스에서 전달)
+                    param_names: 파라미터 이름 리스트 (외부 클래스에서 전달)
+                    parent_estimator: 부모 estimator 인스턴스 (외부 클래스에서 전달)
                 """
                 self.func = func
                 self.grad_func = grad_func
@@ -915,6 +920,9 @@ class SimultaneousEstimator:
                 self.tol = tol
                 self.logger = logger
                 self.iteration_logger = iteration_logger
+                self.param_scaler = param_scaler  # ✅ 외부에서 전달받은 param_scaler 저장
+                self.param_names = param_names    # ✅ 외부에서 전달받은 param_names 저장
+                self.parent_estimator = parent_estimator  # ✅ 부모 estimator 저장
 
                 self.best_ll = np.inf
                 self.best_x = None  # 최적 파라미터 저장
@@ -1056,7 +1064,8 @@ class SimultaneousEstimator:
                             gradient_details += f"    [{idx:2d}] {param_name:50s}: param={params_external[idx]:+12.6e}, grad={grad[idx]:+12.6e}\n"
 
                         # CSV 파일에 기록 (요청사항 5)
-                        self._log_params_grads_to_csv(iteration_count[0], params_external, grad)
+                        if self.parent_estimator is not None and hasattr(self.parent_estimator, '_log_params_grads_to_csv'):
+                            self.parent_estimator._log_params_grads_to_csv(major_iter_count[0], params_external, grad)
                     else:
                         gtol_status = "gtol = N/A"
                         gradient_details = ""
@@ -1149,7 +1158,10 @@ class SimultaneousEstimator:
                 patience=early_stopping_patience if use_early_stopping else 999999,  # 비활성화 시 매우 큰 값
                 tol=early_stopping_tol,
                 logger=self.logger,
-                iteration_logger=self.iteration_logger
+                iteration_logger=self.iteration_logger,
+                param_scaler=self.param_scaler,  # ✅ param_scaler 전달
+                param_names=self.param_names,    # ✅ param_names 전달
+                parent_estimator=self            # ✅ parent_estimator 전달
             )
 
             # 초기 함수 호출 시작 위치 설정
@@ -1291,6 +1303,9 @@ class SimultaneousEstimator:
                     else:
                         hess_inv_array = hess_inv
 
+                    # ✅ Hessian 역행렬을 result에 저장 (나중에 CSV로 저장)
+                    self.hessian_inv_matrix = np.array(hess_inv_array)
+
                     # 대각 원소 (각 파라미터의 분산 근사)
                     diag_elements = np.diag(hess_inv_array)
 
@@ -1325,12 +1340,35 @@ class SimultaneousEstimator:
 
                     self.iteration_logger.info(f"{'='*80}\n")
 
+                    # ✅ 전체 Hessian 역행렬을 로그 파일에 저장 (CSV 형식)
+                    self.iteration_logger.info("=" * 80)
+                    self.iteration_logger.info("Hessian 역행렬 (H^(-1)) - 전체 행렬")
+                    self.iteration_logger.info("=" * 80)
+                    self.iteration_logger.info("(CSV 형식으로 저장 - 별도 파일로 추출 가능)")
+                    self.iteration_logger.info("")
+
+                    # 헤더 (파라미터 이름)
+                    param_names_str = ",".join(self.param_names if hasattr(self, 'param_names') else [f"param_{i}" for i in range(hess_inv_array.shape[0])])
+                    self.iteration_logger.info(f"HESSIAN_HEADER,{param_names_str}")
+
+                    # 각 행 출력
+                    for i in range(hess_inv_array.shape[0]):
+                        param_name = self.param_names[i] if hasattr(self, 'param_names') and i < len(self.param_names) else f"param_{i}"
+                        row_values = ",".join([f"{hess_inv_array[i, j]:.10e}" for j in range(hess_inv_array.shape[1])])
+                        self.iteration_logger.info(f"HESSIAN_ROW,{param_name},{row_values}")
+
+                    self.iteration_logger.info("=" * 80)
+                    self.iteration_logger.info("")
+
                 else:
                     # BFGS hess_inv가 없으면 경고만 출력 (L-BFGS-B의 경우)
                     self.logger.warning("Hessian 역행렬 없음 (L-BFGS-B는 hess_inv 제공 안 함)")
                     self.iteration_logger.warning("Hessian 역행렬 없음 (L-BFGS-B는 hess_inv 제공 안 함)")
                     self.logger.info("표준오차 계산을 위해서는 BFGS 방법 사용 권장")
                     self.iteration_logger.info("표준오차 계산을 위해서는 BFGS 방법 사용 권장")
+                    self.hessian_inv_matrix = None
+            else:
+                self.hessian_inv_matrix = None
 
             # 최종 로그
             if early_stopping_wrapper.early_stopped:
@@ -1598,37 +1636,37 @@ class SimultaneousEstimator:
                     if meas_config.fix_first_loading:
                         # 첫 번째 제외
                         for indicator in meas_config.indicators[1:]:
-                            names.append(f"ζ_{lv_name}_{indicator}")
+                            names.append(f"zeta_{lv_name}_{indicator}")
                     else:
                         for indicator in meas_config.indicators:
-                            names.append(f"ζ_{lv_name}_{indicator}")
+                            names.append(f"zeta_{lv_name}_{indicator}")
 
                     # 오차분산 (sigma_sq)
                     if not meas_config.fix_error_variance:
                         for indicator in meas_config.indicators:
-                            names.append(f"σ²_{lv_name}_{indicator}")
+                            names.append(f"sigma_sq_{lv_name}_{indicator}")
 
                 else:
                     # OrderedProbitMeasurement (기존 방식)
                     # 요인적재량 (zeta)
                     for indicator in meas_config.indicators:
-                        names.append(f"ζ_{lv_name}_{indicator}")
+                        names.append(f"zeta_{lv_name}_{indicator}")
 
                     # 임계값 (tau)
                     n_thresholds = meas_config.n_categories - 1
                     for indicator in meas_config.indicators:
                         for j in range(n_thresholds):
-                            names.append(f"τ_{lv_name}_{indicator}_{j+1}")
+                            names.append(f"tau_{lv_name}_{indicator}_{j+1}")
         else:
             # 단일 잠재변수
             indicators = self.config.measurement.indicators
             for indicator in indicators:
-                names.append(f"ζ_{indicator}")
+                names.append(f"zeta_{indicator}")
 
             n_thresholds = self.config.measurement.n_categories - 1
             for indicator in indicators:
                 for j in range(n_thresholds):
-                    names.append(f"τ_{indicator}_{j+1}")
+                    names.append(f"tau_{indicator}_{j+1}")
 
         # 구조모델 파라미터 (gamma)
         if is_multi_latent:
@@ -1640,43 +1678,43 @@ class SimultaneousEstimator:
                     predictors = path['predictors']
 
                     for pred in predictors:
-                        param_name = f"γ_{pred}_to_{target}"
+                        param_name = f"gamma_{pred}_to_{target}"
                         names.append(param_name)
             else:
                 # 병렬 구조 (하위 호환): gamma_lv (외생 LV → 내생 LV)
                 for exo_lv in self.config.structural.exogenous_lvs:
-                    names.append(f"γ_lv_{exo_lv}")
+                    names.append(f"gamma_lv_{exo_lv}")
 
                 # gamma_x (공변량 → 내생 LV)
                 for cov in self.config.structural.covariates:
-                    names.append(f"γ_x_{cov}")
+                    names.append(f"gamma_x_{cov}")
         else:
             # 단일 잠재변수
             sociodem = self.config.structural.sociodemographics
             for var in sociodem:
-                names.append(f"γ_{var}")
+                names.append(f"gamma_{var}")
 
         # 선택모델 파라미터
         # - 절편
-        names.append("β_intercept")
+        names.append("beta_intercept")
 
         # - 속성 계수 (beta)
         attributes = self.config.choice.choice_attributes
         for attr in attributes:
-            names.append(f"β_{attr}")
+            names.append(f"beta_{attr}")
 
         # ✅ 조절효과 지원
         if hasattr(self.config.choice, 'moderation_enabled') and self.config.choice.moderation_enabled:
             # 조절효과 모델: lambda_main + lambda_mod_*
-            names.append("λ_main")
+            names.append("lambda_main")
 
             # 조절변수별 lambda_mod
             if hasattr(self.config.choice, 'moderator_lvs'):
                 for mod_lv in self.config.choice.moderator_lvs:
-                    names.append(f"λ_mod_{mod_lv}")
+                    names.append(f"lambda_mod_{mod_lv}")
         else:
             # 기본 모델: lambda
-            names.append("λ")
+            names.append("lambda")
 
         # - 사회인구학적 변수 계수 (선택모델에 포함되는 경우)
         if is_multi_latent:
@@ -1684,12 +1722,12 @@ class SimultaneousEstimator:
             if hasattr(self.config.structural, 'include_in_choice'):
                 if self.config.structural.include_in_choice:
                     for var in self.config.structural.covariates:
-                        names.append(f"β_{var}")
+                        names.append(f"beta_{var}")
         else:
             # 단일 잠재변수
             if self.config.structural.include_in_choice:
                 for var in sociodem:
-                    names.append(f"β_{var}")
+                    names.append(f"beta_{var}")
 
         return names
 
@@ -1708,8 +1746,8 @@ class SimultaneousEstimator:
         custom_scales = {}
 
         for name in param_names:
-            # ζ (factor loading) 스케일
-            if name.startswith('ζ_'):
+            # zeta (factor loading) 스케일
+            if name.startswith('zeta_'):
                 if 'health_concern' in name:
                     custom_scales[name] = 0.024
                 elif 'perceived_benefit' in name:
@@ -1723,8 +1761,8 @@ class SimultaneousEstimator:
                 else:
                     custom_scales[name] = 0.05  # 기본값
 
-            # σ² (error variance) 스케일
-            elif name.startswith('σ²_'):
+            # sigma_sq (error variance) 스케일
+            elif name.startswith('sigma_sq_'):
                 if 'health_concern' in name:
                     custom_scales[name] = 0.034
                 elif 'perceived_benefit' in name:
@@ -1738,36 +1776,36 @@ class SimultaneousEstimator:
                 else:
                     custom_scales[name] = 0.03  # 기본값
 
-            # β (choice model coefficients) 스케일
-            elif name.startswith('β_'):
-                if name == 'β_intercept':
+            # beta (choice model coefficients) 스케일
+            elif name.startswith('beta_'):
+                if name == 'beta_intercept':
                     custom_scales[name] = 0.290
-                elif name == 'β_sugar_free':
+                elif name == 'beta_sugar_free':
                     custom_scales[name] = 0.230
-                elif name == 'β_health_label':
+                elif name == 'beta_health_label':
                     custom_scales[name] = 0.220
-                elif name == 'β_price':
+                elif name == 'beta_price':
                     custom_scales[name] = 0.056
                 else:
                     custom_scales[name] = 0.2  # 기본값
 
-            # λ (latent variable coefficients) 스케일
-            elif name.startswith('λ_'):
-                if name == 'λ_main':
+            # lambda (latent variable coefficients) 스케일
+            elif name.startswith('lambda_'):
+                if name == 'lambda_main':
                     custom_scales[name] = 0.890
-                elif name == 'λ_mod_perceived_price':
+                elif name == 'lambda_mod_perceived_price':
                     custom_scales[name] = 0.470
-                elif name == 'λ_mod_nutrition_knowledge':
+                elif name == 'lambda_mod_nutrition_knowledge':
                     custom_scales[name] = 1.200
                 else:
                     custom_scales[name] = 0.5  # 기본값
 
-            # γ (structural model coefficients) 스케일
-            elif name.startswith('γ_'):
+            # gamma (structural model coefficients) 스케일
+            elif name.startswith('gamma_'):
                 custom_scales[name] = 0.5  # 기본값
 
-            # τ (thresholds) 스케일
-            elif name.startswith('τ_'):
+            # tau (thresholds) 스케일
+            elif name.startswith('tau_'):
                 custom_scales[name] = 1.0  # 스케일링 안함
 
             # 기타
@@ -2081,6 +2119,9 @@ class SimultaneousEstimator:
                     if hasattr(hess_inv, 'todense'):
                         hess_inv = hess_inv.todense()
 
+                    # ✅ Hessian 역행렬을 결과에 저장
+                    results['hessian_inv'] = np.array(hess_inv)
+
                     # 대각 원소 추출 (분산)
                     variances = np.diag(hess_inv)
 
@@ -2108,11 +2149,15 @@ class SimultaneousEstimator:
 
                 else:
                     self.logger.warning("Hessian 정보가 없어 표준오차를 계산할 수 없습니다.")
+                    results['hessian_inv'] = None
 
             except Exception as e:
                 self.logger.warning(f"표준오차 계산 실패: {e}")
                 import traceback
                 self.logger.debug(traceback.format_exc())
+                results['hessian_inv'] = None
+        else:
+            results['hessian_inv'] = None
 
         # CSV 로그 파일 닫기
         if hasattr(self, 'csv_log_file') and self.csv_log_file:

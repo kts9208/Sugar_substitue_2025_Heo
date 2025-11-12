@@ -491,6 +491,10 @@ def compute_structural_gradient_batch_gpu(
                 iteration_logger.info(f"    - 예측값 μ (draw 0): {float(mu[0]):.4f}")
                 iteration_logger.info(f"    - 잔차 (draw 0): {float(residual[0]):.4f}")
                 iteration_logger.info(f"    - 잔차 범위: [{float(cp.min(residual)):.4f}, {float(cp.max(residual)):.4f}]")
+                # ✅ 추가 디버깅: 모든 draws의 target 값 확인
+                iteration_logger.info(f"    - target 값 (처음 5개 draws): {target_values[:5]}")
+                iteration_logger.info(f"    - predictor 값 (처음 5개 draws): {pred_values[:5]}")
+                iteration_logger.info(f"    - 잔차 (처음 5개 draws): {cp.asnumpy(residual[:5])}")
 
             # ∂ log L / ∂γ = Σ_r w_r * (target - μ)_r / σ² * predictor_r
             weighted_residual = weights_gpu * residual / error_variance  # (n_draws,)
