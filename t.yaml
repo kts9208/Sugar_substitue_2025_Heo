@@ -1,0 +1,69 @@
+# File t.yaml has automatically been generated on 2025-11-13 16:58:42.882238
+# biogeme 3.3.1 [2025-11-13]
+
+beta_names:
+- ASC
+- B1
+- B2
+beta_values:
+- 0.9166296171715822
+- 0.7499660365372256
+- -0.31645076083495866
+bhhh:
+- - 10.094640507973502
+  - -3.540534547619836
+  - -0.11568645298720034
+- - -3.540534547619836
+  - 9.01900311825452
+  - 2.478540585108449
+- - -0.11568645298720034
+  - 2.478540585108449
+  - 9.424389712734762
+bootstrap: []
+bootstrap_time: null
+convergence: true
+data_name: t
+draws_processing_time: '0.0'
+final_log_likelihood: -29.583405374346356
+gradient:
+- 6.400210805779238e-09
+- 6.081790404621756e-09
+- -2.3361041989744535e-09
+hessian:
+- - -10.148615970265945
+  - 4.088666083191139
+  - -0.6848172514594911
+- - 4.08866608319114
+  - -8.949655776001048
+  - -0.9314472323855449
+- - -0.6848172514594908
+  - -0.9314472323855455
+  - -7.497630882668709
+initial_log_likelihood: -34.65735902799726
+lower_bounds:
+- null
+- null
+- null
+model_name: t
+monte_carlo: false
+null_log_likelihood: null
+number_of_draws: 10000
+number_of_excluded_data: 0
+number_of_observations: 50
+optimization_messages:
+  Algorithm: Newton with trust region for simple bound constraints
+  Cause of termination: Relative gradient = 1.8e-10 <= 6.1e-06
+  Number of function evaluations: 13
+  Number of gradient evaluations: 9
+  Number of hessian evaluations: 4
+  Number of iterations: '4'
+  Optimization time: '0.466087'
+  Proportion of Hessian calculation: 4/4 = 100.0%
+  Relative gradient: 1.8467113109192242e-10
+sample_size: 50
+types_of_draws: null
+upper_bounds:
+- null
+- null
+- null
+user_notes: null

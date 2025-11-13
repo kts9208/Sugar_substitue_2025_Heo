@@ -28,7 +28,7 @@ from src.analysis.hybrid_choice_model.iclv_models.multi_latent_config import (
 from src.analysis.hybrid_choice_model.iclv_models.gpu_batch_estimator import GPUBatchEstimator
 from src.analysis.hybrid_choice_model.iclv_models.multi_latent_measurement import MultiLatentMeasurement
 from src.analysis.hybrid_choice_model.iclv_models.multi_latent_structural import MultiLatentStructural
-from src.analysis.hybrid_choice_model.iclv_models.choice_equations import BinaryProbitChoice
+from src.analysis.hybrid_choice_model.iclv_models.choice_equations import BinaryProbitChoice, MultinomialLogitChoice
 
 
 # DataConfig를 직접 정의
@@ -165,10 +165,20 @@ def main():
     # 3. 모델 생성 (test_iclv_full_data.py와 동일)
     print("\n3. 모델 생성...")
 
+    # ✅ 선택모델 타입 선택 (Binary Probit 또는 Multinomial Logit)
+    USE_MNL = True  # True: MNL (이론적으로 올바름), False: Binary Probit (근사)
+
     try:
         measurement_model = MultiLatentMeasurement(measurement_configs)
         structural_model = MultiLatentStructural(structural_config)
-        choice_model = BinaryProbitChoice(choice_config)
+
+        if USE_MNL:
+            choice_model = MultinomialLogitChoice(choice_config)
+            print("   - 선택모델: Multinomial Logit (MNL)")
+        else:
+            choice_model = BinaryProbitChoice(choice_config)
+            print("   - 선택모델: Binary Probit")
+
         print("   - 측정모델, 구조모델, 선택모델 생성 완료")
     except Exception as e:
         print(f"   [ERROR] 모델 생성 실패: {e}")

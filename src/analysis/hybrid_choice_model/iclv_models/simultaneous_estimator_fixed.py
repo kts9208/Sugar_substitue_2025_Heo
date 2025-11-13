@@ -27,6 +27,7 @@ from .gradient_calculator import (
     JointGradient
 )
 from .parameter_scaler import ParameterScaler
+from .bhhh_calculator import BHHHCalculator
 
 logger = logging.getLogger(__name__)
 
@@ -1364,12 +1365,68 @@ class SimultaneousEstimator:
                     self.iteration_logger.info("")
 
                 else:
-                    # BFGS hess_inv가 없으면 경고만 출력 (L-BFGS-B의 경우)
+                    # BFGS hess_inv가 없으면 BHHH 방법으로 계산 (L-BFGS-B의 경우)
                     self.logger.warning("Hessian 역행렬 없음 (L-BFGS-B는 hess_inv 제공 안 함)")
                     self.iteration_logger.warning("Hessian 역행렬 없음 (L-BFGS-B는 hess_inv 제공 안 함)")
-                    self.logger.info("표준오차 계산을 위해서는 BFGS 방법 사용 권장")
-                    self.iteration_logger.info("표준오차 계산을 위해서는 BFGS 방법 사용 권장")
-                    self.hessian_inv_matrix = None
+                    self.logger.info("BHHH 방법으로 Hessian 계산 시작...")
+                    self.iteration_logger.info("BHHH 방법으로 Hessian 계산 시작...")
+
+                    try:
+                        # BHHH 방법으로 Hessian 계산
+                        hess_inv_bhhh = self._compute_bhhh_hessian_inverse(
+                            result.x,
+                            measurement_model,
+                            structural_model,
+                            choice_model
+                        )
+
+                        if hess_inv_bhhh is not None:
+                            self.hessian_inv_matrix = hess_inv_bhhh
+                            self.logger.info("BHHH Hessian 계산 성공")
+                            self.iteration_logger.info("BHHH Hessian 계산 성공")
+
+                            # BHHH Hessian 통계 로깅 (BFGS와 동일한 형식)
+                            diag_elements = np.diag(hess_inv_bhhh)
+                            off_diag_mask = ~np.eye(hess_inv_bhhh.shape[0], dtype=bool)
+                            off_diag_elements = hess_inv_bhhh[off_diag_mask]
+
+                            self.iteration_logger.info(
+                                f"\n{'='*80}\n"
+                                f"최종 Hessian 역행렬 (H^(-1)) - BHHH 방법\n"
+                                f"{'='*80}\n"
+                                f"  Shape: {hess_inv_bhhh.shape}\n"
+                                f"  대각 원소 (분산 근사):\n"
+                                f"    - 범위: [{np.min(diag_elements):.6e}, {np.max(diag_elements):.6e}]\n"
+                                f"    - 평균: {np.mean(diag_elements):.6e}\n"
+                                f"    - 중앙값: {np.median(diag_elements):.6e}\n"
+                                f"    - 음수 개수: {np.sum(diag_elements < 0)}/{len(diag_elements)}\n"
+                                f"  비대각 원소 (공분산):\n"
+                                f"    - 범위: [{np.min(off_diag_elements):.6e}, {np.max(off_diag_elements):.6e}]\n"
+                                f"    - 평균: {np.mean(off_diag_elements):.6e}\n"
+                                f"    - 절대값 평균: {np.mean(np.abs(off_diag_elements)):.6e}\n"
+                                f"\n  상위 10개 대각 원소 (파라미터 인덱스):\n"
+                            )
+
+                            # 상위 10개 대각 원소
+                            top_10_indices = np.argsort(np.abs(diag_elements))[-10:][::-1]
+                            for idx in top_10_indices:
+                                param_name = self.param_names[idx] if hasattr(self, 'param_names') and idx < len(self.param_names) else f"param_{idx}"
+                                self.iteration_logger.info(
+                                    f"    [{idx:2d}] {param_name:40s}: {diag_elements[idx]:+.6e}"
+                                )
+
+                            self.iteration_logger.info(f"{'='*80}\n")
+                        else:
+                            self.logger.warning("BHHH Hessian 계산 실패")
+                            self.iteration_logger.warning("BHHH Hessian 계산 실패")
+                            self.hessian_inv_matrix = None
+
+                    except Exception as e:
+                        self.logger.error(f"BHHH Hessian 계산 중 오류: {e}")
+                        self.iteration_logger.error(f"BHHH Hessian 계산 중 오류: {e}")
+                        import traceback
+                        self.logger.debug(traceback.format_exc())
+                        self.hessian_inv_matrix = None
             else:
                 self.hessian_inv_matrix = None
 
@@ -2245,6 +2302,141 @@ class SimultaneousEstimator:
                 }
 
         return structured
+
+    def _compute_bhhh_hessian_inverse(
+        self,
+        optimal_params: np.ndarray,
+        measurement_model,
+        structural_model,
+        choice_model,
+        max_individuals: int = 100,
+        use_all_individuals: bool = False
+    ) -> Optional[np.ndarray]:
+        """
+        BHHH 방법으로 Hessian 역행렬 계산
+
+        Args:
+            optimal_params: 최적 파라미터 벡터
+            measurement_model: 측정모델
+            structural_model: 구조모델
+            choice_model: 선택모델
+            max_individuals: 최대 개인 수 (샘플링)
+            use_all_individuals: True면 모든 개인 사용
+
+        Returns:
+            Hessian 역행렬 (n_params, n_params) 또는 None (실패 시)
+        """
+        try:
+            # BHHH 계산기 초기화
+            bhhh_calc = BHHHCalculator(logger=self.logger)
+
+            # 파라미터 언팩
+            param_dict = self._unpack_parameters(
+                optimal_params, measurement_model, structural_model, choice_model
+            )
+
+            # 개인별 gradient 계산
+            self.logger.info("개인별 gradient 계산 시작...")
+            individual_gradients = []
+
+            # 개인 ID 목록
+            individual_ids = self.data[self.config.individual_id_column].unique()
+            n_total_individuals = len(individual_ids)
+
+            # 샘플링 여부 결정
+            if use_all_individuals:
+                n_individuals = n_total_individuals
+                sampled_ids = individual_ids
+            else:
+                n_individuals = min(max_individuals, n_total_individuals)
+                # 균등 샘플링
+                step = max(1, n_total_individuals // n_individuals)
+                sampled_ids = individual_ids[::step][:n_individuals]
+
+            self.logger.info(
+                f"BHHH 계산: {n_individuals}명 사용 "
+                f"(전체 {n_total_individuals}명 중)"
+            )
+
+            # 다중 잠재변수 여부 확인
+            from .multi_latent_config import MultiLatentConfig
+            is_multi_latent = isinstance(self.config, MultiLatentConfig)
+
+            if is_multi_latent:
+                # 다중 잠재변수: compute_individual_gradient 사용
+                from .multi_latent_gradient import MultiLatentJointGradient
+
+                for i, ind_id in enumerate(sampled_ids):
+                    if i % 10 == 0:
+                        self.logger.info(f"  진행: {i}/{n_individuals}")
+
+                    # 개인 데이터
+                    ind_data = self.data[
+                        self.data[self.config.individual_id_column] == ind_id
+                    ]
+
+                    # 개인 draws
+                    ind_idx = np.where(individual_ids == ind_id)[0][0]
+                    ind_draws = self.halton_generator.get_draws()[ind_idx]
+
+                    # 개인별 gradient 계산
+                    ind_grad_dict = self.joint_grad.compute_individual_gradient(
+                        ind_data=ind_data,
+                        ind_draws=ind_draws,
+                        params_dict=param_dict,
+                        measurement_model=measurement_model,
+                        structural_model=structural_model,
+                        choice_model=choice_model,
+                        ind_id=ind_id
+                    )
+
+                    # Gradient를 벡터로 변환
+                    grad_vector = self._pack_gradient(
+                        ind_grad_dict,
+                        measurement_model,
+                        structural_model,
+                        choice_model
+                    )
+
+                    individual_gradients.append(grad_vector)
+
+            else:
+                # 단일 잠재변수 (기존 방식)
+                self.logger.warning(
+                    "단일 잠재변수 모델의 BHHH는 아직 구현되지 않았습니다."
+                )
+                return None
+
+            self.logger.info(f"개인별 gradient 계산 완료: {len(individual_gradients)}명")
+
+            # BHHH Hessian 계산
+            self.logger.info("BHHH Hessian 계산 중...")
+            hessian_bhhh = bhhh_calc.compute_bhhh_hessian(
+                individual_gradients,
+                for_minimization=True  # scipy.optimize.minimize는 최소화 문제
+            )
+
+            # Hessian 역행렬 계산
+            self.logger.info("Hessian 역행렬 계산 중...")
+            hess_inv = bhhh_calc.compute_hessian_inverse(
+                hessian_bhhh,
+                regularization=1e-8
+            )
+
+            # 표준오차 계산 (검증용)
+            se = bhhh_calc.compute_standard_errors(hess_inv)
+            self.logger.info(
+                f"BHHH 표준오차 범위: "
+                f"[{np.min(se):.6e}, {np.max(se):.6e}]"
+            )
+
+            return hess_inv
+
+        except Exception as e:
+            self.logger.error(f"BHHH Hessian 계산 실패: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
+            return None
 
 
 def estimate_iclv_simultaneous(data: pd.DataFrame, config,

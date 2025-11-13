@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Tuple
 from scipy import stats
 from scipy.stats import norm
 from scipy.optimize import minimize
+from abc import ABC, abstractmethod
 import logging
 from dataclasses import dataclass
 
@@ -37,56 +38,17 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-class BinaryProbitChoice:
+class BaseICLVChoice(ABC):
     """
-    Binary Probit 선택모델 (ICLV용)
+    ICLV 선택모델 베이스 클래스
 
-    ✅ 디폴트: 조절효과 활성화
+    공통 기능:
+    - 효용 계산 (조절효과 지원)
+    - 잠재변수 처리
+    - opt-out 대안 처리
 
-    기본 모델:
-        V = intercept + β*X + λ*LV
-        P(Yes) = Φ(V)
-
-    조절효과 모델 (디폴트):
-        V = intercept + β*X + λ_main*LV_main + Σ(λ_mod_i * LV_main * LV_mod_i)
-        P(Yes) = Φ(V)
-
-    여기서:
-        - V: 효용 (Utility)
-        - X: 선택 속성 (Choice attributes, e.g., price, quality)
-        - β: 속성 계수 (Attribute coefficients)
-        - λ_main: 주효과 계수 (Main effect coefficient)
-        - λ_mod_i: 조절효과 계수 (Moderation effect coefficients)
-        - LV_main: 주 잠재변수 (Main latent variable, e.g., purchase_intention)
-        - LV_mod_i: 조절 잠재변수 (Moderator latent variables, e.g., perceived_price, nutrition_knowledge)
-        - Φ: 표준정규 누적분포함수
-
-    King (2022) Apollo R 코드 기반:
-        op_settings = list(
-            outcomeOrdered = Q6ResearchResponse,
-            V = intercept + b_bid*Q6Bid + lambda*LV,
-            tau = list(-100, 0),
-            componentName = "choice",
-            coding = c(-1, 0, 1)
-        )
-        P[['choice']] = apollo_op(op_settings, functionality)
-
-    Usage:
-        >>> config = ChoiceConfig(
-        ...     choice_attributes=['price', 'quality'],
-        ...     choice_type='binary',
-        ...     price_variable='price',
-        ...     moderation_enabled=True,
-        ...     moderator_lvs=['perceived_price', 'nutrition_knowledge'],
-        ...     main_lv='purchase_intention'
-        ... )
-        >>> model = BinaryProbitChoice(config)
-        >>>
-        >>> # Simultaneous 추정용
-        >>> ll = model.log_likelihood(data, lv_dict, params)
-        >>>
-        >>> # 예측용
-        >>> probs = model.predict_probabilities(data, lv_dict, params)
+    하위 클래스가 구현해야 할 메서드:
+    - log_likelihood(): 모델별 확률 계산 및 로그우도
     """
 
     def __init__(self, config: ChoiceConfig):
@@ -100,25 +62,24 @@ class BinaryProbitChoice:
         self.choice_attributes = config.choice_attributes
         self.price_variable = config.price_variable
 
-        # ✅ 조절효과 설정
+        # ✅ 조절효과 설정 (디폴트: 활성화)
         self.moderation_enabled = getattr(config, 'moderation_enabled', False)
         self.moderator_lvs = getattr(config, 'moderator_lvs', None)
         self.main_lv = getattr(config, 'main_lv', 'purchase_intention')
 
         self.logger = logging.getLogger(__name__)
 
-        self.logger.info(f"BinaryProbitChoice 초기화")
+        self.logger.info(f"{self.__class__.__name__} 초기화")
         self.logger.info(f"  선택 속성: {self.choice_attributes}")
         self.logger.info(f"  가격 변수: {self.price_variable}")
         self.logger.info(f"  조절효과: {self.moderation_enabled}")
         if self.moderation_enabled:
             self.logger.info(f"  주 LV: {self.main_lv}")
             self.logger.info(f"  조절 LV: {self.moderator_lvs}")
-    
-    def log_likelihood(self, data: pd.DataFrame, lv,
-                      params: Dict) -> float:
+
+    def _compute_utilities(self, data: pd.DataFrame, lv, params: Dict) -> np.ndarray:
         """
-        선택모델 로그우도
+        효용 계산 (공통 로직)
 
         ✅ 조절효과 지원
 
@@ -129,61 +90,20 @@ class BinaryProbitChoice:
             V = intercept + β*X + λ_main*LV_main + Σ(λ_mod_i * LV_main * LV_mod_i)
 
         Args:
-            data: 선택 데이터 (n_obs, n_vars)
-                  'choice' 열 필수 (0 or 1)
+            data: 선택 데이터
             lv: 잠재변수 값
-                - 기본 모델: (n_obs,) 또는 스칼라
-                - 조절효과 모델: Dict[str, np.ndarray] 또는 Dict[str, float]
-                  예: {
-                      'purchase_intention': np.array([0.5, 0.3, ...]),
-                      'perceived_price': np.array([-0.2, 0.1, ...]),
-                      'nutrition_knowledge': np.array([0.8, 0.6, ...])
-                  }
-            params: 파라미터
-                - 기본 모델: {
-                    'intercept': float,
-                    'beta': np.ndarray,
-                    'lambda': float
-                  }
-                - 조절효과 모델: {
-                    'intercept': float,
-                    'beta': np.ndarray,
-                    'lambda_main': float,
-                    'lambda_mod_perceived_price': float,
-                    'lambda_mod_nutrition_knowledge': float
-                  }
+                - Dict[str, np.ndarray] (조절효과 모델)
+                - np.ndarray 또는 float (기본 모델)
+            params: 파라미터 딕셔너리
 
         Returns:
-            로그우도 값 (스칼라)
-
-        Example (조절효과):
-            >>> params = {
-            ...     'intercept': 0.5,
-            ...     'beta': np.array([-2.0, 0.3, 0.5]),
-            ...     'lambda_main': 1.0,
-            ...     'lambda_mod_perceived_price': -0.3,
-            ...     'lambda_mod_nutrition_knowledge': 0.2
-            ... }
-            >>> lv_dict = {
-            ...     'purchase_intention': np.array([0.5, 0.3]),
-            ...     'perceived_price': np.array([-0.2, 0.1]),
-            ...     'nutrition_knowledge': np.array([0.8, 0.6])
-            ... }
-            >>> ll = model.log_likelihood(data, lv_dict, params)
+            효용 벡터 (n_obs,)
         """
         intercept = params['intercept']
         beta = params['beta']
 
         # 선택 속성 추출
         X = data[self.choice_attributes].values
-
-        # 선택 결과 (0 or 1)
-        if 'choice' in data.columns:
-            choice = data['choice'].values
-        elif 'Choice' in data.columns:
-            choice = data['Choice'].values
-        else:
-            raise ValueError("데이터에 'choice' 또는 'Choice' 열이 없습니다.")
 
         # NaN 처리 (opt-out 대안)
         has_nan = np.isnan(X).any(axis=1)
@@ -250,15 +170,130 @@ class BinaryProbitChoice:
                 else:
                     V[i] = intercept + X[i] @ beta + lambda_lv * lv_array[i]
 
-        # 확률 계산
-        # P(Yes) = Φ(V), P(No) = 1 - Φ(V)
+        return V
+
+    @abstractmethod
+    def log_likelihood(self, data: pd.DataFrame, lv, params: Dict) -> float:
+        """
+        선택모델 로그우도 (하위 클래스에서 구현)
+
+        Args:
+            data: 선택 데이터
+            lv: 잠재변수 값
+            params: 파라미터 딕셔너리
+
+        Returns:
+            로그우도 값
+        """
+        pass
+
+
+class BinaryProbitChoice(BaseICLVChoice):
+    """
+    Binary Probit 선택모델 (ICLV용)
+
+    ✅ 디폴트: 조절효과 활성화
+
+    기본 모델:
+        V = intercept + β*X + λ*LV
+        P(Yes) = Φ(V)
+
+    조절효과 모델 (디폴트):
+        V = intercept + β*X + λ_main*LV_main + Σ(λ_mod_i * LV_main * LV_mod_i)
+        P(Yes) = Φ(V)
+
+    여기서:
+        - V: 효용 (Utility)
+        - X: 선택 속성 (Choice attributes, e.g., price, quality)
+        - β: 속성 계수 (Attribute coefficients)
+        - λ_main: 주효과 계수 (Main effect coefficient)
+        - λ_mod_i: 조절효과 계수 (Moderation effect coefficients)
+        - LV_main: 주 잠재변수 (Main latent variable, e.g., purchase_intention)
+        - LV_mod_i: 조절 잠재변수 (Moderator latent variables, e.g., perceived_price, nutrition_knowledge)
+        - Φ: 표준정규 누적분포함수
+
+    King (2022) Apollo R 코드 기반:
+        op_settings = list(
+            outcomeOrdered = Q6ResearchResponse,
+            V = intercept + b_bid*Q6Bid + lambda*LV,
+            tau = list(-100, 0),
+            componentName = "choice",
+            coding = c(-1, 0, 1)
+        )
+        P[['choice']] = apollo_op(op_settings, functionality)
+
+    Usage:
+        >>> config = ChoiceConfig(
+        ...     choice_attributes=['price', 'quality'],
+        ...     choice_type='binary',
+        ...     price_variable='price',
+        ...     moderation_enabled=True,
+        ...     moderator_lvs=['perceived_price', 'nutrition_knowledge'],
+        ...     main_lv='purchase_intention'
+        ... )
+        >>> model = BinaryProbitChoice(config)
+        >>>
+        >>> # Simultaneous 추정용
+        >>> ll = model.log_likelihood(data, lv_dict, params)
+        >>>
+        >>> # 예측용
+        >>> probs = model.predict_probabilities(data, lv_dict, params)
+    """
+
+    def __init__(self, config: ChoiceConfig):
+        """
+        초기화
+
+        Args:
+            config: 선택모델 설정
+        """
+        # 베이스 클래스 초기화
+        super().__init__(config)
+    
+    def log_likelihood(self, data: pd.DataFrame, lv,
+                      params: Dict) -> float:
+        """
+        Binary Probit 로그우도
+
+        ✅ 조절효과 지원
+
+        기본 모델:
+            V = intercept + β*X + λ*LV
+            P(Yes) = Φ(V)
+
+        조절효과 모델 (디폴트):
+            V = intercept + β*X + λ_main*LV_main + Σ(λ_mod_i * LV_main * LV_mod_i)
+            P(Yes) = Φ(V)
+
+        Args:
+            data: 선택 데이터 (n_obs, n_vars)
+                  'choice' 열 필수 (0 or 1)
+            lv: 잠재변수 값
+                - 기본 모델: (n_obs,) 또는 스칼라
+                - 조절효과 모델: Dict[str, np.ndarray] 또는 Dict[str, float]
+            params: 파라미터 딕셔너리
+
+        Returns:
+            로그우도 값 (스칼라)
+        """
+        # 선택 결과 (0 or 1)
+        if 'choice' in data.columns:
+            choice = data['choice'].values
+        elif 'Choice' in data.columns:
+            choice = data['Choice'].values
+        else:
+            raise ValueError("데이터에 'choice' 또는 'Choice' 열이 없습니다.")
+
+        # ✅ 베이스 클래스의 효용 계산 사용
+        V = self._compute_utilities(data, lv, params)
+
+        # 확률 계산: P(Yes) = Φ(V)
         prob_yes = norm.cdf(V)
 
         # 수치 안정성을 위해 클리핑
         prob_yes = np.clip(prob_yes, 1e-10, 1 - 1e-10)
 
-        # 로그우도
-        # log L = Σ [choice * log(Φ(V)) + (1-choice) * log(1-Φ(V))]
+        # 로그우도: log L = Σ [choice * log(Φ(V)) + (1-choice) * log(1-Φ(V))]
         ll = np.sum(
             choice * np.log(prob_yes) +
             (1 - choice) * np.log(1 - prob_yes)
@@ -496,12 +531,12 @@ def estimate_choice_model(data: pd.DataFrame, latent_var: np.ndarray,
         price_variable=price_variable,
         **kwargs
     )
-    
+
     model = BinaryProbitChoice(config)
-    
+
     # 간단한 추정 (로그우도 최대화)
     initial_params = model.get_initial_params(data)
-    
+
     def negative_log_likelihood(params_array):
         params = {
             'intercept': params_array[0],
@@ -509,17 +544,17 @@ def estimate_choice_model(data: pd.DataFrame, latent_var: np.ndarray,
             'lambda': params_array[-1]
         }
         return -model.log_likelihood(data, latent_var, params)
-    
+
     # 초기값 배열
     x0 = np.concatenate([
         [initial_params['intercept']],
         initial_params['beta'],
         [initial_params['lambda']]
     ])
-    
+
     # 최적화
     result = minimize(negative_log_likelihood, x0, method='BFGS')
-    
+
     # 결과 정리
     estimated_params = {
         'intercept': result.x[0],
@@ -528,6 +563,157 @@ def estimate_choice_model(data: pd.DataFrame, latent_var: np.ndarray,
         'log_likelihood': -result.fun,
         'success': result.success
     }
-    
+
     return estimated_params
+
+
+class MultinomialLogitChoice(BaseICLVChoice):
+    """
+    Multinomial Logit 선택모델 (ICLV용)
+
+    ✅ BinaryProbitChoice와 동일한 인터페이스
+    ✅ 조절효과 지원
+    ✅ GPU 배치 처리 호환
+
+    모델:
+        V_j = intercept + β*X_j + λ_main*LV_main + Σ(λ_mod_i * LV_main * LV_mod_i)
+        P(j) = exp(V_j) / Σ_k exp(V_k)
+
+    여기서:
+        - j: 대안 인덱스 (제품A, 제품B, 구매안함)
+        - V_j: 대안 j의 효용
+        - P(j): 대안 j의 선택 확률
+
+    데이터 구조:
+        - 각 선택 상황은 3개 행 (제품A, 제품B, 구매안함)
+        - choice 컬럼: 선택된 대안은 1, 나머지는 0
+        - opt-out 대안: 속성이 NaN → 효용 = 0 (기준 대안)
+
+    Usage:
+        >>> config = ChoiceConfig(
+        ...     choice_attributes=['sugar_free', 'health_label', 'price'],
+        ...     choice_type='multinomial',
+        ...     moderation_enabled=True,
+        ...     moderator_lvs=['perceived_price', 'nutrition_knowledge'],
+        ...     main_lv='purchase_intention'
+        ... )
+        >>> model = MultinomialLogitChoice(config)
+        >>> ll = model.log_likelihood(data, lv_dict, params)
+    """
+
+    def __init__(self, config: ChoiceConfig):
+        """
+        초기화
+
+        Args:
+            config: 선택모델 설정
+        """
+        # 베이스 클래스 초기화
+        super().__init__(config)
+
+        # MNL 특화 설정
+        self.n_alternatives = 3  # 제품A, 제품B, 구매안함
+
+        self.logger.info(f"  대안 수: {self.n_alternatives}")
+
+    def log_likelihood(self, data: pd.DataFrame, lv, params: Dict) -> float:
+        """
+        Multinomial Logit 로그우도
+
+        ✅ 조절효과 지원
+
+        모델:
+            V_j = intercept + β*X_j + λ_main*LV_main + Σ(λ_mod_i * LV_main * LV_mod_i)
+            P(j) = exp(V_j) / Σ_k exp(V_k)
+
+        Args:
+            data: 선택 데이터
+                  각 선택 상황은 n_alternatives개 행
+                  'choice' 열: 선택된 대안은 1, 나머지는 0
+            lv: 잠재변수 값
+                - Dict[str, np.ndarray] (조절효과 모델)
+                - np.ndarray 또는 float (기본 모델)
+            params: 파라미터 딕셔너리
+
+        Returns:
+            로그우도 값 (스칼라)
+        """
+        # 선택 결과 (0 or 1)
+        if 'choice' in data.columns:
+            choice = data['choice'].values
+        elif 'Choice' in data.columns:
+            choice = data['Choice'].values
+        else:
+            raise ValueError("데이터에 'choice' 또는 'Choice' 열이 없습니다.")
+
+        # ✅ 베이스 클래스의 효용 계산 사용
+        V = self._compute_utilities(data, lv, params)
+
+        # 선택 상황별로 그룹화하여 Softmax 계산
+        n_rows = len(data)
+        n_choice_situations = n_rows // self.n_alternatives
+
+        total_ll = 0.0
+
+        for i in range(n_choice_situations):
+            start_idx = i * self.n_alternatives
+            end_idx = start_idx + self.n_alternatives
+
+            # 이 선택 상황의 효용들
+            V_situation = V[start_idx:end_idx]  # (n_alternatives,)
+
+            # Softmax 확률 계산 (수치 안정성)
+            V_max = np.max(V_situation)
+            exp_V = np.exp(V_situation - V_max)
+            prob = exp_V / np.sum(exp_V)
+
+            # 수치 안정성을 위해 클리핑
+            prob = np.clip(prob, 1e-10, 1 - 1e-10)
+
+            # 선택된 대안 찾기
+            choices = choice[start_idx:end_idx]
+            chosen_idx = np.argmax(choices)
+
+            # 로그우도 누적
+            total_ll += np.log(prob[chosen_idx])
+
+        return total_ll
+
+    def predict_probabilities(self, data: pd.DataFrame, lv, params: Dict) -> np.ndarray:
+        """
+        선택 확률 예측
+
+        Args:
+            data: 선택 데이터
+            lv: 잠재변수 값
+            params: 파라미터 딕셔너리
+
+        Returns:
+            선택 확률 배열 (n_obs,)
+        """
+        # 효용 계산
+        V = self._compute_utilities(data, lv, params)
+
+        # 선택 상황별로 Softmax 계산
+        n_rows = len(data)
+        n_choice_situations = n_rows // self.n_alternatives
+
+        probabilities = np.zeros(n_rows)
+
+        for i in range(n_choice_situations):
+            start_idx = i * self.n_alternatives
+            end_idx = start_idx + self.n_alternatives
+
+            # 이 선택 상황의 효용들
+            V_situation = V[start_idx:end_idx]
+
+            # Softmax 확률
+            V_max = np.max(V_situation)
+            exp_V = np.exp(V_situation - V_max)
+            prob = exp_V / np.sum(exp_V)
+
+            # 확률 저장
+            probabilities[start_idx:end_idx] = prob
+
+        return probabilities
 
