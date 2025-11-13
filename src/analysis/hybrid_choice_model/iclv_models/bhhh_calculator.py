@@ -55,27 +55,40 @@ class BHHHCalculator:
     ) -> np.ndarray:
         """
         개인별 gradient로부터 BHHH Hessian 계산
-        
+
         Args:
             individual_gradients: 개인별 gradient 벡터 리스트
                                  각 원소는 (n_params,) 형태의 numpy array
             for_minimization: True면 최소화 문제 (음수 부호)
                             False면 최대화 문제 (양수 부호)
-        
+
         Returns:
             BHHH Hessian 행렬 (n_params, n_params)
         """
         if not individual_gradients:
             raise ValueError("개인별 gradient가 비어있습니다.")
-        
+
         n_individuals = len(individual_gradients)
         n_params = len(individual_gradients[0])
-        
-        self.logger.info(f"BHHH Hessian 계산 시작: {n_individuals}명, {n_params}개 파라미터")
-        
+
+        self.logger.info(
+            f"\n{'='*80}\n"
+            f"OPG (Outer Product of Gradients) 계산 시작\n"
+            f"{'='*80}\n"
+            f"  개인 수: {n_individuals}명\n"
+            f"  파라미터 수: {n_params}개\n"
+            f"  최소화 문제: {for_minimization}\n"
+            f"  계산 방식: BHHH = Σ_i (grad_i × grad_i^T)\n"
+            f"{'='*80}"
+        )
+
         # BHHH Hessian 초기화
         hessian_bhhh = np.zeros((n_params, n_params))
-        
+
+        # 개인별 gradient 통계
+        grad_norms = []
+        grad_samples = []
+
         # Σ_i (grad_i × grad_i^T)
         for i, grad in enumerate(individual_gradients):
             if len(grad) != n_params:
@@ -83,19 +96,71 @@ class BHHHCalculator:
                     f"개인 {i}의 gradient 차원 불일치: "
                     f"예상 {n_params}, 실제 {len(grad)}"
                 )
-            
+
+            # Gradient 통계 수집
+            grad_norm = np.linalg.norm(grad)
+            grad_norms.append(grad_norm)
+
+            # 처음 3명의 gradient 샘플 저장
+            if i < 3:
+                grad_samples.append((i, grad.copy()))
+
             # Outer product: grad_i × grad_i^T
-            hessian_bhhh += np.outer(grad, grad)
-        
+            outer_prod = np.outer(grad, grad)
+            hessian_bhhh += outer_prod
+
+            # 상세 로깅 (처음 3명만)
+            if i < 3:
+                self.logger.info(
+                    f"\n개인 {i} OPG 계산:\n"
+                    f"  Gradient shape: {grad.shape}\n"
+                    f"  Gradient norm: {grad_norm:.6e}\n"
+                    f"  Gradient 범위: [{np.min(grad):.6e}, {np.max(grad):.6e}]\n"
+                    f"  Outer product shape: {outer_prod.shape}\n"
+                    f"  Outer product 대각 범위: [{np.min(np.diag(outer_prod)):.6e}, {np.max(np.diag(outer_prod)):.6e}]"
+                )
+
+        # Gradient 통계 로깅
+        grad_norms = np.array(grad_norms)
+        self.logger.info(
+            f"\n{'='*80}\n"
+            f"개인별 Gradient 통계 (OPG 계산 전)\n"
+            f"{'='*80}\n"
+            f"  Gradient norm 통계:\n"
+            f"    - 최소: {np.min(grad_norms):.6e}\n"
+            f"    - 최대: {np.max(grad_norms):.6e}\n"
+            f"    - 평균: {np.mean(grad_norms):.6e}\n"
+            f"    - 중앙값: {np.median(grad_norms):.6e}\n"
+            f"    - 표준편차: {np.std(grad_norms):.6e}\n"
+            f"  Zero gradient 개수: {np.sum(grad_norms < 1e-10)}/{n_individuals}\n"
+            f"{'='*80}"
+        )
+
+        # OPG 행렬 (부호 변경 전) 통계
+        self.logger.info(
+            f"\n{'='*80}\n"
+            f"OPG 행렬 통계 (부호 변경 전)\n"
+            f"{'='*80}\n"
+            f"  Shape: {hessian_bhhh.shape}\n"
+            f"  대각 원소 범위: [{np.min(np.diag(hessian_bhhh)):.6e}, {np.max(np.diag(hessian_bhhh)):.6e}]\n"
+            f"  전체 원소 범위: [{np.min(hessian_bhhh):.6e}, {np.max(hessian_bhhh):.6e}]\n"
+            f"  대각 원소 평균: {np.mean(np.diag(hessian_bhhh)):.6e}\n"
+            f"  대칭성 확인: {np.allclose(hessian_bhhh, hessian_bhhh.T)}\n"
+            f"{'='*80}"
+        )
+
         # 최소화 문제의 경우 음수 부호
         if for_minimization:
+            self.logger.info(
+                f"\n최소화 문제이므로 OPG 행렬에 음수 부호 적용: BHHH = -OPG"
+            )
             hessian_bhhh = -hessian_bhhh
-        
+
         self.hessian_bhhh = hessian_bhhh
-        
+
         # 통계 로깅
-        self._log_hessian_statistics(hessian_bhhh, "BHHH Hessian")
-        
+        self._log_hessian_statistics(hessian_bhhh, "BHHH Hessian (최종)")
+
         return hessian_bhhh
     
     def compute_hessian_inverse(

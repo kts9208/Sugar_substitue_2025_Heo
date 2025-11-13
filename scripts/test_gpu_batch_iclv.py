@@ -50,7 +50,7 @@ def main():
 
     # 1. 데이터 로드
     print("\n1. 데이터 로드 중...")
-    data_path = project_root / 'data' / 'processed' / 'iclv' / 'integrated_data.csv'
+    data_path = project_root / 'data' / 'processed' / 'iclv' / 'integrated_data_cleaned.csv'
     data = pd.read_csv(data_path)
     print(f"   데이터 shape: {data.shape}")
     n_individuals = data['respondent_id'].nunique()
@@ -117,12 +117,12 @@ def main():
 
     # 추정 설정
     estimation_config = EstimationConfig(
-        optimizer='BFGS',
+        optimizer='BHHH',  # ✅ BHHH 최적화 알고리즘 사용 (Newton-CG with OPG)
         use_analytic_gradient=True,  # ✅ Analytic gradient (CPU) 테스트
         n_draws=100,
         draw_type='halton',
         max_iterations=1000,
-        calculate_se=True,  # 표준오차 계산 활성화
+        calculate_se=True,  # 표준오차 계산 활성화 (BHHH 사용)
         use_parallel=False,  # GPU 배치는 자체적으로 병렬처리
         n_cores=None,
         early_stopping=False,  # ✅ 조기 종료 비활성화 (정상 종료 테스트)

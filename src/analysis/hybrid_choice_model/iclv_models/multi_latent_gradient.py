@@ -305,6 +305,124 @@ class MultiLatentJointGradient:
                 measurement_model, structural_model, choice_model
             )
 
+    def compute_all_individuals_gradients_batch(
+        self,
+        all_ind_data: List[pd.DataFrame],
+        all_ind_draws: np.ndarray,
+        params_dict: Dict,
+        measurement_model,
+        structural_model,
+        choice_model,
+        iteration_logger=None,
+        log_level: str = 'MINIMAL'
+    ) -> List[Dict]:
+        """
+        모든 개인의 gradient를 GPU batch로 동시 계산
+
+        ✅ 완전 GPU Batch: N명의 개인을 동시에 처리
+
+        Args:
+            all_ind_data: 모든 개인의 데이터 리스트 [DataFrame_1, ..., DataFrame_N]
+            all_ind_draws: 모든 개인의 draws (N, n_draws, n_dims)
+            params_dict: 파라미터 딕셔너리
+            measurement_model: 측정모델
+            structural_model: 구조모델
+            choice_model: 선택모델
+            iteration_logger: 로거
+            log_level: 로깅 레벨
+
+        Returns:
+            개인별 gradient 딕셔너리 리스트 [grad_dict_1, ..., grad_dict_N]
+        """
+        if self.use_gpu and self.gpu_measurement_model is not None:
+            # GPU batch 모드
+            return self.gpu_grad.compute_all_individuals_gradients_batch_gpu(
+                self.gpu_measurement_model,
+                all_ind_data,
+                all_ind_draws,
+                params_dict,
+                measurement_model,
+                structural_model,
+                choice_model,
+                iteration_logger=iteration_logger,
+                log_level=log_level
+            )
+        else:
+            # CPU 모드 (순차 처리)
+            if iteration_logger:
+                iteration_logger.info("CPU 모드로 개인별 gradient 순차 계산")
+
+            all_gradients = []
+            for ind_idx, (ind_data, ind_draws) in enumerate(zip(all_ind_data, all_ind_draws)):
+                ind_grad = self._compute_individual_gradient_cpu(
+                    ind_data, ind_draws, params_dict,
+                    measurement_model, structural_model, choice_model
+                )
+                all_gradients.append(ind_grad)
+
+                # 진행 상황 로깅
+                if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+                    if (ind_idx + 1) % max(1, len(all_ind_data) // 10) == 0:
+                        progress = (ind_idx + 1) / len(all_ind_data) * 100
+                        iteration_logger.info(f"  진행: {ind_idx + 1}/{len(all_ind_data)} ({progress:.0f}%)")
+
+            return all_gradients
+
+    def compute_all_individuals_gradients_full_batch(
+        self,
+        all_ind_data: List[pd.DataFrame],
+        all_ind_draws: np.ndarray,
+        params_dict: Dict,
+        measurement_model,
+        structural_model,
+        choice_model,
+        iteration_logger=None,
+        log_level: str = 'MINIMAL'
+    ) -> List[Dict]:
+        """
+        모든 개인의 gradient를 완전 GPU batch로 동시 계산
+
+        🚀 완전 GPU Batch: 326명 × 100 draws × 80 params = 2,608,000개 동시 계산
+
+        Args:
+            all_ind_data: 모든 개인의 데이터 리스트 [DataFrame_1, ..., DataFrame_N]
+            all_ind_draws: 모든 개인의 draws (N, n_draws, n_dims)
+            params_dict: 파라미터 딕셔너리
+            measurement_model: 측정모델
+            structural_model: 구조모델
+            choice_model: 선택모델
+            iteration_logger: 로거
+            log_level: 로깅 레벨
+
+        Returns:
+            개인별 gradient 딕셔너리 리스트 [grad_dict_1, ..., grad_dict_N]
+        """
+        if self.use_gpu and self.gpu_measurement_model is not None:
+            # 완전 GPU batch 모드
+            return self.gpu_grad.compute_all_individuals_gradients_full_batch_gpu(
+                self.gpu_measurement_model,
+                all_ind_data,
+                all_ind_draws,
+                params_dict,
+                measurement_model,
+                structural_model,
+                choice_model,
+                iteration_logger=iteration_logger,
+                log_level=log_level
+            )
+        else:
+            # CPU 모드는 일반 batch로 폴백
+            return self.compute_all_individuals_gradients_batch(
+                all_ind_data,
+                all_ind_draws,
+                params_dict,
+                measurement_model,
+                structural_model,
+                choice_model,
+                iteration_logger,
+                log_level
+            )
+
     def _compute_individual_gradient_cpu(self, ind_data: pd.DataFrame,
                                         ind_draws: np.ndarray,
                                         params_dict: Dict,

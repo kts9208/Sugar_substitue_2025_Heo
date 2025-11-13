@@ -1,0 +1,283 @@
+INFO:iclv_iteration:SimultaneousEstimator.estimate() 시작
+INFO:iclv_iteration:데이터 shape: (5868, 60)
+INFO:iclv_iteration:개인 수: 326
+INFO:iclv_iteration:Halton draws 이미 설정됨 (건너뛰기)
+INFO:iclv_iteration:Analytic gradient calculators 초기화 (Apollo 방식)...
+INFO:iclv_iteration:다중 잠재변수 측정모델 gradient 초기화: 5개 LV
+INFO:iclv_iteration:다중 잠재변수 구조모델 gradient 초기화
+INFO:iclv_iteration:GPU 배치 그래디언트 활성화
+INFO:iclv_iteration:다중 잠재변수 JointGradient 초기화 완료
+INFO:iclv_iteration:초기 파라미터 설정 시작...
+INFO:iclv_iteration:초기 파라미터 설정 완료 (총 80개)
+INFO:iclv_iteration:================================================================================
+INFO:iclv_iteration:파라미터 스케일링 비활성화
+INFO:iclv_iteration:================================================================================
+INFO:iclv_iteration:================================================================================
+INFO:iclv_iteration:Custom Parameter Scaling Initialized (Gradient-Balanced)
+INFO:iclv_iteration:================================================================================
+INFO:iclv_iteration:Total parameters: 80
+INFO:iclv_iteration:
+INFO:iclv_iteration:Scale factors:
+INFO:iclv_iteration:  zeta_health_concern_q7        :     1.000000
+INFO:iclv_iteration:  zeta_health_concern_q8        :     1.000000
+INFO:iclv_iteration:  zeta_health_concern_q9        :     1.000000
+INFO:iclv_iteration:  zeta_health_concern_q10       :     1.000000
+INFO:iclv_iteration:  zeta_health_concern_q11       :     1.000000
+INFO:iclv_iteration:  sigma_sq_health_concern_q6    :     1.000000
+INFO:iclv_iteration:  sigma_sq_health_concern_q7    :     1.000000
+INFO:iclv_iteration:  sigma_sq_health_concern_q8    :     1.000000
+INFO:iclv_iteration:  sigma_sq_health_concern_q9    :     1.000000
+INFO:iclv_iteration:  sigma_sq_health_concern_q10   :     1.000000
+INFO:iclv_iteration:  sigma_sq_health_concern_q11   :     1.000000
+INFO:iclv_iteration:  zeta_perceived_benefit_q13    :     1.000000
+INFO:iclv_iteration:  zeta_perceived_benefit_q14    :     1.000000
+INFO:iclv_iteration:  zeta_perceived_benefit_q15    :     1.000000
+INFO:iclv_iteration:  zeta_perceived_benefit_q16    :     1.000000
+INFO:iclv_iteration:  zeta_perceived_benefit_q17    :     1.000000
+INFO:iclv_iteration:  sigma_sq_perceived_benefit_q12:     1.000000
+INFO:iclv_iteration:  sigma_sq_perceived_benefit_q13:     1.000000
+INFO:iclv_iteration:  sigma_sq_perceived_benefit_q14:     1.000000
+INFO:iclv_iteration:  sigma_sq_perceived_benefit_q15:     1.000000
+INFO:iclv_iteration:  sigma_sq_perceived_benefit_q16:     1.000000
+INFO:iclv_iteration:  sigma_sq_perceived_benefit_q17:     1.000000
+INFO:iclv_iteration:  zeta_perceived_price_q28      :     1.000000
+INFO:iclv_iteration:  zeta_perceived_price_q29      :     1.000000
+INFO:iclv_iteration:  sigma_sq_perceived_price_q27  :     1.000000
+INFO:iclv_iteration:  sigma_sq_perceived_price_q28  :     1.000000
+INFO:iclv_iteration:  sigma_sq_perceived_price_q29  :     1.000000
+INFO:iclv_iteration:  zeta_nutrition_knowledge_q31  :     1.000000
+INFO:iclv_iteration:  zeta_nutrition_knowledge_q32  :     1.000000
+INFO:iclv_iteration:  zeta_nutrition_knowledge_q33  :     1.000000
+INFO:iclv_iteration:  zeta_nutrition_knowledge_q34  :     1.000000
+INFO:iclv_iteration:  zeta_nutrition_knowledge_q35  :     1.000000
+INFO:iclv_iteration:  zeta_nutrition_knowledge_q36  :     1.000000
+INFO:iclv_iteration:  zeta_nutrition_knowledge_q37  :     1.000000
+INFO:iclv_iteration:  zeta_nutrition_knowledge_q38  :     1.000000
+INFO:iclv_iteration:  zeta_nutrition_knowledge_q39  :     1.000000
+INFO:iclv_iteration:  zeta_nutrition_knowledge_q40  :     1.000000
+INFO:iclv_iteration:  zeta_nutrition_knowledge_q41  :     1.000000
+INFO:iclv_iteration:  zeta_nutrition_knowledge_q42  :     1.000000
+INFO:iclv_iteration:  zeta_nutrition_knowledge_q43  :     1.000000
+INFO:iclv_iteration:  zeta_nutrition_knowledge_q44  :     1.000000
+INFO:iclv_iteration:  zeta_nutrition_knowledge_q45  :     1.000000
+INFO:iclv_iteration:  zeta_nutrition_knowledge_q46  :     1.000000
+INFO:iclv_iteration:  zeta_nutrition_knowledge_q47  :     1.000000
+INFO:iclv_iteration:  zeta_nutrition_knowledge_q48  :     1.000000
+INFO:iclv_iteration:  zeta_nutrition_knowledge_q49  :     1.000000
+INFO:iclv_iteration:  sigma_sq_nutrition_knowledge_q30:     1.000000
+INFO:iclv_iteration:  sigma_sq_nutrition_knowledge_q31:     1.000000
+INFO:iclv_iteration:  sigma_sq_nutrition_knowledge_q32:     1.000000
+INFO:iclv_iteration:  sigma_sq_nutrition_knowledge_q33:     1.000000
+INFO:iclv_iteration:  sigma_sq_nutrition_knowledge_q34:     1.000000
+INFO:iclv_iteration:  sigma_sq_nutrition_knowledge_q35:     1.000000
+INFO:iclv_iteration:  sigma_sq_nutrition_knowledge_q36:     1.000000
+INFO:iclv_iteration:  sigma_sq_nutrition_knowledge_q37:     1.000000
+INFO:iclv_iteration:  sigma_sq_nutrition_knowledge_q38:     1.000000
+INFO:iclv_iteration:  sigma_sq_nutrition_knowledge_q39:     1.000000
+INFO:iclv_iteration:  sigma_sq_nutrition_knowledge_q40:     1.000000
+INFO:iclv_iteration:  sigma_sq_nutrition_knowledge_q41:     1.000000
+INFO:iclv_iteration:  sigma_sq_nutrition_knowledge_q42:     1.000000
+INFO:iclv_iteration:  sigma_sq_nutrition_knowledge_q43:     1.000000
+INFO:iclv_iteration:  sigma_sq_nutrition_knowledge_q44:     1.000000
+INFO:iclv_iteration:  sigma_sq_nutrition_knowledge_q45:     1.000000
+INFO:iclv_iteration:  sigma_sq_nutrition_knowledge_q46:     1.000000
+INFO:iclv_iteration:  sigma_sq_nutrition_knowledge_q47:     1.000000
+INFO:iclv_iteration:  sigma_sq_nutrition_knowledge_q48:     1.000000
+INFO:iclv_iteration:  sigma_sq_nutrition_knowledge_q49:     1.000000
+INFO:iclv_iteration:  zeta_purchase_intention_q19   :     1.000000
+INFO:iclv_iteration:  zeta_purchase_intention_q20   :     1.000000
+INFO:iclv_iteration:  sigma_sq_purchase_intention_q18:     1.000000
+INFO:iclv_iteration:  sigma_sq_purchase_intention_q19:     1.000000
+INFO:iclv_iteration:  sigma_sq_purchase_intention_q20:     1.000000
+INFO:iclv_iteration:  gamma_health_concern_to_perceived_benefit:     1.000000
+INFO:iclv_iteration:  gamma_perceived_benefit_to_purchase_intention:     1.000000
+INFO:iclv_iteration:  beta_intercept                :     1.000000
+INFO:iclv_iteration:  beta_sugar_free               :     1.000000
+INFO:iclv_iteration:  beta_health_label             :     1.000000
+INFO:iclv_iteration:  beta_price                    :     1.000000
+INFO:iclv_iteration:  lambda_main                   :     1.000000
+INFO:iclv_iteration:  lambda_mod_perceived_price    :     1.000000
+INFO:iclv_iteration:  lambda_mod_nutrition_knowledge:     1.000000
+INFO:iclv_iteration:================================================================================
+INFO:iclv_iteration:파라미터 bounds 계산 시작...
+INFO:iclv_iteration:파라미터 bounds 계산 완료 (총 80개)
+======================================================================
+GPU 배치 처리 ICLV 동시추정 - 다중 잠재변수 (5개)
+======================================================================
+
+1. 데이터 로드 중...
+   데이터 shape: (5868, 60)
+   전체 개인 수: 326
+
+2. ICLV 설정...
+   설정 완료
+   - 잠재변수: 5개 (3개 1차 LV + 2개 고차 LV)
+   - 지표 수: 38
+   - 측정 방법: 연속형 선형 (Continuous Linear)
+   - 구조모델: 계층적 (HC → PB → PI)
+   - 사회인구학적 변수: 0 (제거됨)
+   - 선택모델: 조절효과 (PI × PP, PI × NK)
+   - 선택 속성: 3
+   - Halton draws: 100
+   - 최대 반복: 1000
+   - 전체 개인 수: 326
+   - GPU 배치 처리: 활성화
+
+3. 모델 생성...
+   - 선택모델: Multinomial Logit (MNL)
+   - 측정모델, 구조모델, 선택모델 생성 완료
+
+4. GPU 배치 Estimator 생성...
+   - GPU 배치 Estimator 생성 완료
+   - 메모리 모니터링 활성화 (CPU: 2GB, GPU: 5GB 임계값)
+
+5. ICLV 동시추정 실행...
+   (GPU 배치 처리 - 다중 잠재변수)
+
+   [주의] GPU 배치 처리는 5-10분 정도 소요될 수 있습니다...
+   로그 파일: C:\Users\KimTaeseok\OneDrive - 제주대학교\Research\Coding\Sugar_substitue_2025_Heo\results\gpu_batch_iclv_estimation_log.txt
+======================================================================
+최적화 시작: BHHH (gradient-based)
+Analytic gradient 사용 (Apollo 방식 + Parameter Scaling)
+초기 파라미터 개수: 80
+INFO:iclv_iteration:최대 반복 횟수: 1000
+INFO:iclv_iteration:======================================================================
+INFO:iclv_iteration:순차처리 사용
+INFO:iclv_iteration:최적화 시작: BHHH (gradient-based)
+INFO:iclv_iteration:Analytic gradient 사용 (Apollo 방식)
+INFO:iclv_iteration:조기 종료 비활성화 (정상 종료만 사용)
+INFO:iclv_iteration:BHHH 최적화 알고리즘 초기화...
+INFO:iclv_iteration:  - 방법: Newton-CG with OPG (Outer Product of Gradients)
+INFO:iclv_iteration:  - Hessian 계산: 각 iteration마다 개인별 gradient로 OPG 계산
+INFO:iclv_iteration:BHHH 옵션: xtol=1e-05
+INFO:iclv_iteration:[Major Iteration #1 시작] [단계 1/2] 전체 우도 계산
+INFO:iclv_iteration:  측정모델 health_concern: zeta[0]=1.0000, sigma_sq[0]=0.6084
+INFO:iclv_iteration:  구조모델 (계층적): gamma_health_concern_to_perceived_benefit=0.518035
+INFO:iclv_iteration:  선택모델 (조절): intercept=-0.113815, lambda_main=0.320569, lambda_mod_perceived_price=-1.739702
+INFO:iclv_iteration:
+================================================================================
+INFO:iclv_iteration:Iteration 1 - 파라미터 값
+INFO:iclv_iteration:================================================================================
+INFO:iclv_iteration:
+[측정모델 파라미터]
+INFO:iclv_iteration:  health_concern:
+INFO:iclv_iteration:    - zeta: [1.     1.9579 1.9587 2.1215 2.1476 1.9166]
+INFO:iclv_iteration:    - sigma_sq: [0.6084 0.504  0.4953 0.5315 0.6096 0.491 ]
+INFO:iclv_iteration:  perceived_benefit:
+INFO:iclv_iteration:    - zeta: [1.     1.0277 1.2337 1.3693 1.2767 1.1046]
+INFO:iclv_iteration:    - sigma_sq: [0.6098 0.4769 0.5276 0.5704 0.572  0.5039]
+INFO:iclv_iteration:  perceived_price:
+INFO:iclv_iteration:    - zeta: [1.     1.6652 1.7911]
+INFO:iclv_iteration:    - sigma_sq: [0.798  0.7872 0.777 ]
+INFO:iclv_iteration:  nutrition_knowledge:
+INFO:iclv_iteration:    - zeta: [1.     1.3002 1.4784 1.2481 1.4896 1.5051 1.4682 1.3015 1.392  1.4595
+ 1.2007 1.4586 1.4932 1.5176 1.4917 1.4774 1.3542 0.9745 1.3598 1.2325]
+INFO:iclv_iteration:    - sigma_sq: [0.4524 0.3326 0.3238 0.3606 0.3407 0.3112 0.3464 0.3501 0.3501 0.3317
+ 0.3566 0.3338 0.3744 0.3687 0.3195 0.3408 0.3481 0.3631 0.3202 0.3476]
+INFO:iclv_iteration:  purchase_intention:
+INFO:iclv_iteration:    - zeta: [1.     1.1472 1.17  ]
+INFO:iclv_iteration:    - sigma_sq: [1.5412 1.4769 1.4672]
+INFO:iclv_iteration:
+[구조모델 파라미터]
+INFO:iclv_iteration:  gamma_health_concern_to_perceived_benefit: 0.518035
+INFO:iclv_iteration:  gamma_perceived_benefit_to_purchase_intention: 0.498547
+INFO:iclv_iteration:
+[선택모델 파라미터]
+INFO:iclv_iteration:  intercept: -0.113815
+INFO:iclv_iteration:  beta: [ 0.2362    0.231053 -0.295845]
+INFO:iclv_iteration:  lambda_main: 0.320569
+INFO:iclv_iteration:  lambda_mod_perceived_price: -1.739702
+INFO:iclv_iteration:  lambda_mod_nutrition_knowledge: 1.068264
+INFO:iclv_iteration:================================================================================
+INFO:iclv_iteration:[구조모델 예측 - 계층적] Draw 0:
+INFO:iclv_iteration:  1차 LV draws: [ 0.89875507 -0.0943579  -1.754636    0.47142913]
+INFO:iclv_iteration:  2차+ LV 오차항: {'perceived_benefit': np.float64(-2.1642553052590365), 'purchase_intention': np.float64(-0.9395104460255039)}
+INFO:iclv_iteration:  예측된 LV: {'health_concern': np.float64(0.8987550730677583), 'perceived_benefit': np.float64(-1.6986687209823803), 'perceived_price': np.float64(-1.7546360009944806), 'nutrition_knowledge': np.float64(0.4714291346229363), 'purchase_intention': np.float64(-1.7863766408651067)}
+INFO:iclv_iteration:
+[측정모델 우도 계산 시작]
+INFO:iclv_iteration:  개인 데이터 shape: (18, 60)
+INFO:iclv_iteration:  LV 개수: 100
+INFO:iclv_iteration:  측정모델 우도 (처음 5개): [ -674.69669247  -575.79648639  -726.27724736 -1098.10741159
+ -1114.77441056]
+INFO:iclv_iteration:  측정모델 우도 범위: [-2014.30, -158.74]
+INFO:iclv_iteration:  측정모델 우도 평균: -789.75
+INFO:iclv_iteration:
+[선택모델 우도 계산 시작]
+INFO:iclv_iteration:  선택 상황 수: 18
+INFO:iclv_iteration:  선택모델 우도 (처음 5개): [-138.15510558  -19.58571211   -9.84851265   -8.53037412  -11.13505979]
+INFO:iclv_iteration:  선택모델 우도 범위: [-138.16, -7.38]
+INFO:iclv_iteration:  선택모델 우도 평균: -25.78
+INFO:iclv_iteration:
+[구조모델 우도 계산 시작]
+INFO:iclv_iteration:  경로 health_concern->perceived_benefit: 예측=0.4656, 실제=-1.6987, LL=-3.2609
+INFO:iclv_iteration:  경로 perceived_benefit->purchase_intention: 예측=-0.8469, 실제=-1.7864, LL=-1.3603
+INFO:iclv_iteration:  구조모델 우도 (처음 5개): [-4.62121752 -2.61692388 -2.07902572 -1.9245466  -3.9544519 ]
+INFO:iclv_iteration:  구조모델 우도 범위: [-6.41, -1.84]
+INFO:iclv_iteration:  구조모델 우도 평균: -2.83
+INFO:iclv_iteration:
+[결합 우도 계산] Draw 0:
+INFO:iclv_iteration:  측정모델: -674.6967
+INFO:iclv_iteration:  선택모델: -138.1551
+INFO:iclv_iteration:  구조모델: -4.6212
+INFO:iclv_iteration:  합계: -817.4730
+INFO:iclv_iteration:
+[전체 draws 통계]
+INFO:iclv_iteration:  Draw 우도 범위: [-2031.33, -211.66]
+INFO:iclv_iteration:  Draw 우도 평균: -818.35
+INFO:iclv_iteration:================================================================================
+INFO:iclv_iteration:================================================================================
+INFO:iclv_iteration:두 번째 함수 호출 - 파라미터 변화 확인
+INFO:iclv_iteration:================================================================================
+INFO:iclv_iteration:[파라미터 확인]
+INFO:iclv_iteration:  측정모델 zeta (health_concern 처음 3개): [1.     1.9579 1.9587]
+INFO:iclv_iteration:  구조모델 (계층적) gamma_health_concern_to_perceived_benefit: 0.518035
+INFO:iclv_iteration:  선택모델 intercept: -0.113815
+INFO:iclv_iteration:  선택모델 beta: [ 0.2362    0.231053 -0.295845]
+INFO:iclv_iteration:  선택모델 lambda_main: 0.320569
+INFO:iclv_iteration:  선택모델 lambda_mod_perceived_price: -1.739702
+INFO:iclv_iteration:  선택모델 lambda_mod_nutrition_knowledge: 1.068264
+INFO:iclv_iteration:================================================================================
+Traceback (most recent call last):
+  File "C:\Users\KimTaeseok\OneDrive - 제주대학교\Research\Coding\Sugar_substitue_2025_Heo\scripts\test_gpu_batch_iclv.py", line 704, in <module>
+    main()
+  File "C:\Users\KimTaeseok\OneDrive - 제주대학교\Research\Coding\Sugar_substitue_2025_Heo\scripts\test_gpu_batch_iclv.py", line 219, in main
+    result = estimator.estimate(
+             ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\KimTaeseok\OneDrive - 제주대학교\Research\Coding\Sugar_substitue_2025_Heo\src\analysis\hybrid_choice_model\iclv_models\gpu_batch_estimator.py", line 187, in estimate
+    return super().estimate(data, measurement_model, structural_model, choice_model, log_file)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\KimTaeseok\OneDrive - 제주대학교\Research\Coding\Sugar_substitue_2025_Heo\src\analysis\hybrid_choice_model\iclv_models\simultaneous_estimator_fixed.py", line 1233, in estimate
+    result = optimize.minimize(
+             ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\KimTaeseok\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\scipy\optimize\_minimize.py", line 781, in minimize
+    res = _minimize_newtoncg(fun, x0, args, jac, hess, hessp, callback,
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\KimTaeseok\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\scipy\optimize\_optimize.py", line 2051, in _minimize_newtoncg
+    sf = _prepare_scalar_function(
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\KimTaeseok\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\scipy\optimize\_optimize.py", line 310, in _prepare_scalar_function
+    sf = ScalarFunction(fun, x0, args, grad, hess,
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\KimTaeseok\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\scipy\optimize\_differentiable_functions.py", line 274, in __init__
+    self._update_fun()
+  File "C:\Users\KimTaeseok\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\scipy\optimize\_differentiable_functions.py", line 353, in _update_fun
+    fx = self._wrapped_fun(self.x)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\KimTaeseok\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\scipy\_lib\_util.py", line 590, in __call__
+    fx = self.f(np.copy(x), *self.args)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\KimTaeseok\OneDrive - 제주대학교\Research\Coding\Sugar_substitue_2025_Heo\src\analysis\hybrid_choice_model\iclv_models\simultaneous_estimator_fixed.py", line 948, in objective
+    current_ll = self.func(x)
+                 ^^^^^^^^^^^^
+  File "C:\Users\KimTaeseok\OneDrive - 제주대학교\Research\Coding\Sugar_substitue_2025_Heo\src\analysis\hybrid_choice_model\iclv_models\simultaneous_estimator_fixed.py", line 537, in negative_log_likelihood
+    ll = self._joint_log_likelihood(
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\KimTaeseok\OneDrive - 제주대학교\Research\Coding\Sugar_substitue_2025_Heo\src\analysis\hybrid_choice_model\iclv_models\gpu_batch_estimator.py", line 303, in _joint_log_likelihood
+    person_ll = self._compute_individual_likelihood(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\KimTaeseok\OneDrive - 제주대학교\Research\Coding\Sugar_substitue_2025_Heo\src\analysis\hybrid_choice_model\iclv_models\gpu_batch_estimator.py", line 326, in _compute_individual_likelihood
+    draw_lls = self._compute_draws_batch_gpu(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\KimTaeseok\OneDrive - 제주대학교\Research\Coding\Sugar_substitue_2025_Heo\src\analysis\hybrid_choice_model\iclv_models\gpu_batch_estimator.py", line 559, in _compute_draws_batch_gpu
+    gc.collect()
+KeyboardInterrupt

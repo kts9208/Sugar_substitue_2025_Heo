@@ -833,3 +833,759 @@ def compute_choice_gradient_batch_gpu(
             'grad_lambda': grad_lambda
         }
 
+
+def compute_all_individuals_gradients_batch_gpu(
+    gpu_measurement_model,
+    all_ind_data: List[pd.DataFrame],
+    all_ind_draws: np.ndarray,
+    params_dict: Dict,
+    measurement_model,
+    structural_model,
+    choice_model,
+    iteration_logger=None,
+    log_level: str = 'MINIMAL'
+) -> List[Dict]:
+    """
+    모든 개인의 gradient를 GPU batch로 동시 계산 (개인별 순차 + draws GPU batch)
+
+    ⚠️ 이 함수는 개인별 순차 처리입니다.
+    완전 GPU Batch는 compute_all_individuals_gradients_full_batch_gpu 사용
+
+    Args:
+        gpu_measurement_model: GPU 측정모델
+        all_ind_data: 모든 개인의 데이터 리스트 [DataFrame_1, ..., DataFrame_N]
+        all_ind_draws: 모든 개인의 draws (N, n_draws, n_dims)
+        params_dict: 파라미터 딕셔너리
+        measurement_model: 측정모델
+        structural_model: 구조모델
+        choice_model: 선택모델
+        iteration_logger: 로거
+        log_level: 로깅 레벨
+
+    Returns:
+        개인별 gradient 딕셔너리 리스트 [grad_dict_1, ..., grad_dict_N]
+    """
+    if not CUPY_AVAILABLE:
+        raise RuntimeError("CuPy not available")
+
+    n_individuals = len(all_ind_data)
+    n_draws = all_ind_draws.shape[1]
+
+    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+        iteration_logger.info(
+            f"\n{'='*80}\n"
+            f"GPU Batch Gradient 계산 (개인별 순차)\n"
+            f"{'='*80}\n"
+            f"  개인 수: {n_individuals}명\n"
+            f"  Draws per individual: {n_draws}개\n"
+            f"  총 계산: {n_individuals} × {n_draws} = {n_individuals * n_draws}개\n"
+            f"{'='*80}"
+        )
+
+    # 계층적 구조 지원
+    is_hierarchical = hasattr(structural_model, 'is_hierarchical') and structural_model.is_hierarchical
+
+    if is_hierarchical:
+        n_first_order = len(structural_model.exogenous_lvs)
+        n_higher_order = len(structural_model.get_higher_order_lvs())
+    else:
+        n_exo = structural_model.n_exo
+
+    # 모든 개인의 gradient 저장
+    all_individual_gradients = []
+
+    # 개인별로 처리 (각 개인 내부는 GPU batch)
+    for ind_idx, (ind_data, ind_draws) in enumerate(zip(all_ind_data, all_ind_draws)):
+        # 모든 draws의 LV 값 미리 계산
+        lvs_list = []
+        exo_draws_list = []
+
+        for draw_idx in range(n_draws):
+            if is_hierarchical:
+                # 계층적 구조
+                first_order_draws = ind_draws[draw_idx, :n_first_order]
+                higher_order_errors = ind_draws[draw_idx, n_first_order:]
+
+                higher_order_lvs = structural_model.get_higher_order_lvs()
+                error_dict = {lv_name: higher_order_errors[i] for i, lv_name in enumerate(higher_order_lvs)}
+
+                latent_vars = structural_model.predict(
+                    ind_data, first_order_draws, params_dict['structural'],
+                    endo_draw=None, higher_order_draws=error_dict
+                )
+                exo_draws_list.append(first_order_draws)
+            else:
+                # 병렬 구조
+                exo_draws = ind_draws[draw_idx, :n_exo]
+                endo_draw = ind_draws[draw_idx, n_exo]
+
+                latent_vars = structural_model.predict(
+                    ind_data, exo_draws, params_dict['structural'], endo_draw
+                )
+                exo_draws_list.append(exo_draws)
+
+            lvs_list.append(latent_vars)
+
+        # 1. 결합 likelihood 계산 (GPU batch)
+        ll_batch = compute_joint_likelihood_batch_gpu(
+            gpu_measurement_model,
+            ind_data,
+            lvs_list,
+            ind_draws,
+            params_dict,
+            structural_model,
+            choice_model
+        )
+
+        # 2. Importance weights 계산 (GPU)
+        weights = compute_importance_weights_gpu(ll_batch, individual_id=ind_idx)
+
+        # 3. 가중평균 gradient 계산 (GPU batch)
+        grad_meas = compute_measurement_gradient_batch_gpu(
+            gpu_measurement_model,
+            ind_data,
+            lvs_list,
+            params_dict['measurement'],
+            weights,
+            iteration_logger=None,  # 개별 로깅 비활성화
+            log_level='MINIMAL'
+        )
+
+        grad_struct = compute_structural_gradient_batch_gpu(
+            ind_data,
+            lvs_list,
+            exo_draws_list,
+            params_dict['structural'],
+            structural_model.covariates,
+            structural_model.endogenous_lv if not is_hierarchical else None,
+            structural_model.exogenous_lvs if not is_hierarchical else None,
+            weights,
+            error_variance=1.0,
+            is_hierarchical=is_hierarchical,
+            hierarchical_paths=structural_model.hierarchical_paths if is_hierarchical else None,
+            iteration_logger=None,
+            log_level='MINIMAL'
+        )
+
+        # 선택모델 gradient
+        if hasattr(choice_model.config, 'moderators') and choice_model.config.moderators:
+            # 조절효과 모델
+            grad_choice = compute_choice_gradient_batch_gpu(
+                ind_data,
+                lvs_list,
+                params_dict['choice'],
+                choice_model.config.main_lv,
+                choice_model.config.choice_attributes,
+                weights,
+                moderators=choice_model.config.moderators,
+                iteration_logger=None,
+                log_level='MINIMAL'
+            )
+        else:
+            # 기본 모델
+            grad_choice = compute_choice_gradient_batch_gpu(
+                ind_data,
+                lvs_list,
+                params_dict['choice'],
+                structural_model.endogenous_lv,
+                choice_model.config.choice_attributes,
+                weights,
+                moderators=None,
+                iteration_logger=None,
+                log_level='MINIMAL'
+            )
+
+        # 개인별 gradient 저장
+        ind_grad_dict = {
+            'measurement': grad_meas,
+            'structural': grad_struct,
+            'choice': grad_choice
+        }
+
+        all_individual_gradients.append(ind_grad_dict)
+
+        # 진행 상황 로깅 (10% 단위)
+        if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+            if (ind_idx + 1) % max(1, n_individuals // 10) == 0:
+                progress = (ind_idx + 1) / n_individuals * 100
+                iteration_logger.info(f"  진행: {ind_idx + 1}/{n_individuals} ({progress:.0f}%)")
+
+    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+        iteration_logger.info(
+            f"{'='*80}\n"
+            f"완전 GPU Batch Gradient 계산 완료: {n_individuals}명\n"
+            f"{'='*80}"
+        )
+
+    return all_individual_gradients
+
+def compute_all_individuals_gradients_full_batch_gpu(
+    gpu_measurement_model,
+    all_ind_data: List[pd.DataFrame],
+    all_ind_draws: np.ndarray,
+    params_dict: Dict,
+    measurement_model,
+    structural_model,
+    choice_model,
+    iteration_logger=None,
+    log_level: str = 'MINIMAL'
+) -> List[Dict]:
+    """
+    모든 개인의 gradient를 완전 GPU batch로 동시 계산
+
+    🚀 완전 GPU Batch: 326명 × 100 draws × 80 params = 2,608,000개 동시 계산
+
+    Args:
+        gpu_measurement_model: GPU 측정모델
+        all_ind_data: 모든 개인의 데이터 리스트 [DataFrame_1, ..., DataFrame_N]
+        all_ind_draws: 모든 개인의 draws (N, n_draws, n_dims)
+        params_dict: 파라미터 딕셔너리
+        measurement_model: 측정모델
+        structural_model: 구조모델
+        choice_model: 선택모델
+        iteration_logger: 로거
+        log_level: 로깅 레벨
+
+    Returns:
+        개인별 gradient 딕셔너리 리스트 [grad_dict_1, ..., grad_dict_N]
+    """
+    if not CUPY_AVAILABLE:
+        raise RuntimeError("CuPy not available")
+
+    import time
+
+    n_individuals = len(all_ind_data)
+    n_draws = all_ind_draws.shape[1]
+
+    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+        iteration_logger.info(
+            f"\n{'='*80}\n"
+            f"🚀 완전 GPU Batch Gradient 계산\n"
+            f"{'='*80}\n"
+            f"  개인 수: {n_individuals}명\n"
+            f"  Draws per individual: {n_draws}개\n"
+            f"  총 계산: {n_individuals} × {n_draws} = {n_individuals * n_draws}개 동시 처리\n"
+            f"{'='*80}"
+        )
+
+    total_start = time.time()
+
+    # Step 1: 데이터 준비 - 모든 개인 데이터를 3D 배열로 변환
+    prep_start = time.time()
+
+    # 모든 개인이 동일한 행 수를 가진다고 가정 (18행)
+    n_rows = len(all_ind_data[0])
+
+    # 필요한 컬럼 추출 (선택 데이터만)
+    # choice_column은 estimator의 config에 있음
+    # 여기서는 사용하지 않으므로 제거
+
+    prep_time = time.time() - prep_start
+
+    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+        iteration_logger.info(
+            f"  데이터 준비 완료 ({prep_time:.3f}초):\n"
+            f"    - all_ind_draws shape: {all_ind_draws.shape}"
+        )
+
+    # Step 2: GPU로 데이터 전송
+    transfer_start = time.time()
+
+    all_draws_gpu = cp.asarray(all_ind_draws)
+
+    transfer_time = time.time() - transfer_start
+
+    # Step 3: 완전 GPU Batch로 모든 개인 × 모든 draws의 LV 계산
+    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+        iteration_logger.info(
+            f"  Step 3: 모든 개인 × 모든 draws의 LV 계산 중..."
+        )
+
+    lv_start = time.time()
+
+    # 모든 개인 × 모든 draws의 LV 계산
+    # Shape: (326, 100, n_lvs)
+    all_lvs_list = []  # List of List[Dict]: (326, 100)
+
+    is_hierarchical = hasattr(structural_model, 'is_hierarchical') and structural_model.is_hierarchical
+
+    for ind_idx, (ind_data, ind_draws) in enumerate(zip(all_ind_data, all_ind_draws)):
+        ind_lvs_list = []
+
+        for draw_idx in range(n_draws):
+            draw = ind_draws[draw_idx]
+
+            # LV 계산 (CPU - structural_model.predict)
+            latent_vars = structural_model.predict(
+                ind_data.iloc[0],
+                draw,
+                params_dict['structural']
+            )
+
+            ind_lvs_list.append(latent_vars)
+
+        all_lvs_list.append(ind_lvs_list)
+
+    lv_time = time.time() - lv_start
+
+    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+        iteration_logger.info(
+            f"  LV 계산 완료 ({lv_time:.3f}초)"
+        )
+
+    # Step 4: LV를 3D 배열로 변환 (326, 100, 5)
+    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+        iteration_logger.info(
+            f"  Step 4: LV를 3D 배열로 변환 중..."
+        )
+
+    convert_start = time.time()
+
+    # LV 이름 순서 정의
+    lv_names = list(params_dict['measurement'].keys())
+    n_lvs = len(lv_names)
+
+    # 3D 배열 생성: (326, 100, 5)
+    all_lvs_array = np.zeros((n_individuals, n_draws, n_lvs))
+
+    for ind_idx, ind_lvs_list in enumerate(all_lvs_list):
+        for draw_idx, lvs_dict in enumerate(ind_lvs_list):
+            for lv_idx, lv_name in enumerate(lv_names):
+                all_lvs_array[ind_idx, draw_idx, lv_idx] = lvs_dict[lv_name]
+
+    convert_time = time.time() - convert_start
+
+    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+        iteration_logger.info(
+            f"  LV 배열 변환 완료 ({convert_time:.3f}초): shape = {all_lvs_array.shape}"
+        )
+
+    # Step 5: 완전 GPU Batch로 모든 개인 × 모든 draws의 gradient 계산
+    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+        iteration_logger.info(
+            f"  Step 5: 완전 GPU Batch gradient 계산 중 (1번의 GPU 호출)..."
+        )
+
+    grad_start = time.time()
+
+    # 균등 가중치 (326, 100)
+    all_weights = np.ones((n_individuals, n_draws)) / n_draws
+
+    # 🚀 완전 GPU Batch: 326명 × 100 draws × 80 params = 2,608,000개 동시 계산
+    # 측정모델, 구조모델, 선택모델 gradient를 한 번에 계산
+    all_individual_gradients = compute_full_batch_gradients_gpu(
+        gpu_measurement_model,
+        all_ind_data,
+        all_lvs_array,
+        all_ind_draws,
+        params_dict,
+        all_weights,
+        structural_model,
+        choice_model,
+        lv_names,
+        iteration_logger=iteration_logger,
+        log_level=log_level
+    )
+
+    grad_time = time.time() - grad_start
+
+    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+        iteration_logger.info(
+            f"  Gradient 계산 완료 ({grad_time:.3f}초)"
+        )
+
+    total_time = time.time() - total_start
+
+    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+        iteration_logger.info(
+            f"\n완전 GPU Batch 계산 완료:\n"
+            f"  총 시간: {total_time:.3f}초\n"
+            f"    - 데이터 준비: {prep_time:.3f}초\n"
+            f"    - 데이터 전송 (GPU): {transfer_time:.3f}초\n"
+            f"    - LV 계산: {lv_time:.3f}초\n"
+            f"    - Gradient 계산: {grad_time:.3f}초\n"
+            f"  개인당 시간: {total_time / n_individuals * 1000:.2f}ms\n"
+            f"  처리량: {n_individuals / total_time:.1f} 개인/초"
+        )
+
+    return all_individual_gradients
+
+
+def compute_full_batch_gradients_gpu(
+    gpu_measurement_model,
+    all_ind_data: List[pd.DataFrame],
+    all_lvs_array: np.ndarray,  # (326, 100, 5)
+    all_ind_draws: np.ndarray,  # (326, 100, 6)
+    params_dict: Dict,
+    all_weights: np.ndarray,  # (326, 100)
+    structural_model,
+    choice_model,
+    lv_names: List[str],
+    iteration_logger=None,
+    log_level: str = 'MINIMAL'
+) -> List[Dict]:
+    """
+    완전 GPU Batch: 326명 × 100 draws × 80 params = 2,608,000개 gradient 동시 계산
+
+    Args:
+        gpu_measurement_model: GPU 측정모델
+        all_ind_data: 모든 개인 데이터 (326개)
+        all_lvs_array: 모든 LV 값 (326, 100, 5)
+        all_ind_draws: 모든 draws (326, 100, 6)
+        params_dict: 파라미터 딕셔너리
+        all_weights: 가중치 (326, 100)
+        structural_model: 구조모델
+        choice_model: 선택모델
+        lv_names: LV 이름 리스트
+        iteration_logger: 로거
+        log_level: 로깅 레벨
+
+    Returns:
+        개인별 gradient 딕셔너리 리스트 (326개)
+    """
+    n_individuals, n_draws, n_lvs = all_lvs_array.shape
+
+    # GPU로 전송
+    all_lvs_gpu = cp.asarray(all_lvs_array)  # (326, 100, 5)
+    all_weights_gpu = cp.asarray(all_weights)  # (326, 100)
+
+    # 1. 측정모델 Gradient (완전 Batch)
+    meas_grads = compute_measurement_full_batch_gpu(
+        gpu_measurement_model,
+        all_ind_data,
+        all_lvs_gpu,
+        params_dict['measurement'],
+        all_weights_gpu,
+        lv_names,
+        iteration_logger,
+        log_level
+    )
+
+    # 2. 구조모델 Gradient (완전 Batch)
+    struct_grads = compute_structural_full_batch_gpu(
+        all_lvs_gpu,
+        params_dict['structural'],
+        all_weights_gpu,
+        structural_model,
+        lv_names,
+        iteration_logger,
+        log_level
+    )
+
+    # 3. 선택모델 Gradient (완전 Batch)
+    choice_grads = compute_choice_full_batch_gpu(
+        all_ind_data,
+        all_lvs_gpu,
+        params_dict['choice'],
+        all_weights_gpu,
+        choice_model,
+        lv_names,
+        iteration_logger,
+        log_level
+    )
+
+    # 개인별 gradient 딕셔너리로 변환
+    all_individual_gradients = []
+    for ind_idx in range(n_individuals):
+        # 측정모델: {lv_name: {'grad_zeta': array, 'grad_sigma_sq': array}}
+        meas_dict = {}
+        for lv_name in meas_grads:
+            meas_dict[lv_name] = {
+                'grad_zeta': meas_grads[lv_name]['grad_zeta'][ind_idx],
+                'grad_sigma_sq': meas_grads[lv_name]['grad_sigma_sq'][ind_idx]
+            }
+
+        # 구조모델: {param_name: scalar}
+        struct_dict = {key: struct_grads[key][ind_idx].item() if hasattr(struct_grads[key][ind_idx], 'item') else struct_grads[key][ind_idx] for key in struct_grads}
+
+        # 선택모델: {'grad_intercept': scalar, 'grad_beta': array, ...}
+        choice_dict = {}
+        for key in choice_grads:
+            val = choice_grads[key][ind_idx]
+            # grad_beta는 배열이므로 그대로 유지
+            if key == 'grad_beta':
+                choice_dict[key] = val
+            elif hasattr(val, 'item'):
+                choice_dict[key] = val.item()
+            else:
+                choice_dict[key] = val
+
+        ind_grad_dict = {
+            'measurement': meas_dict,
+            'structural': struct_dict,
+            'choice': choice_dict
+        }
+        all_individual_gradients.append(ind_grad_dict)
+
+    return all_individual_gradients
+
+
+def compute_measurement_full_batch_gpu(
+    gpu_measurement_model,
+    all_ind_data: List[pd.DataFrame],
+    all_lvs_gpu,  # CuPy array (326, 100, 5)
+    params: Dict,
+    all_weights_gpu,  # CuPy array (326, 100)
+    lv_names: List[str],
+    iteration_logger=None,
+    log_level: str = 'MINIMAL'
+) -> Dict:
+    """
+    측정모델 Gradient - 완전 GPU Batch
+
+    Returns:
+        {lv_name: {'grad_zeta': (326, n_indicators), 'grad_sigma_sq': (326, n_indicators)}}
+    """
+    n_individuals, n_draws, n_lvs = all_lvs_gpu.shape
+
+    gradients = {}
+
+    for lv_idx, lv_name in enumerate(lv_names):
+        zeta = params[lv_name]['zeta']
+        sigma_sq = params[lv_name]['sigma_sq']
+        n_indicators = len(zeta)
+
+        config = gpu_measurement_model.models[lv_name].config
+
+        # 모든 개인의 관측값 추출 (326, n_indicators)
+        all_y = np.zeros((n_individuals, n_indicators))
+        for ind_idx, ind_data in enumerate(all_ind_data):
+            row = ind_data.iloc[0]
+            for i, indicator in enumerate(config.indicators):
+                if indicator in row.index and not pd.isna(row[indicator]):
+                    all_y[ind_idx, i] = row[indicator]
+
+        all_y_gpu = cp.asarray(all_y)  # (326, n_indicators)
+        zeta_gpu = cp.asarray(zeta)  # (n_indicators,)
+        sigma_sq_gpu = cp.asarray(sigma_sq)  # (n_indicators,)
+
+        # LV 값 추출: (326, 100)
+        lv_values_gpu = all_lvs_gpu[:, :, lv_idx]
+
+        # Gradient 초기화
+        grad_zeta_all = cp.zeros((n_individuals, n_indicators))
+        grad_sigma_sq_all = cp.zeros((n_individuals, n_indicators))
+
+        # 각 지표별로 계산
+        for i in range(n_indicators):
+            # 예측값: (326, 100)
+            y_pred = zeta_gpu[i] * lv_values_gpu
+
+            # 잔차: (326, 100)
+            residual = all_y_gpu[:, i:i+1] - y_pred
+
+            # Gradient (각 draw): (326, 100)
+            grad_zeta_batch = residual * lv_values_gpu / sigma_sq_gpu[i]
+            grad_sigma_sq_batch = -0.5 / sigma_sq_gpu[i] + 0.5 * (residual ** 2) / (sigma_sq_gpu[i] ** 2)
+
+            # 가중평균: (326,)
+            grad_zeta_all[:, i] = cp.sum(all_weights_gpu * grad_zeta_batch, axis=1)
+            grad_sigma_sq_all[:, i] = cp.sum(all_weights_gpu * grad_sigma_sq_batch, axis=1)
+
+        # ✅ fix_first_loading 고려: 첫 번째 loading이 고정되면 gradient 제외
+        fix_first_loading = getattr(config, 'fix_first_loading', True)
+        if fix_first_loading:
+            # 첫 번째 zeta는 1.0으로 고정 (gradient 제외)
+            grad_zeta_final = cp.asnumpy(grad_zeta_all[:, 1:])  # (326, n_indicators-1)
+        else:
+            grad_zeta_final = cp.asnumpy(grad_zeta_all)  # (326, n_indicators)
+
+        gradients[lv_name] = {
+            'grad_zeta': grad_zeta_final,
+            'grad_sigma_sq': cp.asnumpy(grad_sigma_sq_all)
+        }
+
+    return gradients
+
+
+def compute_structural_full_batch_gpu(
+    all_lvs_gpu,  # CuPy array (326, 100, 5)
+    params: Dict,
+    all_weights_gpu,  # CuPy array (326, 100)
+    structural_model,
+    lv_names: List[str],
+    iteration_logger=None,
+    log_level: str = 'MINIMAL'
+) -> Dict:
+    """
+    구조모델 Gradient - 완전 GPU Batch
+
+    Returns:
+        {param_name: (326,)}
+    """
+    n_individuals, n_draws, n_lvs = all_lvs_gpu.shape
+
+    gradients = {}
+
+    # 계층적 구조인 경우
+    if hasattr(structural_model, 'is_hierarchical') and structural_model.is_hierarchical:
+        error_variance = 1.0
+
+        for path in structural_model.hierarchical_paths:
+            target = path['target']
+            predictor = path['predictors'][0]  # 단일 predictor 가정
+            param_key = f"gamma_{predictor}_to_{target}"
+            gamma = params[param_key]
+
+            # LV 인덱스 찾기
+            target_idx = lv_names.index(target)
+            pred_idx = lv_names.index(predictor)
+
+            # LV 값 추출: (326, 100)
+            target_values = all_lvs_gpu[:, :, target_idx]
+            pred_values = all_lvs_gpu[:, :, pred_idx]
+
+            # 예측값: (326, 100)
+            mu = gamma * pred_values
+
+            # 잔차: (326, 100)
+            residual = target_values - mu
+
+            # Gradient: (326, 100)
+            weighted_residual = all_weights_gpu * residual / error_variance
+
+            # 가중합: (326,)
+            grad_gamma = cp.sum(weighted_residual * pred_values, axis=1)
+
+            # 키 이름에 grad_ 접두사 추가
+            gradients[f'grad_{param_key}'] = cp.asnumpy(grad_gamma)
+
+    return gradients
+
+
+def compute_choice_full_batch_gpu(
+    all_ind_data: List[pd.DataFrame],
+    all_lvs_gpu,  # CuPy array (326, 100, 5)
+    params: Dict,
+    all_weights_gpu,  # CuPy array (326, 100)
+    choice_model,
+    lv_names: List[str],
+    iteration_logger=None,
+    log_level: str = 'MINIMAL'
+) -> Dict:
+    """
+    선택모델 Gradient - 완전 GPU Batch
+
+    Returns:
+        {'grad_intercept': (326,), 'grad_beta': (326, 3), 'grad_lambda_main': (326,), ...}
+    """
+    n_individuals, n_draws, n_lvs = all_lvs_gpu.shape
+
+    # 파라미터 추출
+    intercept = params['intercept']
+    beta = params['beta']
+    n_attributes = len(beta)
+
+    # 조절효과 여부 확인
+    moderation_enabled = 'lambda_main' in params
+    if moderation_enabled:
+        lambda_main = params['lambda_main']
+        lambda_mod = {}
+        for key in params:
+            if key.startswith('lambda_mod_'):
+                mod_lv_name = key.replace('lambda_mod_', '')
+                lambda_mod[mod_lv_name] = params[key]
+        main_lv = choice_model.config.main_lv
+    else:
+        lambda_lv = params['lambda']
+        # main_lv 찾기
+        if hasattr(choice_model.config, 'main_lv'):
+            main_lv = choice_model.config.main_lv
+        else:
+            main_lv = 'purchase_intention'  # 기본값
+
+    choice_attributes = choice_model.config.choice_attributes
+
+    # 모든 개인의 선택 데이터 추출
+    n_situations = len(all_ind_data[0])
+    all_choices = np.zeros((n_individuals, n_situations))
+    all_attributes = np.zeros((n_individuals, n_situations, n_attributes))
+
+    # 선택 변수 찾기
+    choice_var = None
+    for col in ['choice', 'chosen', 'choice_binary']:
+        if col in all_ind_data[0].columns:
+            choice_var = col
+            break
+
+    for ind_idx, ind_data in enumerate(all_ind_data):
+        for sit_idx in range(n_situations):
+            row = ind_data.iloc[sit_idx]
+            all_choices[ind_idx, sit_idx] = row[choice_var]
+            for attr_idx, attr in enumerate(choice_attributes):
+                if attr in row.index and not pd.isna(row[attr]):
+                    all_attributes[ind_idx, sit_idx, attr_idx] = row[attr]
+
+    # GPU로 전송
+    all_choices_gpu = cp.asarray(all_choices)  # (326, 18)
+    all_attr_gpu = cp.asarray(all_attributes)  # (326, 18, 3)
+    beta_gpu = cp.asarray(beta)  # (3,)
+
+    # Main LV 추출: (326, 100)
+    main_lv_idx = lv_names.index(main_lv)
+    main_lv_gpu = all_lvs_gpu[:, :, main_lv_idx]
+    main_lv_batch = main_lv_gpu[:, :, None]  # (326, 100, 1)
+
+    # 속성 배치: (326, 1, 18, 3)
+    attr_batch = all_attr_gpu[:, None, :, :]
+
+    # 효용 계산: (326, 100, 18)
+    # V = intercept + β'X + λ*LV
+    V_batch = intercept + cp.sum(attr_batch * beta_gpu[None, None, None, :], axis=-1)
+
+    if moderation_enabled:
+        # 조절효과: V += λ_main * PI + Σ λ_mod_k * (PI × LV_k)
+        V_batch = V_batch + lambda_main * main_lv_batch
+
+        for mod_lv_name, lambda_mod_val in lambda_mod.items():
+            mod_lv_idx = lv_names.index(mod_lv_name)
+            mod_lv_batch = all_lvs_gpu[:, :, mod_lv_idx:mod_lv_idx+1]  # (326, 100, 1)
+            interaction = main_lv_batch * mod_lv_batch  # (326, 100, 1)
+            V_batch = V_batch + lambda_mod_val * interaction
+    else:
+        V_batch = V_batch + lambda_lv * main_lv_batch
+
+    # 확률 계산: (326, 100, 18)
+    prob_batch = cp_ndtr(V_batch)
+    prob_batch = cp.clip(prob_batch, 1e-10, 1 - 1e-10)
+    phi_batch = cp_norm_pdf(V_batch)
+
+    # 실제 선택에 따라: (326, 100, 18)
+    choices_batch = all_choices_gpu[:, None, :]  # (326, 1, 18)
+    prob_final = cp.where(choices_batch == 1, prob_batch, 1 - prob_batch)
+
+    # Mills ratio: (326, 100, 18)
+    mills_batch = phi_batch / prob_final
+    sign_batch = cp.where(choices_batch == 1, 1.0, -1.0)
+
+    # Weighted mills: (326, 100, 18)
+    weighted_mills = all_weights_gpu[:, :, None] * sign_batch * mills_batch
+
+    # Gradient 계산
+    gradients = {}
+
+    # grad_intercept: (326,)
+    gradients['grad_intercept'] = cp.asnumpy(cp.sum(weighted_mills, axis=(1, 2)))
+
+    # grad_beta: (326, 3)
+    grad_beta = cp.sum(weighted_mills[:, :, :, None] * attr_batch, axis=(1, 2))
+    gradients['grad_beta'] = cp.asnumpy(grad_beta)
+
+    if moderation_enabled:
+        # grad_lambda_main: (326,)
+        gradients['grad_lambda_main'] = cp.asnumpy(cp.sum(weighted_mills * main_lv_batch, axis=(1, 2)))
+
+        # grad_lambda_mod: (326,) for each moderator
+        for mod_lv_name in lambda_mod.keys():
+            mod_lv_idx = lv_names.index(mod_lv_name)
+            mod_lv_batch = all_lvs_gpu[:, :, mod_lv_idx:mod_lv_idx+1]  # (326, 100, 1)
+            interaction = main_lv_batch * mod_lv_batch  # (326, 100, 1)
+            grad_lambda_mod = cp.sum(weighted_mills * interaction, axis=(1, 2))
+            gradients[f'grad_lambda_mod_{mod_lv_name}'] = cp.asnumpy(grad_lambda_mod)
+    else:
+        # grad_lambda: (326,)
+        gradients['grad_lambda'] = cp.asnumpy(cp.sum(weighted_mills * main_lv_batch, axis=(1, 2)))
+
+    return gradients
+
+

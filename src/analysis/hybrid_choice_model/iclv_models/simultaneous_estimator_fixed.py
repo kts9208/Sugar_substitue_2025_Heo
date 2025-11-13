@@ -346,7 +346,7 @@ class SimultaneousEstimator:
             self.iteration_logger.info("Halton draws 이미 설정됨 (건너뛰기)")
 
         # Gradient calculators 초기화 (Apollo 방식)
-        use_gradient = self.config.estimation.optimizer in ['BFGS', 'L-BFGS-B']
+        use_gradient = self.config.estimation.optimizer in ['BFGS', 'L-BFGS-B', 'BHHH']
         if use_gradient and hasattr(self.config.estimation, 'use_analytic_gradient'):
             self.use_analytic_gradient = self.config.estimation.use_analytic_gradient
         else:
@@ -591,7 +591,7 @@ class SimultaneousEstimator:
         self.iteration_logger.info(f"파라미터 bounds 계산 완료 (총 {len(bounds)}개)")
 
         # 최적화 방법 선택
-        use_gradient = self.config.estimation.optimizer in ['BFGS', 'L-BFGS-B']
+        use_gradient = self.config.estimation.optimizer in ['BFGS', 'L-BFGS-B', 'BHHH']
 
         # Gradient 함수 정의 (Apollo 방식)
         grad_call_count = [0]  # 그래디언트 호출 횟수
@@ -1205,7 +1205,44 @@ class SimultaneousEstimator:
                 jac_function = early_stopping_wrapper.gradient
 
             # Optimizer별 옵션 설정
-            if self.config.estimation.optimizer == 'BFGS':
+            if self.config.estimation.optimizer == 'BHHH':
+                # BHHH: Newton-CG with custom Hessian (OPG)
+                optimizer_options = {
+                    'maxiter': 200,  # Major iteration 최대 횟수
+                    'xtol': 1e-5,    # 파라미터 변화 허용 오차
+                    'disp': True
+                }
+
+                # BHHH Hessian 함수 생성
+                self.logger.info("BHHH 최적화 알고리즘 초기화...")
+                self.iteration_logger.info("BHHH 최적화 알고리즘 초기화...")
+                self.logger.info("  - 방법: Newton-CG with OPG (Outer Product of Gradients)")
+                self.iteration_logger.info("  - 방법: Newton-CG with OPG (Outer Product of Gradients)")
+                self.logger.info("  - Hessian 계산: 각 iteration마다 개인별 gradient로 OPG 계산")
+                self.iteration_logger.info("  - Hessian 계산: 각 iteration마다 개인별 gradient로 OPG 계산")
+
+                bhhh_hess_func = self._create_bhhh_hessian_function(
+                    measurement_model,
+                    structural_model,
+                    choice_model,
+                    negative_log_likelihood,
+                    gradient_function
+                )
+
+                self.logger.info(f"BHHH 옵션: xtol={optimizer_options['xtol']}")
+                self.iteration_logger.info(f"BHHH 옵션: xtol={optimizer_options['xtol']}")
+
+                result = optimize.minimize(
+                    early_stopping_wrapper.objective,
+                    initial_params_scaled,
+                    method='Newton-CG',  # Newton-CG는 custom hess 지원
+                    jac=jac_function,
+                    hess=bhhh_hess_func,  # ← BHHH Hessian 제공!
+                    callback=early_stopping_wrapper.callback,
+                    options=optimizer_options
+                )
+
+            elif self.config.estimation.optimizer == 'BFGS':
                 optimizer_options = {
                     'maxiter': 200,  # Major iteration 최대 횟수
                     'ftol': 1e-3,    # 함수값 상대적 변화 0.1% 이하면 종료
@@ -1216,6 +1253,16 @@ class SimultaneousEstimator:
                 }
                 self.logger.info(f"BFGS 옵션: c1={optimizer_options['c1']}, c2={optimizer_options['c2']} (scipy 기본값)")
                 self.iteration_logger.info(f"BFGS 옵션: c1={optimizer_options['c1']}, c2={optimizer_options['c2']} (scipy 기본값)")
+
+                result = optimize.minimize(
+                    early_stopping_wrapper.objective,  # Wrapper의 objective 사용
+                    initial_params_scaled,  # 스케일된 초기 파라미터 사용
+                    method='BFGS',
+                    jac=jac_function,
+                    callback=early_stopping_wrapper.callback,  # Callback 추가
+                    options=optimizer_options
+                )
+
             elif self.config.estimation.optimizer == 'L-BFGS-B':
                 optimizer_options = {
                     'maxiter': 200,  # Major iteration 최대 횟수
@@ -1226,21 +1273,31 @@ class SimultaneousEstimator:
                 }
                 self.logger.info(f"L-BFGS-B 옵션: maxls={optimizer_options['maxls']}")
                 self.iteration_logger.info(f"L-BFGS-B 옵션: maxls={optimizer_options['maxls']}")
+
+                result = optimize.minimize(
+                    early_stopping_wrapper.objective,  # Wrapper의 objective 사용
+                    initial_params_scaled,  # 스케일된 초기 파라미터 사용
+                    method='L-BFGS-B',
+                    jac=jac_function,
+                    bounds=bounds,
+                    callback=early_stopping_wrapper.callback,  # Callback 추가
+                    options=optimizer_options
+                )
+
             else:
                 optimizer_options = {
                     'maxiter': 200,
                     'disp': True
                 }
 
-            result = optimize.minimize(
-                early_stopping_wrapper.objective,  # Wrapper의 objective 사용
-                initial_params_scaled,  # 스케일된 초기 파라미터 사용
-                method=self.config.estimation.optimizer,
-                jac=jac_function,
-                bounds=bounds if self.config.estimation.optimizer == 'L-BFGS-B' else None,
-                callback=early_stopping_wrapper.callback,  # Callback 추가
-                options=optimizer_options
-            )
+                result = optimize.minimize(
+                    early_stopping_wrapper.objective,  # Wrapper의 objective 사용
+                    initial_params_scaled,  # 스케일된 초기 파라미터 사용
+                    method=self.config.estimation.optimizer,
+                    jac=jac_function,
+                    callback=early_stopping_wrapper.callback,  # Callback 추가
+                    options=optimizer_options
+                )
 
             # 최적화 결과 로깅
             self.logger.info(f"최적화 종료: {result.message}")
@@ -2303,6 +2360,318 @@ class SimultaneousEstimator:
 
         return structured
 
+    def _create_bhhh_hessian_function(
+        self,
+        measurement_model,
+        structural_model,
+        choice_model,
+        negative_log_likelihood_func,
+        gradient_func
+    ):
+        """
+        BHHH Hessian 계산 함수 생성 (scipy.optimize.minimize의 hess 파라미터용)
+
+        BHHH 방법:
+        - Hessian을 직접 계산하지 않고 OPG (Outer Product of Gradients)로 대체
+        - OPG = Σ_i (grad_i × grad_i^T)
+        - 각 iteration마다 모든 개인의 gradient를 계산하여 OPG 생성
+
+        Args:
+            negative_log_likelihood_func: negative log-likelihood 함수
+            gradient_func: gradient 함수
+
+        Returns:
+            callable: hess(x) -> np.ndarray (n_params, n_params)
+        """
+        from src.analysis.hybrid_choice_model.iclv_models.bhhh_calculator import BHHHCalculator
+
+        bhhh_calc = BHHHCalculator(logger=self.iteration_logger)
+        hess_call_count = [0]  # Hessian 호출 횟수 추적
+
+        # ✅ Major iteration 추적을 위한 변수
+        prev_x = [None]  # 이전 파라미터
+        prev_ll = [None]  # 이전 LL
+        major_iter_count = [0]  # Major iteration 카운터
+
+        def bhhh_hessian(x):
+            """
+            현재 파라미터에서 BHHH Hessian 계산
+
+            Args:
+                x: 현재 파라미터 벡터 (scaled)
+
+            Returns:
+                BHHH Hessian (n_params, n_params)
+            """
+            import time
+            hess_start_time = time.time()
+
+            hess_call_count[0] += 1
+
+            # ✅ Major iteration 판단: 파라미터가 변경되었으면 새로운 major iteration
+            is_new_major_iter = False
+            if prev_x[0] is None or not np.allclose(x, prev_x[0], rtol=1e-10):
+                major_iter_count[0] += 1
+                is_new_major_iter = True
+
+                # ✅ Major Iteration 시작 로깅
+                self.iteration_logger.info(
+                    f"\n{'='*80}\n"
+                    f"[Major Iteration #{major_iter_count[0]} 시작]\n"
+                    f"{'='*80}"
+                )
+
+            self.iteration_logger.info(
+                f"\n{'='*80}\n"
+                f"BHHH Hessian 계산 #{hess_call_count[0]}\n"
+                f"{'='*80}"
+            )
+
+            # 파라미터 언스케일링
+            if self.param_scaler is not None:
+                x_unscaled = self.param_scaler.unscale_parameters(x)
+            else:
+                x_unscaled = x
+
+            # 파라미터 언팩
+            param_dict = self._unpack_parameters(
+                x_unscaled, measurement_model, structural_model, choice_model
+            )
+
+            # 개인별 gradient 계산
+            self.iteration_logger.info("개인별 gradient 계산 시작...")
+            individual_ids = self.data[self.config.individual_id_column].unique()
+            n_individuals = len(individual_ids)
+
+            # ✅ GPU batch 활용 여부 확인
+            use_gpu = hasattr(self.joint_grad, 'use_gpu') and self.joint_grad.use_gpu
+
+            # ✅ 완전 GPU Batch: 모든 개인을 동시에 처리
+            if use_gpu and hasattr(self.joint_grad, 'compute_all_individuals_gradients_batch'):
+                import time
+
+                self.iteration_logger.info(
+                    f"  ✅ 완전 GPU Batch 모드: {n_individuals}명 동시 처리"
+                )
+
+                # 모든 개인의 데이터와 draws 준비
+                prep_start = time.time()
+                all_ind_data = []
+                all_ind_draws = []
+
+                for ind_id in individual_ids:
+                    ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
+                    ind_idx = np.where(individual_ids == ind_id)[0][0]
+                    ind_draws = self.halton_generator.get_draws()[ind_idx]
+
+                    all_ind_data.append(ind_data)
+                    all_ind_draws.append(ind_draws)
+
+                # NumPy 배열로 변환
+                all_ind_draws = np.array(all_ind_draws)  # (N, n_draws, n_dims)
+                prep_time = time.time() - prep_start
+
+                self.iteration_logger.info(
+                    f"  데이터 준비 완료 ({prep_time:.3f}초): "
+                    f"all_ind_draws shape = {all_ind_draws.shape}"
+                )
+
+                # ✅ 완전 GPU Batch로 모든 개인의 gradient 동시 계산
+                # 🚀 326명 × 100 draws × 80 params = 2,608,000개 동시 계산
+                gpu_start = time.time()
+
+                # 완전 GPU Batch 사용 (hasattr로 확인)
+                if hasattr(self.joint_grad, 'compute_all_individuals_gradients_full_batch'):
+                    all_grad_dicts = self.joint_grad.compute_all_individuals_gradients_full_batch(
+                        all_ind_data=all_ind_data,
+                        all_ind_draws=all_ind_draws,
+                        params_dict=param_dict,
+                        measurement_model=measurement_model,
+                        structural_model=structural_model,
+                        choice_model=choice_model,
+                        iteration_logger=self.iteration_logger,
+                        log_level='MODERATE' if hess_call_count[0] <= 2 else 'MINIMAL'
+                    )
+                else:
+                    # 폴백: 일반 batch
+                    all_grad_dicts = self.joint_grad.compute_all_individuals_gradients_batch(
+                        all_ind_data=all_ind_data,
+                        all_ind_draws=all_ind_draws,
+                        params_dict=param_dict,
+                        measurement_model=measurement_model,
+                        structural_model=structural_model,
+                        choice_model=choice_model,
+                        iteration_logger=self.iteration_logger,
+                        log_level='MODERATE' if hess_call_count[0] <= 2 else 'MINIMAL'
+                    )
+
+                gpu_time = time.time() - gpu_start
+
+                self.iteration_logger.info(
+                    f"  GPU Batch gradient 계산 완료 ({gpu_time:.3f}초)"
+                )
+
+                # Gradient 벡터로 변환 및 스케일링
+                self.iteration_logger.info(f"  개인별 gradient 벡터 변환 시작 ({len(all_grad_dicts)}명)...")
+                individual_gradients = []
+                for i, ind_grad_dict in enumerate(all_grad_dicts):
+                    grad_vector = self._pack_gradient(
+                        ind_grad_dict,
+                        measurement_model,
+                        structural_model,
+                        choice_model
+                    )
+
+                    if self.param_scaler is not None:
+                        grad_vector = self.param_scaler.scale_gradient(grad_vector)
+
+                    individual_gradients.append(grad_vector)
+
+                    # 처음 3명만 상세 로깅
+                    if i < 3:
+                        self.iteration_logger.info(
+                            f"  개인 {i} (ID={individual_ids[i]}): gradient norm = {np.linalg.norm(grad_vector):.6e}"
+                        )
+
+                self.iteration_logger.info(
+                    f"✅ 완전 GPU Batch gradient 계산 완료: {n_individuals}명"
+                )
+
+                # Gradient 통계 로깅
+                grad_norms = [np.linalg.norm(g) for g in individual_gradients]
+                self.iteration_logger.info(
+                    f"  Gradient norm 통계: min={min(grad_norms):.6e}, "
+                    f"max={max(grad_norms):.6e}, mean={np.mean(grad_norms):.6e}"
+                )
+
+            else:
+                # 기존 방식: 개인별 순차 처리 (각 개인 내부는 GPU batch)
+                if use_gpu:
+                    self.iteration_logger.info("  GPU batch 모드로 개인별 gradient 계산 (순차)")
+                else:
+                    self.iteration_logger.info("  CPU 모드로 개인별 gradient 계산")
+
+                individual_gradients = []
+                for i, ind_id in enumerate(individual_ids):
+                    # 개인 데이터 및 draws 가져오기
+                    ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
+                    ind_idx = np.where(individual_ids == ind_id)[0][0]
+                    ind_draws = self.halton_generator.get_draws()[ind_idx]
+
+                    # 개인별 gradient 계산
+                    ind_grad_dict = self.joint_grad.compute_individual_gradient(
+                        ind_data=ind_data,
+                        ind_draws=ind_draws,
+                        params_dict=param_dict,
+                        measurement_model=measurement_model,
+                        structural_model=structural_model,
+                        choice_model=choice_model,
+                        ind_id=ind_id
+                    )
+
+                    # Gradient 벡터로 변환
+                    grad_vector = self._pack_gradient(
+                        ind_grad_dict,
+                        measurement_model,
+                        structural_model,
+                        choice_model
+                    )
+
+                    # 스케일링 적용
+                    if self.param_scaler is not None:
+                        grad_vector = self.param_scaler.scale_gradient(grad_vector)
+
+                    individual_gradients.append(grad_vector)
+
+                    # 처음 3명만 상세 로깅
+                    if i < 3:
+                        self.iteration_logger.info(
+                            f"  개인 {i} (ID={ind_id}): gradient norm = {np.linalg.norm(grad_vector):.6e}"
+                        )
+
+                self.iteration_logger.info(
+                    f"개인별 gradient 계산 완료: {n_individuals}명"
+                )
+
+            # BHHH Hessian 계산 (OPG)
+            import time
+            self.iteration_logger.info("OPG 행렬 계산 중...")
+            opg_start = time.time()
+            hessian_bhhh = bhhh_calc.compute_bhhh_hessian(
+                individual_gradients,
+                for_minimization=True  # scipy는 최소화 문제
+            )
+            opg_time = time.time() - opg_start
+            self.iteration_logger.info(f"OPG 계산 완료 ({opg_time:.3f}초)")
+
+            hess_total_time = time.time() - hess_start_time
+
+            self.iteration_logger.info(
+                f"\n{'='*80}\n"
+                f"BHHH Hessian 계산 완료 (총 {hess_total_time:.3f}초)\n"
+                f"{'='*80}\n"
+                f"  Shape: {hessian_bhhh.shape}\n"
+                f"  시간 분석:\n"
+                f"    - 데이터 준비: {prep_time if 'prep_time' in locals() else 0:.3f}초\n"
+                f"    - GPU Batch gradient: {gpu_time if 'gpu_time' in locals() else 0:.3f}초\n"
+                f"    - OPG 계산: {opg_time:.3f}초\n"
+                f"  성능:\n"
+                f"    - 개인당 시간: {hess_total_time / n_individuals * 1000:.2f}ms\n"
+                f"    - 처리량: {n_individuals / hess_total_time:.1f} 개인/초\n"
+                f"{'='*80}"
+            )
+
+            # ✅ Major Iteration 완료 로깅 및 CSV 저장
+            if is_new_major_iter:
+                # 현재 LL 계산
+                x_unscaled = self.param_scaler.unscale_parameters(x) if self.param_scaler is not None else x
+                current_ll = -negative_log_likelihood_func(x)  # objective는 -LL이므로 부호 반전
+
+                # 파라미터 변화량 계산
+                if prev_x[0] is not None:
+                    param_change = np.linalg.norm(x - prev_x[0])
+                    ll_change = current_ll - prev_ll[0] if prev_ll[0] is not None else 0.0
+                else:
+                    param_change = 0.0
+                    ll_change = 0.0
+
+                # Gradient 계산 (전체 gradient)
+                grad = gradient_func(x)
+                grad_norm = np.linalg.norm(grad)
+
+                # 파라미터 및 gradient 상세 로깅
+                params_external = self.param_scaler.unscale_parameters(x) if self.param_scaler is not None else x
+
+                gradient_details = "\n  전체 파라미터 값 및 그래디언트:\n"
+                for idx in range(len(params_external)):
+                    param_name = self.param_names[idx] if hasattr(self, 'param_names') and idx < len(self.param_names) else f"param_{idx}"
+                    gradient_details += f"    [{idx:2d}] {param_name:50s}: param={params_external[idx]:+12.6e}, grad={grad[idx]:+12.6e}\n"
+
+                # CSV 파일에 기록
+                if hasattr(self, '_log_params_grads_to_csv'):
+                    self._log_params_grads_to_csv(major_iter_count[0], params_external, grad)
+
+                # Major Iteration 완료 로깅
+                self.iteration_logger.info(
+                    f"\n{'='*80}\n"
+                    f"[Major Iteration #{major_iter_count[0]} 완료]\n"
+                    f"  최종 LL: {current_ll:.4f}\n"
+                    f"  파라미터 변화량 (L2 norm): {param_change:.6e}\n"
+                    f"  LL 변화: {ll_change:+.4f}\n"
+                    f"  Gradient norm: {grad_norm:.6e}\n"
+                    f"{gradient_details}"
+                    f"  Hessian 근사: BHHH (OPG) 방법으로 계산 완료\n"
+                    f"{'='*80}"
+                )
+
+                # 현재 상태 저장
+                prev_x[0] = x.copy()
+                prev_ll[0] = current_ll
+
+            return hessian_bhhh
+
+        return bhhh_hessian
+
     def _compute_bhhh_hessian_inverse(
         self,
         optimal_params: np.ndarray,
@@ -2328,7 +2697,7 @@ class SimultaneousEstimator:
         """
         try:
             # BHHH 계산기 초기화
-            bhhh_calc = BHHHCalculator(logger=self.logger)
+            bhhh_calc = BHHHCalculator(logger=self.iteration_logger)
 
             # 파라미터 언팩
             param_dict = self._unpack_parameters(
@@ -2398,6 +2767,16 @@ class SimultaneousEstimator:
                         choice_model
                     )
 
+                    # 처음 3명의 gradient 상세 로깅
+                    if i < 3:
+                        self.logger.info(
+                            f"\n개인 {i} (ID={ind_id}) Gradient 벡터:\n"
+                            f"  Shape: {grad_vector.shape}\n"
+                            f"  Norm: {np.linalg.norm(grad_vector):.6e}\n"
+                            f"  범위: [{np.min(grad_vector):.6e}, {np.max(grad_vector):.6e}]\n"
+                            f"  처음 5개 값: {grad_vector[:5]}"
+                        )
+
                     individual_gradients.append(grad_vector)
 
             else:
@@ -2407,10 +2786,19 @@ class SimultaneousEstimator:
                 )
                 return None
 
-            self.logger.info(f"개인별 gradient 계산 완료: {len(individual_gradients)}명")
+            self.logger.info(
+                f"\n{'='*80}\n"
+                f"개인별 gradient 계산 완료\n"
+                f"{'='*80}\n"
+                f"  총 개인 수: {len(individual_gradients)}명\n"
+                f"  Gradient 벡터 길이: {len(individual_gradients[0])}개 파라미터\n"
+                f"{'='*80}"
+            )
 
             # BHHH Hessian 계산
-            self.logger.info("BHHH Hessian 계산 중...")
+            self.logger.info("\n" + "="*80)
+            self.logger.info("BHHH Hessian 계산 시작 (OPG 방식)")
+            self.logger.info("="*80)
             hessian_bhhh = bhhh_calc.compute_bhhh_hessian(
                 individual_gradients,
                 for_minimization=True  # scipy.optimize.minimize는 최소화 문제
