@@ -412,12 +412,16 @@ class SimultaneousEstimator:
                         gpu_measurement_model = self.gpu_measurement_model
                         self.iteration_logger.info("GPU 배치 그래디언트 활성화")
 
+                # 완전 병렬 처리 옵션 확인
+                use_full_parallel = getattr(self, 'use_full_parallel', True)
+
                 self.joint_grad = MultiLatentJointGradient(
                     self.measurement_grad,
                     self.structural_grad,
                     self.choice_grad,
                     use_gpu=use_gpu_gradient,
-                    gpu_measurement_model=gpu_measurement_model
+                    gpu_measurement_model=gpu_measurement_model,
+                    use_full_parallel=use_full_parallel
                 )
                 # ✅ iteration_logger와 config 전달
                 self.joint_grad.iteration_logger = self.iteration_logger
@@ -631,83 +635,10 @@ class SimultaneousEstimator:
             #     # 항상 임계값 체크 및 필요시 정리
             #     mem_info = self.memory_monitor.check_and_cleanup(f"Gradient 계산 #{grad_call_count[0]}")
 
-            # 파라미터 딕셔너리로 변환
-            param_dict = self._unpack_parameters(
+            # ✅ 리팩토링: 순수한 gradient 계산은 _compute_gradient 메서드로 위임
+            neg_grad_external = self._compute_gradient(
                 params, measurement_model, structural_model, choice_model
             )
-
-            # 병렬처리 설정 가져오기
-            use_parallel = getattr(self.config.estimation, 'use_parallel', False)
-            n_cores = getattr(self.config.estimation, 'n_cores', None)
-
-            # 다중 잠재변수 여부 확인
-            from .multi_latent_config import MultiLatentConfig
-            is_multi_latent = isinstance(self.config, MultiLatentConfig)
-
-            if is_multi_latent:
-                # 다중 잠재변수: compute_individual_gradient 사용
-                from .multi_latent_gradient import MultiLatentJointGradient
-
-                # 개인별 그래디언트 계산 및 합산
-                individual_ids = self.data[self.config.individual_id_column].unique()
-                total_grad_dict = None
-
-                for ind_id in individual_ids:
-                    ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
-                    ind_idx = np.where(individual_ids == ind_id)[0][0]
-                    ind_draws = self.halton_generator.get_draws()[ind_idx]
-
-                    ind_grad = self.joint_grad.compute_individual_gradient(
-                        ind_data=ind_data,
-                        ind_draws=ind_draws,
-                        params_dict=param_dict,
-                        measurement_model=measurement_model,
-                        structural_model=structural_model,
-                        choice_model=choice_model,
-                        ind_id=ind_id  # ✅ 개인 ID 전달 (디버깅용)
-                    )
-
-                    # 그래디언트 합산 (재귀적으로 처리)
-                    if total_grad_dict is None:
-                        # 첫 번째 개인: deep copy
-                        import copy
-                        total_grad_dict = copy.deepcopy(ind_grad)
-                    else:
-                        # 재귀적으로 합산
-                        def add_gradients(total, ind):
-                            for key in total:
-                                if isinstance(total[key], dict):
-                                    add_gradients(total[key], ind[key])
-                                elif isinstance(total[key], np.ndarray):
-                                    total[key] += ind[key]
-                                else:
-                                    total[key] += ind[key]
-
-                        add_gradients(total_grad_dict, ind_grad)
-
-                grad_dict = total_grad_dict
-            else:
-                # 단일 잠재변수: compute_gradient 사용
-                grad_dict = self.joint_grad.compute_gradient(
-                    data=self.data,
-                    params_dict=param_dict,
-                    draws=self.halton_generator.get_draws(),
-                    individual_id_column=self.config.individual_id_column,
-                    measurement_model=measurement_model,
-                    structural_model=structural_model,
-                    choice_model=choice_model,
-                    indicators=self.config.measurement.indicators,
-                    sociodemographics=self.config.structural.sociodemographics,
-                    choice_attributes=self.config.choice.choice_attributes,
-                    use_parallel=use_parallel,
-                    n_cores=n_cores
-                )
-
-            # 그래디언트 벡터로 변환 (파라미터 순서와 동일)
-            grad_vector = self._pack_gradient(grad_dict, measurement_model, structural_model, choice_model)
-
-            # Negative gradient (minimize -LL)
-            neg_grad_external = -grad_vector
 
             # Gradient 스케일링 (External → Internal)
             # ∂LL/∂θ_internal = ∂LL/∂θ_external * scale
@@ -2065,6 +1996,156 @@ class SimultaneousEstimator:
             idx += n_sociodem
         
         return param_dict
+
+    def _compute_gradient(self, params: np.ndarray,
+                         measurement_model,
+                         structural_model,
+                         choice_model) -> np.ndarray:
+        """
+        순수한 analytic gradient 계산 (상태 의존성 제거)
+
+        이 메서드는 단위테스트 및 gradient 검증을 위해 추출되었습니다.
+        estimate() 내부의 gradient_function()과 동일한 로직을 사용합니다.
+
+        Args:
+            params: 파라미터 벡터 (unscaled, external)
+            measurement_model: 측정모델
+            structural_model: 구조모델
+            choice_model: 선택모델
+
+        Returns:
+            gradient 벡터 (negative gradient for minimization)
+        """
+        # 파라미터 딕셔너리로 변환
+        param_dict = self._unpack_parameters(
+            params, measurement_model, structural_model, choice_model
+        )
+
+        # 병렬처리 설정 가져오기
+        use_parallel = getattr(self.config.estimation, 'use_parallel', False)
+        n_cores = getattr(self.config.estimation, 'n_cores', None)
+
+        # 다중 잠재변수 여부 확인
+        from .multi_latent_config import MultiLatentConfig
+        is_multi_latent = isinstance(self.config, MultiLatentConfig)
+
+        if is_multi_latent:
+            # 다중 잠재변수: GPU batch 사용 여부 확인
+            use_gpu = hasattr(self.joint_grad, 'use_gpu') and self.joint_grad.use_gpu
+
+            # ✅ GPU Batch 모드: 모든 개인을 동시에 처리
+            if use_gpu and hasattr(self.joint_grad, 'compute_all_individuals_gradients_full_batch'):
+                individual_ids = self.data[self.config.individual_id_column].unique()
+
+                # 모든 개인의 데이터와 draws 준비
+                all_ind_data = []
+                all_ind_draws = []
+
+                for ind_id in individual_ids:
+                    ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
+                    ind_idx = np.where(individual_ids == ind_id)[0][0]
+                    ind_draws = self.halton_generator.get_draws()[ind_idx]
+
+                    all_ind_data.append(ind_data)
+                    all_ind_draws.append(ind_draws)
+
+                # NumPy 배열로 변환
+                all_ind_draws = np.array(all_ind_draws)  # (N, n_draws, n_dims)
+
+                # 🚀 완전 GPU Batch로 모든 개인의 gradient 동시 계산
+                all_grad_dicts = self.joint_grad.compute_all_individuals_gradients_full_batch(
+                    all_ind_data=all_ind_data,
+                    all_ind_draws=all_ind_draws,
+                    params_dict=param_dict,
+                    measurement_model=measurement_model,
+                    structural_model=structural_model,
+                    choice_model=choice_model,
+                    iteration_logger=None,  # 로깅 비활성화
+                    log_level='MINIMAL'
+                )
+
+                # 모든 개인의 gradient 합산
+                total_grad_dict = None
+                for ind_grad in all_grad_dicts:
+                    if total_grad_dict is None:
+                        import copy
+                        total_grad_dict = copy.deepcopy(ind_grad)
+                    else:
+                        # 재귀적으로 합산
+                        def add_gradients(total, ind):
+                            for key in total:
+                                if isinstance(total[key], dict):
+                                    add_gradients(total[key], ind[key])
+                                elif isinstance(total[key], np.ndarray):
+                                    total[key] += ind[key]
+                                else:
+                                    total[key] += ind[key]
+
+                        add_gradients(total_grad_dict, ind_grad)
+
+                grad_dict = total_grad_dict
+
+            else:
+                # CPU 모드: 개인별 순차 처리
+                individual_ids = self.data[self.config.individual_id_column].unique()
+                total_grad_dict = None
+
+                for ind_id in individual_ids:
+                    ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
+                    ind_idx = np.where(individual_ids == ind_id)[0][0]
+                    ind_draws = self.halton_generator.get_draws()[ind_idx]
+
+                    ind_grad = self.joint_grad.compute_individual_gradient(
+                        ind_data=ind_data,
+                        ind_draws=ind_draws,
+                        params_dict=param_dict,
+                        measurement_model=measurement_model,
+                        structural_model=structural_model,
+                        choice_model=choice_model,
+                        ind_id=ind_id
+                    )
+
+                    # 그래디언트 합산 (재귀적으로 처리)
+                    if total_grad_dict is None:
+                        # 첫 번째 개인: deep copy
+                        import copy
+                        total_grad_dict = copy.deepcopy(ind_grad)
+                    else:
+                        # 재귀적으로 합산
+                        def add_gradients(total, ind):
+                            for key in total:
+                                if isinstance(total[key], dict):
+                                    add_gradients(total[key], ind[key])
+                                elif isinstance(total[key], np.ndarray):
+                                    total[key] += ind[key]
+                                else:
+                                    total[key] += ind[key]
+
+                        add_gradients(total_grad_dict, ind_grad)
+
+                grad_dict = total_grad_dict
+        else:
+            # 단일 잠재변수: compute_gradient 사용
+            grad_dict = self.joint_grad.compute_gradient(
+                data=self.data,
+                params_dict=param_dict,
+                draws=self.halton_generator.get_draws(),
+                individual_id_column=self.config.individual_id_column,
+                measurement_model=measurement_model,
+                structural_model=structural_model,
+                choice_model=choice_model,
+                indicators=self.config.measurement.indicators,
+                sociodemographics=self.config.structural.sociodemographics,
+                choice_attributes=self.config.choice.choice_attributes,
+                use_parallel=use_parallel,
+                n_cores=n_cores
+            )
+
+        # 그래디언트 벡터로 변환 (파라미터 순서와 동일)
+        grad_vector = self._pack_gradient(grad_dict, measurement_model, structural_model, choice_model)
+
+        # Negative gradient (minimize -LL)
+        return -grad_vector
 
     def _pack_gradient(self, grad_dict: Dict, measurement_model,
                       structural_model, choice_model) -> np.ndarray:

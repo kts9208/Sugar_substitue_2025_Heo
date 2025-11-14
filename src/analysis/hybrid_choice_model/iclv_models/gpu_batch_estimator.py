@@ -81,16 +81,19 @@ class GPUBatchEstimator(SimultaneousEstimator):
     
     def __init__(self, config, use_gpu: bool = True,
                  memory_monitor_cpu_threshold_mb: float = 2000,
-                 memory_monitor_gpu_threshold_mb: float = 1500):
+                 memory_monitor_gpu_threshold_mb: float = 1500,
+                 use_full_parallel: bool = True):
         """
         Args:
             config: MultiLatentConfig 또는 ICLVConfig
             use_gpu: GPU 사용 여부
             memory_monitor_cpu_threshold_mb: CPU 메모리 임계값 (MB)
             memory_monitor_gpu_threshold_mb: GPU 메모리 임계값 (MB)
+            use_full_parallel: 완전 병렬 처리 사용 여부 (Advanced Indexing, 기본값: True)
         """
         super().__init__(config)
         self.use_gpu = use_gpu and gpu_batch_utils.CUPY_AVAILABLE
+        self.use_full_parallel = use_full_parallel
         self.gpu_measurement_model = None
 
         # 메모리 모니터 임계값 저장 (나중에 초기화)
@@ -99,7 +102,10 @@ class GPUBatchEstimator(SimultaneousEstimator):
         self.memory_monitor = None  # estimate()에서 초기화
 
         if self.use_gpu:
-            logger.info("GPU 배치 처리 활성화")
+            if self.use_full_parallel:
+                logger.info("✨ GPU 완전 병렬 처리 활성화 (Advanced Indexing)")
+            else:
+                logger.info("GPU 배치 처리 활성화")
         else:
             logger.info("GPU 배치 처리 비활성화 (CPU 모드)")
     
@@ -1015,7 +1021,9 @@ class GPUBatchEstimator(SimultaneousEstimator):
             # 상세 로깅 (간소화)
             if hasattr(self, 'iteration_logger') and hasattr(self, '_unpack_count'):
                 if self._unpack_count <= 3:
-                    self.iteration_logger.info(f"  구조모델: gamma_lv[0]={gamma_lv[0]:.6f}, gamma_x[0]={gamma_x[0]:.6f}")
+                    gamma_lv_str = f"gamma_lv[0]={gamma_lv[0]:.6f}" if len(gamma_lv) > 0 else "gamma_lv=[]"
+                    gamma_x_str = f"gamma_x[0]={gamma_x[0]:.6f}" if len(gamma_x) > 0 else "gamma_x=[]"
+                    self.iteration_logger.info(f"  구조모델: {gamma_lv_str}, {gamma_x_str}")
         else:
             # 단일 잠재변수 구조모델
             n_sociodem = len(self.config.structural.sociodemographics)
