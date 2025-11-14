@@ -55,6 +55,11 @@ class SimpleGradientValidator:
             self.structural_model,
             self.choice_model
         )
+        if not hasattr(self, '_ll_count'):
+            self._ll_count = 0
+        self._ll_count += 1
+        if self._ll_count <= 5:
+            print(f"[DEBUG LL] Call {self._ll_count}: LL={ll:.4f}, params[76:80]={params_flat[76:80]}")
         return -ll
     
     def gradient_function(self, params_flat):
@@ -66,12 +71,14 @@ class SimpleGradientValidator:
         순수한 gradient 계산 로직입니다.
         """
         # ✅ 리팩토링된 메서드 직접 호출
-        return self.estimator._compute_gradient(
+        grad = self.estimator._compute_gradient(
             params_flat,
             self.measurement_model,
             self.structural_model,
             self.choice_model
         )
+        print(f"[DEBUG] Gradient size: {len(grad)}, Params size: {len(params_flat)}")
+        return grad
     
     def validate(self, params_flat, epsilon=1e-5):
         """Gradient 검증"""
@@ -102,9 +109,14 @@ class SimpleGradientValidator:
         
         # 가장 큰 오차 5개 출력
         worst_indices = np.argsort(rel_diff)[-5:][::-1]
-        
+
+        param_names = self.estimator._get_parameter_names(
+            self.measurement_model, self.structural_model, self.choice_model
+        )
+
         for idx in worst_indices:
-            print(f"    Param[{idx:2d}]: Analytic={analytic_grad[idx]:10.6f}, "
+            param_name = param_names[idx] if idx < len(param_names) else f"Param[{idx}]"
+            print(f"    {param_name:40s}: Analytic={analytic_grad[idx]:10.6f}, "
                   f"Numerical={numerical_grad[idx]:10.6f}, "
                   f"RelDiff={rel_diff[idx]:.2e}")
         
@@ -133,6 +145,7 @@ def main():
     sample_ids = data['respondent_id'].unique()[:5]
     data = data[data['respondent_id'].isin(sample_ids)].copy()
     print(f"   샘플: {len(sample_ids)}명, {len(data)}개 관측치")
+    print(f"   선택 데이터: choice 열 존재={('choice' in data.columns)}, 값 범위={data['choice'].min()}-{data['choice'].max() if 'choice' in data.columns else 'N/A'}")
     
     # 2. ICLV 설정 (test_gpu_batch_iclv.py와 동일)
     print("\n2. ICLV 설정...")
@@ -171,19 +184,25 @@ def main():
         )
     }
 
-    # 구조모델 설정 (병렬 구조로 변경 - CPU gradient가 계층적 구조를 아직 지원하지 않음)
+    # 구조모델 설정 (✅ 계층적 구조 - test_gpu_batch_iclv.py와 동일)
     structural_config = MultiLatentStructuralConfig(
         endogenous_lv='purchase_intention',
         exogenous_lvs=['health_concern', 'perceived_benefit', 'perceived_price', 'nutrition_knowledge'],
-        covariates=[],
-        hierarchical_paths=None,  # ✅ 병렬 구조 사용
+        covariates=[],  # ✅ 사회인구학적 변수 제거
+        hierarchical_paths=[  # ✅ 계층적 경로 명시
+            {'target': 'perceived_benefit', 'predictors': ['health_concern']},
+            {'target': 'purchase_intention', 'predictors': ['perceived_benefit']}
+        ],
         error_variance=1.0
     )
 
-    # 선택모델 설정 (조절효과 비활성화 - 병렬 구조와 함께 사용)
+    # 선택모델 설정 (✅ 조절효과 활성화 - test_gpu_batch_iclv.py와 동일)
     choice_config = ChoiceConfig(
         choice_attributes=['sugar_free', 'health_label', 'price'],
-        moderation_enabled=False  # ✅ 조절효과 비활성화
+        # ✅ 디폴트 값 사용 (명시하지 않아도 자동 적용):
+        # moderation_enabled=True
+        # moderator_lvs=['perceived_price', 'nutrition_knowledge']
+        # main_lv='purchase_intention'
     )
 
     # 추정 설정 (CPU 모드, analytic gradient)
@@ -321,6 +340,20 @@ def main():
         measurement_model, structural_model, choice_model
     )
     print(f"   파라미터 수: {len(params_flat)}")
+
+    # 파라미터 이름 확인
+    param_names = estimator._get_parameter_names(
+        measurement_model, structural_model, choice_model
+    )
+    print(f"   파라미터 이름 수: {len(param_names)}")
+
+    if len(params_flat) != len(param_names):
+        print(f"\n   ⚠️ 경고: 파라미터 수 불일치!")
+        print(f"   초기 파라미터: {len(params_flat)}")
+        print(f"   파라미터 이름: {len(param_names)}")
+        print(f"\n   마지막 10개 파라미터 이름:")
+        for i, name in enumerate(param_names[-10:]):
+            print(f"     [{len(param_names)-10+i}] {name}")
     
     # 7. 검증
     print("\n7. Gradient 검증")

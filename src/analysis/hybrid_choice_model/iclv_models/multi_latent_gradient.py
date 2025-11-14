@@ -17,6 +17,13 @@ from typing import Dict, List
 from scipy.stats import norm
 import logging
 
+# ✅ 공통 gradient 계산 함수 import
+from .gradient_core import (
+    compute_score_gradient,
+    compute_ordered_probit_gradient_terms,
+    compute_variance_gradient
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -120,10 +127,8 @@ class MultiLatentMeasurementGradient:
         Continuous Linear 측정모델 그래디언트
 
         Y = ζ * LV + ε, ε ~ N(0, σ²)
-        log L = -0.5 * log(2π * σ²) - 0.5 * (y - ζ*LV)² / σ²
 
-        ∂ log L / ∂ζ_i = (y_i - ζ_i*LV) / σ²_i * LV
-        ∂ log L / ∂σ²_i = -1/(2σ²_i) + (y_i - ζ_i*LV)² / (2σ⁴_i)
+        ✅ gradient_core.compute_score_gradient() 사용
         """
         n_ind = len(indicators)
         grad_zeta = np.zeros(n_ind)
@@ -142,14 +147,20 @@ class MultiLatentMeasurementGradient:
             # 예측값
             y_pred = zeta_i * lv
 
-            # 잔차
-            residual = y - y_pred
+            # ✅ 공통 함수 사용: ∂ log L / ∂ζ_i
+            grad_zeta[i] = compute_score_gradient(
+                observed=y,
+                predicted=y_pred,
+                variance=sigma_sq_i,
+                derivative_term=lv
+            )
 
-            # ∂ log L / ∂ζ_i
-            grad_zeta[i] = residual / sigma_sq_i * lv
-
-            # ∂ log L / ∂σ²_i
-            grad_sigma_sq[i] = -1.0 / (2.0 * sigma_sq_i) + (residual ** 2) / (2.0 * sigma_sq_i ** 2)
+            # ✅ 공통 함수 사용: ∂ log L / ∂σ²_i
+            grad_sigma_sq[i] = compute_variance_gradient(
+                observed=y,
+                predicted=y_pred,
+                variance=sigma_sq_i
+            )
 
         return {
             'grad_zeta': grad_zeta,
@@ -163,50 +174,40 @@ class MultiLatentMeasurementGradient:
         """
         Ordered Probit 측정모델 그래디언트
 
-        ∂ log L / ∂ζ_i = (φ(τ_k - ζ*LV) - φ(τ_{k-1} - ζ*LV)) / P(Y=k) * (-LV)
-        ∂ log L / ∂τ_k = φ(τ_k - ζ*LV) / P(Y=k)
+        ✅ gradient_core.compute_ordered_probit_gradient_terms() 사용
         """
-        
+
         n_ind = self.n_indicators[lv_name]
         n_thresh = self.n_thresholds[lv_name]
         n_cat = self.n_categories[lv_name]
-        
+
         grad_zeta = np.zeros(n_ind)
         grad_tau = np.zeros((n_ind, n_thresh))
-        
+
         first_row = data.iloc[0]
-        
+
         for i, indicator in enumerate(indicators):
             y = first_row[indicator]
             if pd.isna(y):
                 continue
-            
+
             k = int(y) - 1  # 1-5 → 0-4
             zeta_i = zeta[i]
             tau_i = tau[i]
-            
+
             V = zeta_i * lv
-            
-            # P(Y=k) 계산
-            if k == 0:
-                prob = norm.cdf(tau_i[0] - V)
-                phi_upper = norm.pdf(tau_i[0] - V)
-                phi_lower = 0.0
-            elif k == n_cat - 1:
-                prob = 1 - norm.cdf(tau_i[-1] - V)
-                phi_upper = 0.0
-                phi_lower = norm.pdf(tau_i[-1] - V)
-            else:
-                prob = norm.cdf(tau_i[k] - V) - norm.cdf(tau_i[k-1] - V)
-                phi_upper = norm.pdf(tau_i[k] - V)
-                phi_lower = norm.pdf(tau_i[k-1] - V)
-            
-            # 수치 안정성
-            prob = np.clip(prob, 1e-10, 1 - 1e-10)
-            
-            # ∂ log L / ∂ζ_i
+
+            # ✅ 공통 함수 사용: P(Y=k), φ(lower), φ(upper) 계산
+            prob, phi_lower, phi_upper = compute_ordered_probit_gradient_terms(
+                observed_category=k,
+                latent_value=V,
+                thresholds=tau_i,
+                n_categories=n_cat
+            )
+
+            # ∂ log L / ∂ζ_i = (φ_lower - φ_upper) / P(Y=k) × LV
             grad_zeta[i] = (phi_lower - phi_upper) / prob * lv
-            
+
             # ∂ log L / ∂τ
             if k == 0:
                 grad_tau[i, 0] = phi_upper / prob
@@ -215,7 +216,7 @@ class MultiLatentMeasurementGradient:
             else:
                 grad_tau[i, k-1] = -phi_lower / prob
                 grad_tau[i, k] = phi_upper / prob
-        
+
         return {
             'grad_zeta': grad_zeta,
             'grad_tau': grad_tau
@@ -252,59 +253,112 @@ class MultiLatentStructuralGradient:
                         params: Dict[str, np.ndarray],
                         covariates: List[str],
                         endogenous_lv: str,
-                        exogenous_lvs: List[str]) -> Dict[str, np.ndarray]:
+                        exogenous_lvs: List[str],
+                        hierarchical_paths: List[Dict] = None) -> Dict[str, np.ndarray]:
         """
         다중 잠재변수 구조모델 그래디언트 계산
-        
+
+        ✅ 계층적 구조와 병렬 구조 모두 지원
+
         Args:
             data: 개인 데이터
             latent_vars: 모든 잠재변수 값 {lv_name: value}
             exo_draws: 외생 LV draws (n_exo,)
-            params: {'gamma_lv': ..., 'gamma_x': ...}
+            params:
+                - 병렬 구조: {'gamma_lv': ..., 'gamma_x': ...}
+                - 계층적 구조: {'gamma_{pred}_to_{target}': ...}
             covariates: 공변량 변수명 리스트
             endogenous_lv: 내생 LV 이름
             exogenous_lvs: 외생 LV 이름 리스트
-        
+            hierarchical_paths: 계층적 경로 (None이면 병렬 구조)
+
         Returns:
-            {'grad_gamma_lv': ..., 'grad_gamma_x': ...}
+            - 병렬 구조: {'grad_gamma_lv': ..., 'grad_gamma_x': ...}
+            - 계층적 구조: {'grad_gamma_{pred}_to_{target}': ...}
         """
-        gamma_lv = params['gamma_lv']
-        gamma_x = params['gamma_x']
-        
-        # 내생 LV 실제값
-        lv_endo = latent_vars[endogenous_lv]
-        
-        # 외생 LV 효과
-        lv_effect = np.sum(gamma_lv * exo_draws)
-        
-        # 공변량 효과
-        first_row = data.iloc[0]
-        X = np.zeros(self.n_cov)
-        for j, var in enumerate(covariates):
-            if var in first_row.index:
-                value = first_row[var]
-                if not pd.isna(value):
-                    X[j] = value
-        
-        x_effect = np.sum(gamma_x * X)
-        
-        # 예측 평균
-        lv_endo_mean = lv_effect + x_effect
-        
-        # 잔차
-        residual = lv_endo - lv_endo_mean
-        
-        # 그래디언트
-        # ∂ log L / ∂γ_lv_i = (LV_endo - μ_endo) / σ² * LV_i
-        grad_gamma_lv = residual / self.error_variance * exo_draws
-        
-        # ∂ log L / ∂γ_x_j = (LV_endo - μ_endo) / σ² * X_j
-        grad_gamma_x = residual / self.error_variance * X
-        
-        return {
-            'grad_gamma_lv': grad_gamma_lv,
-            'grad_gamma_x': grad_gamma_x
-        }
+        # ✅ 계층적 구조 지원
+        if hierarchical_paths is not None and len(hierarchical_paths) > 0:
+            # 계층적 구조: 각 경로별로 gradient 계산
+            gradients = {}
+
+            for path in hierarchical_paths:
+                target = path['target']
+                predictors = path['predictors']
+
+                # 현재는 단일 predictor만 지원
+                if len(predictors) != 1:
+                    raise ValueError(f"현재 단일 predictor만 지원합니다: {predictors}")
+
+                predictor = predictors[0]
+                param_key = f"gamma_{predictor}_to_{target}"
+
+                # 파라미터 추출
+                gamma = params[param_key]
+
+                # LV 값 추출
+                target_value = latent_vars[target]
+                pred_value = latent_vars[predictor]
+
+                # 예측값 계산: target = gamma * predictor + error
+                mu = gamma * pred_value
+
+                # ✅ 공통 함수 사용: ∂ log L / ∂γ
+                grad_gamma = compute_score_gradient(
+                    observed=target_value,
+                    predicted=mu,
+                    variance=self.error_variance,
+                    derivative_term=pred_value
+                )
+
+                gradients[f'grad_{param_key}'] = grad_gamma
+
+            return gradients
+
+        else:
+            # 병렬 구조 (기존 방식)
+            gamma_lv = params['gamma_lv']
+            gamma_x = params['gamma_x']
+
+            # 내생 LV 실제값
+            lv_endo = latent_vars[endogenous_lv]
+
+            # 외생 LV 효과
+            lv_effect = np.sum(gamma_lv * exo_draws)
+
+            # 공변량 효과
+            first_row = data.iloc[0]
+            X = np.zeros(self.n_cov)
+            for j, var in enumerate(covariates):
+                if var in first_row.index:
+                    value = first_row[var]
+                    if not pd.isna(value):
+                        X[j] = value
+
+            x_effect = np.sum(gamma_x * X)
+
+            # 예측 평균
+            lv_endo_mean = lv_effect + x_effect
+
+            # ✅ 공통 함수 사용: ∂ log L / ∂γ_lv_i
+            grad_gamma_lv = compute_score_gradient(
+                observed=lv_endo,
+                predicted=lv_endo_mean,
+                variance=self.error_variance,
+                derivative_term=exo_draws
+            )
+
+            # ✅ 공통 함수 사용: ∂ log L / ∂γ_x_j
+            grad_gamma_x = compute_score_gradient(
+                observed=lv_endo,
+                predicted=lv_endo_mean,
+                variance=self.error_variance,
+                derivative_term=X
+            )
+
+            return {
+                'grad_gamma_lv': grad_gamma_lv,
+                'grad_gamma_x': grad_gamma_x
+            }
 
 
 class MultiLatentJointGradient:
@@ -589,16 +643,29 @@ class MultiLatentJointGradient:
                 ind_data, latent_vars, params_dict['measurement']
             )
             
+            # ✅ 계층적 경로 전달
+            hierarchical_paths = getattr(structural_model, 'hierarchical_paths', None)
+
             grad_struct = self.structural_grad.compute_gradient(
                 ind_data, latent_vars, exo_draws, params_dict['structural'],
                 structural_model.covariates, structural_model.endogenous_lv,
-                structural_model.exogenous_lvs
+                structural_model.exogenous_lvs,
+                hierarchical_paths=hierarchical_paths
             )
             
-            grad_choice = self.choice_grad.compute_gradient(
-                ind_data, lv_endo, params_dict['choice'],
-                choice_model.config.choice_attributes
-            )
+            # ✅ 조절효과 모델은 latent_vars 전체를 전달
+            if 'lambda_main' in params_dict['choice']:
+                # 조절효과 모델: 모든 LV 전달
+                grad_choice = self.choice_grad.compute_gradient(
+                    ind_data, latent_vars, params_dict['choice'],
+                    choice_model.config.choice_attributes
+                )
+            else:
+                # 기본 모델: 내생 LV만 전달
+                grad_choice = self.choice_grad.compute_gradient(
+                    ind_data, lv_endo, params_dict['choice'],
+                    choice_model.config.choice_attributes
+                )
             
             # 그래디언트 저장
             draw_gradients.append({
@@ -643,18 +710,35 @@ class MultiLatentJointGradient:
             elif 'grad_tau' in lv_grad:
                 weighted_meas[lv_name]['grad_tau'] = np.zeros_like(lv_grad['grad_tau'])
 
-        # 구조모델 그래디언트 초기화
-        weighted_struct = {
-            'grad_gamma_lv': np.zeros_like(first_grad['structural']['grad_gamma_lv']),
-            'grad_gamma_x': np.zeros_like(first_grad['structural']['grad_gamma_x'])
-        }
+        # 구조모델 그래디언트 초기화 (✅ 계층적 vs 병렬 구조)
+        if 'grad_gamma_lv' in first_grad['structural']:
+            # 병렬 구조
+            weighted_struct = {
+                'grad_gamma_lv': np.zeros_like(first_grad['structural']['grad_gamma_lv']),
+                'grad_gamma_x': np.zeros_like(first_grad['structural']['grad_gamma_x'])
+            }
+        else:
+            # 계층적 구조
+            weighted_struct = {}
+            for key in first_grad['structural'].keys():
+                weighted_struct[key] = 0.0
 
-        # 선택모델 그래디언트 초기화
+        # 선택모델 그래디언트 초기화 (✅ 조절효과 vs 기본 모델)
         weighted_choice = {
             'grad_intercept': 0.0,
-            'grad_beta': np.zeros_like(first_grad['choice']['grad_beta']),
-            'grad_lambda': 0.0
+            'grad_beta': np.zeros_like(first_grad['choice']['grad_beta'])
         }
+
+        # 조절효과 vs 기본 모델
+        if 'grad_lambda_main' in first_grad['choice']:
+            # 조절효과 모델
+            weighted_choice['grad_lambda_main'] = 0.0
+            for key in first_grad['choice'].keys():
+                if key.startswith('grad_lambda_mod_'):
+                    weighted_choice[key] = 0.0
+        else:
+            # 기본 모델
+            weighted_choice['grad_lambda'] = 0.0
 
         # 가중합 계산
         for w, grad in zip(weights, draw_gradients):
@@ -668,14 +752,17 @@ class MultiLatentJointGradient:
                 elif 'grad_tau' in grad['measurement'][lv_name]:
                     weighted_meas[lv_name]['grad_tau'] += w * grad['measurement'][lv_name]['grad_tau']
 
-            # 구조모델
-            weighted_struct['grad_gamma_lv'] += w * grad['structural']['grad_gamma_lv']
-            weighted_struct['grad_gamma_x'] += w * grad['structural']['grad_gamma_x']
+            # 구조모델 (✅ 계층적 vs 병렬)
+            for key in grad['structural'].keys():
+                weighted_struct[key] += w * grad['structural'][key]
 
-            # 선택모델
+            # 선택모델 (✅ 조절효과 vs 기본)
             weighted_choice['grad_intercept'] += w * grad['choice']['grad_intercept']
             weighted_choice['grad_beta'] += w * grad['choice']['grad_beta']
-            weighted_choice['grad_lambda'] += w * grad['choice']['grad_lambda']
+
+            for key in grad['choice'].keys():
+                if key.startswith('grad_lambda'):
+                    weighted_choice[key] += w * grad['choice'][key]
 
         return {
             'measurement': weighted_meas,

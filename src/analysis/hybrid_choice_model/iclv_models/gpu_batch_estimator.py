@@ -405,6 +405,11 @@ class GPUBatchEstimator(SimultaneousEstimator):
                 # 결합 로그우도
                 draw_ll = ll_measurement + ll_choice + ll_structural
 
+                # 🔍 디버깅: 첫 번째 draw의 우도 분해
+                if j == 0 and not hasattr(self, '_ll_debug_logged'):
+                    self._ll_debug_logged = True
+                    print(f"[DEBUG LL Components] Measurement={ll_measurement:.4f}, Choice={ll_choice:.4f}, Structural={ll_structural:.4f}, Total={draw_ll:.4f}")
+
                 if not np.isfinite(draw_ll):
                     draw_ll = -1e10
 

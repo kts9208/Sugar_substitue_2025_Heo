@@ -2183,14 +2183,29 @@ class SimultaneousEstimator:
                 lv_grad = grad_dict['measurement'][lv_name]
                 logger.info(f"[_pack_gradient]   Keys for {lv_name}: {list(lv_grad.keys())}")
 
-                gradient_list.append(lv_grad['grad_zeta'])
-                logger.info(f"[_pack_gradient]   Added grad_zeta, size: {len(lv_grad['grad_zeta'])}")
+                # ✅ fix_first_loading 확인
+                lv_config = self.config.measurement_configs[lv_name]
+                fix_first_loading = getattr(lv_config, 'fix_first_loading', True)
+
+                if fix_first_loading:
+                    # 첫 번째 zeta gradient 제외
+                    gradient_list.append(lv_grad['grad_zeta'][1:])
+                    logger.info(f"[_pack_gradient]   Added grad_zeta (excluding first), size: {len(lv_grad['grad_zeta'][1:])}")
+                else:
+                    gradient_list.append(lv_grad['grad_zeta'])
+                    logger.info(f"[_pack_gradient]   Added grad_zeta, size: {len(lv_grad['grad_zeta'])}")
 
                 # ✅ grad_dict에 있는 키를 기준으로 판단 (measurement_method 속성이 아님)
                 if 'grad_sigma_sq' in lv_grad:
                     # Continuous Linear 방식
-                    gradient_list.append(lv_grad['grad_sigma_sq'].flatten())
-                    logger.info(f"[_pack_gradient]   Added grad_sigma_sq, size: {len(lv_grad['grad_sigma_sq'].flatten())}")
+                    # ✅ fix_error_variance 확인
+                    fix_error_variance = getattr(lv_config, 'fix_error_variance', False)
+                    if fix_error_variance:
+                        # 오차분산 고정: gradient 포함하지 않음
+                        logger.info(f"[_pack_gradient]   Skipped grad_sigma_sq (fixed)")
+                    else:
+                        gradient_list.append(lv_grad['grad_sigma_sq'].flatten())
+                        logger.info(f"[_pack_gradient]   Added grad_sigma_sq, size: {len(lv_grad['grad_sigma_sq'].flatten())}")
                 elif 'grad_tau' in lv_grad:
                     # Ordered Probit 방식
                     gradient_list.append(lv_grad['grad_tau'].flatten())
