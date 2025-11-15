@@ -27,24 +27,24 @@ def create_design_matrix():
     # ========================================
     # 선택 세트 1 (q21)
     # ========================================
-    # 제품 A: 알반당, 알반당, 건강 강조 표시 있음, ₩2,500
+    # 제품 A: 무설탕, 무설탕, 건강 강조 표시 있음, ₩2,500
     design_data.append({
         'choice_set': 1,
         'alternative': 1,
         'alternative_name': '제품 A',
-        'product_type': '알반당',
-        'sugar_content': '알반당',
+        'product_type': '무설탕',
+        'sugar_content': '무설탕',
         'health_label': 1,  # 1 = 있음
         'price': 2500
     })
-    
-    # 제품 B: 무설탕, 무설탕, 없음, ₩2,000
+
+    # 제품 B: 일반당, 일반당, 없음, ₩2,000
     design_data.append({
         'choice_set': 1,
         'alternative': 2,
         'alternative_name': '제품 B',
-        'product_type': '무설탕',
-        'sugar_content': '무설탕',
+        'product_type': '알반당',
+        'sugar_content': '알반당',
         'health_label': 0,  # 0 = 없음
         'price': 2000
     })

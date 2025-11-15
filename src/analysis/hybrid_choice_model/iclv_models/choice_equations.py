@@ -11,7 +11,7 @@ Date: 2025-11-05
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from scipy import stats
 from scipy.stats import norm
 from scipy.optimize import minimize
@@ -716,4 +716,367 @@ class MultinomialLogitChoice(BaseICLVChoice):
             probabilities[start_idx:end_idx] = prob
 
         return probabilities
+
+    def fit(self, data: pd.DataFrame, factor_scores: Dict[str, np.ndarray]) -> Dict[str, Any]:
+        """
+        선택모델 추정 (순차추정 Step 2)
+
+        ✅ 요인점수를 독립변수로 사용
+        ✅ 조절효과 지원
+
+        효용함수:
+            V = intercept + β*X + λ_main*PI + λ_mod_PP*(PI×PP) + λ_mod_NK*(PI×NK)
+
+        여기서:
+            - X: 선택 속성 (sugar_free, health_label, price)
+            - PI: 구매의도 요인점수 (주효과)
+            - PP: 지각된 가격 요인점수 (조절효과)
+            - NK: 영양지식 요인점수 (조절효과)
+
+        Args:
+            data: 선택 데이터
+                  각 선택 상황은 3개 행 (제품A, 제품B, 구매안함)
+                  'choice' 열: 선택된 대안은 1, 나머지는 0
+            factor_scores: SEM에서 추출한 요인점수
+                {
+                    'purchase_intention': np.ndarray (n_individuals,),
+                    'perceived_price': np.ndarray (n_individuals,),
+                    'nutrition_knowledge': np.ndarray (n_individuals,)
+                }
+
+        Returns:
+            {
+                'params': 추정된 파라미터,
+                'log_likelihood': 로그우도,
+                'aic': AIC,
+                'bic': BIC,
+                'success': 성공 여부,
+                'message': 최적화 메시지,
+                'n_iterations': 반복 횟수
+            }
+
+        Example:
+            >>> config = ChoiceConfig(
+            ...     choice_attributes=['sugar_free', 'health_label', 'price'],
+            ...     moderation_enabled=True,
+            ...     moderator_lvs=['perceived_price', 'nutrition_knowledge'],
+            ...     main_lv='purchase_intention'
+            ... )
+            >>> model = MultinomialLogitChoice(config)
+            >>> results = model.fit(choice_data, factor_scores)
+        """
+        self.logger.info("=" * 70)
+        self.logger.info("선택모델 추정 시작 (MultinomialLogitChoice)")
+        self.logger.info("=" * 70)
+
+        # 1. 데이터 검증
+        if 'choice' not in data.columns and 'Choice' not in data.columns:
+            raise ValueError("데이터에 'choice' 또는 'Choice' 열이 없습니다.")
+
+        # 2. 요인점수를 개인별로 복제 (각 선택 상황마다 3개 행)
+        # 선택 데이터는 (n_individuals * n_choice_situations * 3) 행
+        # 요인점수는 (n_individuals,) 배열
+        # 각 개인의 선택 상황마다 동일한 요인점수 사용
+
+        n_rows = len(data)
+        n_choice_situations = n_rows // self.n_alternatives
+
+        # 요인점수를 선택 데이터 길이에 맞게 확장
+        lv_expanded = {}
+        for lv_name, scores in factor_scores.items():
+            # 각 개인의 점수를 n_alternatives번 반복
+            expanded = np.repeat(scores, self.n_alternatives)
+            lv_expanded[lv_name] = expanded
+            self.logger.info(f"  {lv_name}: {scores.shape} → {expanded.shape}")
+
+        # 3. 초기 파라미터 생성
+        initial_params = self.get_initial_params(data)
+        self.logger.info(f"초기 파라미터: {initial_params}")
+
+        # 4. 파라미터를 배열로 변환 (최적화용)
+        param_names, x0 = self._params_to_array(initial_params)
+        self.logger.info(f"최적화 파라미터 개수: {len(x0)}")
+
+        # 5. 목적함수 정의 (음의 로그우도)
+        def negative_log_likelihood(params_array):
+            params = self._array_to_params(param_names, params_array)
+            ll = self.log_likelihood(data, lv_expanded, params)
+            return -ll
+
+        # 6. 최적화 실행
+        self.logger.info("최적화 시작 (method=L-BFGS-B)...")
+        result = minimize(
+            negative_log_likelihood,
+            x0,
+            method='L-BFGS-B',
+            options={'maxiter': 1000, 'disp': True}
+        )
+
+        # 7. 결과 정리
+        estimated_params = self._array_to_params(param_names, result.x)
+        log_likelihood = -result.fun
+        n_params = len(result.x)
+        n_obs = n_choice_situations
+
+        aic = 2 * n_params - 2 * log_likelihood
+        bic = n_params * np.log(n_obs) - 2 * log_likelihood
+
+        results = {
+            'params': estimated_params,
+            'log_likelihood': log_likelihood,
+            'aic': aic,
+            'bic': bic,
+            'n_params': n_params,
+            'n_obs': n_obs,
+            'success': result.success,
+            'message': result.message,
+            'n_iterations': result.nit
+        }
+
+        # 8. 표준오차 및 p-value 계산 (동시추정 모듈과 동일한 방식)
+        try:
+            if hasattr(result, 'hess_inv'):
+                hess_inv = result.hess_inv
+                if hasattr(hess_inv, 'todense'):
+                    hess_inv = hess_inv.todense()
+
+                # Hessian 역행렬 저장
+                results['hessian_inv'] = np.array(hess_inv)
+
+                # 대각 원소 추출 (분산)
+                variances = np.diag(hess_inv)
+
+                # 음수 분산 처리 (수치 오류)
+                variances = np.maximum(variances, 1e-10)
+
+                # 표준오차
+                se = np.sqrt(variances)
+                results['standard_errors'] = se
+
+                # t-통계량
+                results['t_statistics'] = result.x / se
+
+                # p-값 (양측 검정, 대표본이므로 정규분포 사용)
+                from scipy.stats import norm
+                results['p_values'] = 2 * (1 - norm.cdf(np.abs(results['t_statistics'])))
+
+                # 파라미터별로 구조화
+                results['parameter_statistics'] = self._structure_statistics(
+                    param_names, result.x, se, results['t_statistics'], results['p_values']
+                )
+
+                self.logger.info("표준오차 및 p-value 계산 완료")
+
+            else:
+                self.logger.warning("Hessian 정보가 없어 표준오차를 계산할 수 없습니다.")
+                results['hessian_inv'] = None
+                results['standard_errors'] = None
+                results['t_statistics'] = None
+                results['p_values'] = None
+                results['parameter_statistics'] = None
+
+        except Exception as e:
+            self.logger.warning(f"표준오차 계산 실패: {e}")
+            results['hessian_inv'] = None
+            results['standard_errors'] = None
+            results['t_statistics'] = None
+            results['p_values'] = None
+            results['parameter_statistics'] = None
+
+        self.logger.info("=" * 70)
+        self.logger.info("선택모델 추정 완료")
+        self.logger.info(f"  로그우도: {log_likelihood:.2f}")
+        self.logger.info(f"  AIC: {aic:.2f}")
+        self.logger.info(f"  BIC: {bic:.2f}")
+        self.logger.info(f"  성공: {result.success}")
+        self.logger.info("=" * 70)
+
+        return results
+
+    def get_initial_params(self, data: pd.DataFrame) -> Dict:
+        """
+        초기 파라미터 생성
+
+        ✅ 조절효과 지원
+
+        Args:
+            data: 선택 데이터
+
+        Returns:
+            조절효과 모델:
+                {
+                    'intercept': float,
+                    'beta': np.ndarray,
+                    'lambda_main': float,
+                    'lambda_mod_perceived_price': float,
+                    'lambda_mod_nutrition_knowledge': float
+                }
+
+        Example:
+            >>> params = model.get_initial_params(data)
+        """
+        n_attributes = len(self.choice_attributes)
+
+        # 기본 초기값
+        params = {
+            'intercept': 0.0,
+            'beta': np.zeros(n_attributes)
+        }
+
+        # 가격 변수가 있으면 음수로 초기화
+        if self.price_variable in self.choice_attributes:
+            price_idx = self.choice_attributes.index(self.price_variable)
+            params['beta'][price_idx] = -1.0
+
+        if self.moderation_enabled:
+            # ✅ 조절효과 모델
+            params['lambda_main'] = 1.0
+
+            # 조절효과 초기값
+            for mod_lv in self.moderator_lvs:
+                param_name = f'lambda_mod_{mod_lv}'
+                # 가격은 부적 조절, 지식은 정적 조절 가정
+                if 'price' in mod_lv.lower():
+                    params[param_name] = -0.3
+                elif 'knowledge' in mod_lv.lower():
+                    params[param_name] = 0.2
+                else:
+                    params[param_name] = 0.0
+        else:
+            # 기본 모델 (하위 호환)
+            params['lambda'] = 1.0
+
+        self.logger.info(f"초기 파라미터: {params}")
+
+        return params
+
+    def _params_to_array(self, params: Dict) -> Tuple[List[str], np.ndarray]:
+        """
+        파라미터 딕셔너리를 배열로 변환 (최적화용)
+
+        Args:
+            params: 파라미터 딕셔너리
+
+        Returns:
+            (param_names, param_array)
+        """
+        param_names = []
+        param_values = []
+
+        # intercept
+        param_names.append('intercept')
+        param_values.append(params['intercept'])
+
+        # beta
+        for i, attr in enumerate(self.choice_attributes):
+            param_names.append(f'beta_{attr}')
+            param_values.append(params['beta'][i])
+
+        # lambda_main 또는 lambda
+        if 'lambda_main' in params:
+            param_names.append('lambda_main')
+            param_values.append(params['lambda_main'])
+        elif 'lambda' in params:
+            param_names.append('lambda')
+            param_values.append(params['lambda'])
+
+        # lambda_mod_*
+        if self.moderation_enabled:
+            for mod_lv in self.moderator_lvs:
+                param_name = f'lambda_mod_{mod_lv}'
+                if param_name in params:
+                    param_names.append(param_name)
+                    param_values.append(params[param_name])
+
+        return param_names, np.array(param_values)
+
+    def _array_to_params(self, param_names: List[str], param_array: np.ndarray) -> Dict:
+        """
+        배열을 파라미터 딕셔너리로 변환
+
+        Args:
+            param_names: 파라미터 이름 리스트
+            param_array: 파라미터 값 배열
+
+        Returns:
+            파라미터 딕셔너리
+        """
+        params = {}
+
+        # beta 수집용
+        beta_values = []
+
+        for name, value in zip(param_names, param_array):
+            if name == 'intercept':
+                params['intercept'] = value
+            elif name.startswith('beta_'):
+                beta_values.append(value)
+            elif name == 'lambda_main':
+                params['lambda_main'] = value
+            elif name == 'lambda':
+                params['lambda'] = value
+            elif name.startswith('lambda_mod_'):
+                params[name] = value
+
+        # beta 배열로 변환
+        if beta_values:
+            params['beta'] = np.array(beta_values)
+
+        return params
+
+    def _structure_statistics(self, param_names: List[str],
+                             estimates: np.ndarray,
+                             std_errors: np.ndarray,
+                             t_stats: np.ndarray,
+                             p_values: np.ndarray) -> Dict:
+        """
+        파라미터별 통계량을 구조화된 딕셔너리로 변환
+
+        Args:
+            param_names: 파라미터 이름 리스트
+            estimates: 추정값 배열
+            std_errors: 표준오차 배열
+            t_stats: t-통계량 배열
+            p_values: p-value 배열
+
+        Returns:
+            구조화된 통계량 딕셔너리
+            {
+                'intercept': {'estimate': ..., 'se': ..., 't': ..., 'p': ...},
+                'beta': {
+                    'sugar_free': {'estimate': ..., 'se': ..., 't': ..., 'p': ...},
+                    'health_label': {...},
+                    'price': {...}
+                },
+                'lambda_main': {...},
+                'lambda_mod_perceived_price': {...},
+                'lambda_mod_nutrition_knowledge': {...}
+            }
+        """
+        stats = {}
+
+        for i, name in enumerate(param_names):
+            stat_dict = {
+                'estimate': estimates[i],
+                'se': std_errors[i],
+                't': t_stats[i],
+                'p': p_values[i]
+            }
+
+            if name == 'intercept':
+                stats['intercept'] = stat_dict
+            elif name.startswith('beta_'):
+                # beta 파라미터는 속성별로 그룹화
+                if 'beta' not in stats:
+                    stats['beta'] = {}
+                attr_name = name.replace('beta_', '')
+                stats['beta'][attr_name] = stat_dict
+            elif name == 'lambda_main':
+                stats['lambda_main'] = stat_dict
+            elif name == 'lambda':
+                stats['lambda'] = stat_dict
+            elif name.startswith('lambda_mod_'):
+                stats[name] = stat_dict
+
+        return stats
 
