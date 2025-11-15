@@ -191,7 +191,7 @@ def _format_pvalue(p):
     return str(p)
 
 
-def _create_param_dict(model, latent_variable, parameter, estimate, std_err=None, p_value=None):
+def _create_param_dict(model, latent_variable, parameter, estimate, std_err=None, p_value=None, std_est=None):
     """
     파라미터 딕셔너리 생성 (공통 함수)
 
@@ -199,9 +199,10 @@ def _create_param_dict(model, latent_variable, parameter, estimate, std_err=None
         model: 모델 타입 ('Measurement', 'Structural', 'Choice')
         latent_variable: 잠재변수 이름
         parameter: 파라미터 이름
-        estimate: 추정값
+        estimate: 추정값 (비표준화)
         std_err: 표준오차 (선택)
         p_value: p-value (선택)
+        std_est: 표준화 계수 (선택)
 
     Returns:
         파라미터 딕셔너리
@@ -214,6 +215,7 @@ def _create_param_dict(model, latent_variable, parameter, estimate, std_err=None
         'Latent_Variable': latent_variable,
         'Parameter': parameter,
         'Estimate': estimate,
+        'Std_Est': std_est,
         'Std_Err': std_err,
         'p_value': formatted_p
     }
@@ -311,7 +313,8 @@ def _extract_sequential_params(results):
                     f'λ_{row["lval"]}',
                     row['Estimate'],
                     row.get('Std. Err', None),
-                    row.get('p-value', None)
+                    row.get('p-value', None),
+                    row.get('Est. Std', None)  # 표준화 계수 추가
                 ))
 
         # 경로계수
@@ -324,7 +327,8 @@ def _extract_sequential_params(results):
                     f'γ_{row["rval"]}',
                     row['Estimate'],
                     row.get('Std. Err', None),
-                    row.get('p-value', None)
+                    row.get('p-value', None),
+                    row.get('Est. Std', None)  # 표준화 계수 추가
                 ))
 
     # Step 2: 선택모델 결과
@@ -527,8 +531,9 @@ def _calculate_bootstrap_ci(bootstrap_results: List[List[Dict]],
     """
     from scipy import stats
 
-    # 파라미터별로 값 수집
+    # 파라미터별로 값 수집 (비표준화 + 표준화)
     param_values = {}
+    param_values_std = {}  # 표준화 계수
 
     for sample_params in bootstrap_results:
         for param_dict in sample_params:
@@ -536,8 +541,9 @@ def _calculate_bootstrap_ci(bootstrap_results: List[List[Dict]],
 
             if key not in param_values:
                 param_values[key] = []
+                param_values_std[key] = []
 
-            # Estimate 값 추출
+            # Estimate 값 추출 (비표준화)
             estimate = param_dict['Estimate']
             if isinstance(estimate, str):
                 try:
@@ -546,6 +552,16 @@ def _calculate_bootstrap_ci(bootstrap_results: List[List[Dict]],
                     continue
 
             param_values[key].append(estimate)
+
+            # Std_Est 값 추출 (표준화)
+            std_est = param_dict.get('Std_Est', None)
+            if std_est is not None and not isinstance(std_est, str):
+                param_values_std[key].append(std_est)
+            elif isinstance(std_est, str):
+                try:
+                    param_values_std[key].append(float(std_est))
+                except (ValueError, TypeError):
+                    pass
 
     # 신뢰구간 계산
     alpha = 1 - confidence_level
@@ -560,11 +576,25 @@ def _calculate_bootstrap_ci(bootstrap_results: List[List[Dict]],
 
         values_array = np.array(values)
 
-        # Percentile method
+        # Percentile method (비표준화)
         lower_ci = np.percentile(values_array, lower_percentile)
         upper_ci = np.percentile(values_array, upper_percentile)
         mean_val = np.mean(values_array)
         se_val = np.std(values_array, ddof=1)  # 표준오차
+
+        # 표준화 계수 통계량
+        std_values = param_values_std.get(key, [])
+        if len(std_values) > 0:
+            std_values_array = np.array(std_values)
+            mean_std = np.mean(std_values_array)
+            se_std = np.std(std_values_array, ddof=1)
+            lower_ci_std = np.percentile(std_values_array, lower_percentile)
+            upper_ci_std = np.percentile(std_values_array, upper_percentile)
+        else:
+            mean_std = None
+            se_std = None
+            lower_ci_std = None
+            upper_ci_std = None
 
         # p-value 계산 (3가지 방법)
 
@@ -606,6 +636,10 @@ def _calculate_bootstrap_ci(bootstrap_results: List[List[Dict]],
             'SE': se_val,
             'CI_Lower': lower_ci,
             'CI_Upper': upper_ci,
+            'Mean_Std': mean_std,
+            'SE_Std': se_std,
+            'CI_Lower_Std': lower_ci_std,
+            'CI_Upper_Std': upper_ci_std,
             'p_value_bootstrap': p_value_bootstrap,
             'p_value_normal': p_value_normal,
             'p_value_t': p_value_t,

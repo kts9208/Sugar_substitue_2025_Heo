@@ -189,8 +189,8 @@ class SEMEstimator:
         if not self.fitted:
             raise ValueError("모델이 추정되지 않았습니다. fit()을 먼저 실행하세요.")
 
-        # 전체 파라미터
-        params = self.model.inspect()
+        # 전체 파라미터 (표준화 계수 포함)
+        params = self.model.inspect(std_est=True)
 
         # 잠재변수 목록
         latent_vars = list(measurement_model.configs.keys())

@@ -81,7 +81,7 @@ def main():
         measurement_model=measurement_model,
         structural_model=structural_model,
         choice_model=choice_model,
-        n_bootstrap=1000,  # 1000개 샘플
+        n_bootstrap=3000,  # 3000개 샘플
         n_workers=n_cores,
         confidence_level=0.95,
         random_seed=42,
