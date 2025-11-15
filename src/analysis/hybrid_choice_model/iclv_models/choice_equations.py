@@ -805,20 +805,54 @@ class MultinomialLogitChoice(BaseICLVChoice):
         param_names, x0 = self._params_to_array(initial_params)
         self.logger.info(f"최적화 파라미터 개수: {len(x0)}")
 
-        # 5. 목적함수 정의 (음의 로그우도)
+        # 5. 목적함수 정의 (음의 로그우도) + 반복 로깅
+        iteration_count = [0]  # 리스트로 감싸서 클로저에서 수정 가능하게
+
         def negative_log_likelihood(params_array):
             params = self._array_to_params(param_names, params_array)
             ll = self.log_likelihood(data, lv_expanded, params)
-            return -ll
+            nll = -ll
+
+            # 반복 로깅 (10회마다)
+            iteration_count[0] += 1
+            if iteration_count[0] % 10 == 0 or iteration_count[0] == 1:
+                print(f"  반복 {iteration_count[0]:3d}: NLL = {nll:12.4f}, LL = {ll:12.4f}")
+                self.logger.info(f"  반복 {iteration_count[0]:3d}: NLL = {nll:12.4f}, LL = {ll:12.4f}")
+
+            return nll
 
         # 6. 최적화 실행
+        print(f"\n[선택모델 최적화 시작] method=L-BFGS-B")
         self.logger.info("최적화 시작 (method=L-BFGS-B)...")
+
+        initial_nll = negative_log_likelihood(x0)
+        print(f"  초기 NLL: {initial_nll:.4f}")
+        self.logger.info(f"  초기 NLL: {initial_nll:.4f}")
+
+        # 반복 카운터 초기화
+        iteration_count[0] = 0
+
         result = minimize(
             negative_log_likelihood,
             x0,
             method='L-BFGS-B',
-            options={'maxiter': 1000, 'disp': True}
+            options={'maxiter': 1000, 'disp': False}  # disp=False로 변경 (우리가 직접 로깅)
         )
+
+        # 최적화 완료 로깅
+        print(f"\n[선택모델 최적화 완료]")
+        print(f"  총 반복 횟수: {result.nit}")
+        print(f"  함수 평가 횟수: {result.nfev}")
+        print(f"  최종 LL: {-result.fun:.4f}")
+        print(f"  수렴 여부: {result.success}")
+        print(f"  메시지: {result.message}")
+
+        self.logger.info(f"최적화 완료:")
+        self.logger.info(f"  총 반복 횟수: {result.nit}")
+        self.logger.info(f"  함수 평가 횟수: {result.nfev}")
+        self.logger.info(f"  최종 LL: {-result.fun:.4f}")
+        self.logger.info(f"  수렴 여부: {result.success}")
+        self.logger.info(f"  메시지: {result.message}")
 
         # 7. 결과 정리
         estimated_params = self._array_to_params(param_names, result.x)

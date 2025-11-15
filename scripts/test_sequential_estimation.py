@@ -33,6 +33,22 @@ from src.analysis.hybrid_choice_model.iclv_models.multi_latent_config import (
 )
 
 
+def format_pvalue(p):
+    """
+    p-value를 적절한 형식으로 표기
+
+    Args:
+        p: p-value
+
+    Returns:
+        str: 포맷된 p-value 문자열
+    """
+    if p < 0.001:
+        return "<0.001"
+    else:
+        return f"{p:.4f}"
+
+
 def create_config():
     """
     5개 잠재변수 설정 생성
@@ -103,25 +119,29 @@ def print_results(results, elapsed_time):
             if 'intercept' in stats:
                 s = stats['intercept']
                 sig = "***" if s['p'] < 0.001 else "**" if s['p'] < 0.01 else "*" if s['p'] < 0.05 else ""
-                print(f"    intercept: {s['estimate']:.4f} (p={s['p']:.4f}) {sig}")
+                p_str = format_pvalue(s['p'])
+                print(f"    intercept: {s['estimate']:.4f} (p={p_str}) {sig}")
 
             # Beta
             if 'beta' in stats:
                 for attr, s in stats['beta'].items():
                     sig = "***" if s['p'] < 0.001 else "**" if s['p'] < 0.01 else "*" if s['p'] < 0.05 else ""
-                    print(f"    β_{attr}: {s['estimate']:.4f} (p={s['p']:.4f}) {sig}")
+                    p_str = format_pvalue(s['p'])
+                    print(f"    β_{attr}: {s['estimate']:.4f} (p={p_str}) {sig}")
 
             # Lambda
             if 'lambda_main' in stats:
                 s = stats['lambda_main']
                 sig = "***" if s['p'] < 0.001 else "**" if s['p'] < 0.01 else "*" if s['p'] < 0.05 else ""
-                print(f"    λ_main: {s['estimate']:.4f} (p={s['p']:.4f}) {sig}")
+                p_str = format_pvalue(s['p'])
+                print(f"    λ_main: {s['estimate']:.4f} (p={p_str}) {sig}")
 
             for key in ['lambda_mod_perceived_price', 'lambda_mod_nutrition_knowledge']:
                 if key in stats:
                     s = stats[key]
                     sig = "***" if s['p'] < 0.001 else "**" if s['p'] < 0.01 else "*" if s['p'] < 0.05 else ""
-                    print(f"    {key}: {s['estimate']:.4f} (p={s['p']:.4f}) {sig}")
+                    p_str = format_pvalue(s['p'])
+                    print(f"    {key}: {s['estimate']:.4f} (p={p_str}) {sig}")
 
             print("\n  유의수준: *** p<0.001, ** p<0.01, * p<0.05")
 

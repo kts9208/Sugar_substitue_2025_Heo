@@ -82,6 +82,36 @@ def print_config_summary(config, use_parallel=False, n_cores=1, n_cpus=1):
             print(f"   - 사용 코어: {n_cores}/{n_cpus}개 ({n_cores/n_cpus*100:.1f}%)")
 
 
+def _format_pvalue(p):
+    """
+    p-value를 적절한 형식으로 표기
+
+    Args:
+        p: p-value (float, str, 또는 None)
+
+    Returns:
+        str: 포맷된 p-value 문자열
+    """
+    if p is None or p == '-':
+        return '-'
+
+    # 문자열인 경우 float로 변환 시도
+    if isinstance(p, str):
+        try:
+            p = float(p)
+        except (ValueError, TypeError):
+            return p
+
+    # float인 경우 포맷팅
+    if isinstance(p, (int, float)):
+        if p < 0.001:
+            return '<0.001'
+        else:
+            return f'{p:.4f}'
+
+    return str(p)
+
+
 def _create_param_dict(model, latent_variable, parameter, estimate, std_err=None, p_value=None):
     """
     파라미터 딕셔너리 생성 (공통 함수)
@@ -97,13 +127,16 @@ def _create_param_dict(model, latent_variable, parameter, estimate, std_err=None
     Returns:
         파라미터 딕셔너리
     """
+    # p-value 포맷팅
+    formatted_p = _format_pvalue(p_value)
+
     return {
         'Model': model,
         'Latent_Variable': latent_variable,
         'Parameter': parameter,
         'Estimate': estimate,
         'Std_Err': std_err,
-        'p_value': p_value
+        'p_value': formatted_p
     }
 
 

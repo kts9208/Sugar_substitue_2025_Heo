@@ -61,8 +61,11 @@ class SemopyAnalyzer:
             
             # 모델 생성
             self.model = Model(model_spec)
-            
+
             # 모델 적합
+            print(f"\n[SEM 최적화 시작] solver={self.config.optimizer}")
+            logger.info(f"SEM 최적화 시작 (solver={self.config.optimizer})...")
+
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 # semopy의 최신 API에 맞게 수정
@@ -70,12 +73,44 @@ class SemopyAnalyzer:
                     clean_data,
                     solver=self.config.optimizer
                 )
-            
+
             self.fitted = True
-            
+
+            # 최적화 결과 로깅
+            if hasattr(self.model, 'last_result') and self.model.last_result is not None:
+                print(f"\n[SEM 최적화 완료]")
+                logger.info(f"SEM 최적화 완료:")
+
+                # semopy의 SolverResult 속성 확인
+                if hasattr(self.model.last_result, 'n_it'):
+                    print(f"  반복 횟수: {self.model.last_result.n_it}")
+                    logger.info(f"  반복 횟수: {self.model.last_result.n_it}")
+                elif hasattr(self.model.last_result, 'nit'):
+                    print(f"  반복 횟수: {self.model.last_result.nit}")
+                    logger.info(f"  반복 횟수: {self.model.last_result.nit}")
+
+                if hasattr(self.model.last_result, 'n_fev'):
+                    print(f"  함수 평가 횟수: {self.model.last_result.n_fev}")
+                    logger.info(f"  함수 평가 횟수: {self.model.last_result.n_fev}")
+                elif hasattr(self.model.last_result, 'nfev'):
+                    print(f"  함수 평가 횟수: {self.model.last_result.nfev}")
+                    logger.info(f"  함수 평가 횟수: {self.model.last_result.nfev}")
+
+                if hasattr(self.model.last_result, 'fun'):
+                    print(f"  목적함수 값: {self.model.last_result.fun:.4f}")
+                    logger.info(f"  목적함수 값: {self.model.last_result.fun:.4f}")
+
+                if hasattr(self.model.last_result, 'success'):
+                    print(f"  수렴 여부: {self.model.last_result.success}")
+                    logger.info(f"  수렴 여부: {self.model.last_result.success}")
+
+                if hasattr(self.model.last_result, 'message'):
+                    print(f"  메시지: {self.model.last_result.message}")
+                    logger.info(f"  메시지: {self.model.last_result.message}")
+
             # 결과 처리
             analysis_results = self._process_results(clean_data)
-            
+
             logger.info("모델 적합 완료")
             return analysis_results
             

@@ -31,7 +31,7 @@ class FactorAnalysisConfig:
     
     # 분석 설정
     estimator: str = 'MLW'  # Maximum Likelihood with Wishart
-    optimizer: str = 'SLSQP'  # Sequential Least Squares Programming
+    optimizer: str = 'L-BFGS-B'  # Limited-memory BFGS with Bounds
     max_iterations: int = 1000
     tolerance: float = 1e-6
     
