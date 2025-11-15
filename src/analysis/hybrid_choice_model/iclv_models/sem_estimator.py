@@ -104,19 +104,36 @@ class SEMEstimator:
         """
         logger.info("SEM 방식 추정 시작 (측정모델 + 구조모델 통합)")
 
+        # 0. 개인별 unique 데이터 추출 (중요!)
+        # DCE 데이터는 개인×choice_set×alternative 형태이므로
+        # SEM 추정을 위해 개인별로 하나의 행만 사용
+        individual_col = 'respondent_id'  # 또는 'id'
+        if individual_col not in data.columns:
+            individual_col = 'id' if 'id' in data.columns else data.columns[0]
+
+        # 잠재변수 지표 컬럼 추출
+        all_indicators = []
+        for lv_config in measurement_model.configs.values():
+            all_indicators.extend(lv_config.indicators)
+
+        # 개인별 첫 번째 행만 선택 (잠재변수 지표는 개인별로 동일)
+        unique_data = data.groupby(individual_col)[all_indicators].first().reset_index()
+
+        logger.info(f"원본 데이터: {len(data)}행 → 개인별 unique 데이터: {len(unique_data)}행")
+
         # 1. 모델 스펙 생성
         model_spec = self._create_sem_spec(measurement_model, structural_model)
         logger.info(f"모델 스펙 생성 완료:\n{model_spec}")
 
-        # 2. 기존 SemopyAnalyzer.fit_model() 재사용
-        results = self.analyzer.fit_model(data, model_spec)
+        # 2. 기존 SemopyAnalyzer.fit_model() 재사용 (unique 데이터 사용)
+        results = self.analyzer.fit_model(unique_data, model_spec)
 
         # 3. 모델 객체 저장
         self.model = self.analyzer.model
         self.fitted = True
 
-        # 4. 요인점수 추출
-        factor_scores = self._extract_factor_scores(data, measurement_model)
+        # 4. 요인점수 추출 (unique 데이터 사용)
+        factor_scores = self._extract_factor_scores(unique_data, measurement_model)
 
         # 5. 파라미터 추출 (수정됨)
         extracted_params = self._extract_parameters(measurement_model, structural_model)
@@ -394,6 +411,9 @@ class SEMEstimator:
 
         semopy 모델의 로그우도 추출
 
+        semopy는 MLW (Maximum Likelihood Wishart) objective function을 최소화합니다.
+        로그우도 = -0.5 * objective_value
+
         Returns:
             로그우도 값
         """
@@ -401,19 +421,15 @@ class SEMEstimator:
             raise ValueError("모델이 추정되지 않았습니다.")
 
         try:
-            # semopy 모델의 objective function 값
-            # (negative log-likelihood)
-            if hasattr(self.model, 'obj'):
-                # obj는 -2 * log-likelihood
-                log_likelihood = -0.5 * self.model.obj
-            elif hasattr(self.model, 'loglike'):
-                log_likelihood = self.model.loglike
+            # semopy는 last_result.fun에 objective function 값을 저장
+            if hasattr(self.model, 'last_result') and hasattr(self.model.last_result, 'fun'):
+                # MLW objective function을 로그우도로 변환
+                log_likelihood = -0.5 * self.model.last_result.fun
+                logger.info(f"로그우도: {log_likelihood:.4f} (MLW objective: {self.model.last_result.fun:.4f})")
+                return float(log_likelihood)
             else:
-                logger.warning("로그우도를 추출할 수 없습니다.")
-                log_likelihood = np.nan
-
-            logger.info(f"로그우도: {log_likelihood:.4f}")
-            return float(log_likelihood)
+                logger.warning("로그우도를 추출할 수 없습니다. (last_result.fun 없음)")
+                return np.nan
 
         except Exception as e:
             logger.warning(f"로그우도 계산 오류: {e}")

@@ -773,19 +773,27 @@ class MultinomialLogitChoice(BaseICLVChoice):
         if 'choice' not in data.columns and 'Choice' not in data.columns:
             raise ValueError("데이터에 'choice' 또는 'Choice' 열이 없습니다.")
 
-        # 2. 요인점수를 개인별로 복제 (각 선택 상황마다 3개 행)
-        # 선택 데이터는 (n_individuals * n_choice_situations * 3) 행
+        # 2. 요인점수를 개인별로 복제 (각 선택 상황마다 n_alternatives개 행)
+        # 선택 데이터는 (n_individuals * n_choice_sets * n_alternatives) 행
         # 요인점수는 (n_individuals,) 배열
-        # 각 개인의 선택 상황마다 동일한 요인점수 사용
+        # 각 개인의 모든 선택 상황에 동일한 요인점수 사용
 
         n_rows = len(data)
-        n_choice_situations = n_rows // self.n_alternatives
+        n_individuals = len(next(iter(factor_scores.values())))
+
+        # 각 개인당 행 수 계산 (choice_sets × alternatives)
+        rows_per_individual = n_rows // n_individuals
+
+        self.logger.info(f"요인점수 확장:")
+        self.logger.info(f"  전체 데이터 행 수: {n_rows}")
+        self.logger.info(f"  개인 수: {n_individuals}")
+        self.logger.info(f"  개인당 행 수: {rows_per_individual}")
 
         # 요인점수를 선택 데이터 길이에 맞게 확장
         lv_expanded = {}
         for lv_name, scores in factor_scores.items():
-            # 각 개인의 점수를 n_alternatives번 반복
-            expanded = np.repeat(scores, self.n_alternatives)
+            # 각 개인의 점수를 rows_per_individual번 반복
+            expanded = np.repeat(scores, rows_per_individual)
             lv_expanded[lv_name] = expanded
             self.logger.info(f"  {lv_name}: {scores.shape} → {expanded.shape}")
 
@@ -816,6 +824,7 @@ class MultinomialLogitChoice(BaseICLVChoice):
         estimated_params = self._array_to_params(param_names, result.x)
         log_likelihood = -result.fun
         n_params = len(result.x)
+        n_choice_situations = n_rows // self.n_alternatives
         n_obs = n_choice_situations
 
         aic = 2 * n_params - 2 * log_likelihood

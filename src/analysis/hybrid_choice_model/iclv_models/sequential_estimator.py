@@ -343,67 +343,39 @@ class SequentialEstimator(BaseEstimator):
 
     def _estimate_choice(self, data: pd.DataFrame,
                         choice_model,
-                        factor_scores: np.ndarray) -> Dict:
+                        factor_scores: Dict[str, np.ndarray]) -> Dict:
         """
         선택모델 추정
 
-        Probit 또는 Logit 모델: P(Choice|X, LV)
+        MultinomialLogitChoice.fit() 메서드 사용
 
         Args:
             data: 전체 데이터
-            choice_model: 선택모델 객체
-            factor_scores: 요인점수
+            choice_model: 선택모델 객체 (MultinomialLogitChoice)
+            factor_scores: 요인점수 딕셔너리
+                {
+                    'purchase_intention': np.ndarray (n_individuals,),
+                    'perceived_price': np.ndarray (n_individuals,),
+                    'nutrition_knowledge': np.ndarray (n_individuals,),
+                    ...
+                }
 
         Returns:
             선택모델 추정 결과
         """
-        # 데이터에 요인점수 추가
-        individual_ids = data[self.config.individual_id_column].unique()
-
-        # 요인점수를 데이터프레임에 매핑
-        factor_score_dict = {
-            ind_id: factor_scores[i]
-            for i, ind_id in enumerate(individual_ids)
-        }
-
-        data_with_lv = data.copy()
-        data_with_lv['latent_variable'] = data_with_lv[self.config.individual_id_column].map(
-            factor_score_dict
-        )
-
-        # 선택모델 추정 (간단한 최적화)
-        initial_params = self.initializer._initialize_choice(choice_model)
-
-        def negative_ll(params):
-            param_dict = self._unpack_choice_params(params, choice_model)
-            ll = 0.0
-
-            for ind_id in individual_ids:
-                ind_data = data_with_lv[data_with_lv[self.config.individual_id_column] == ind_id]
-                lv = factor_score_dict[ind_id]
-
-                for idx in range(len(ind_data)):
-                    ll += choice_model.log_likelihood(
-                        ind_data.iloc[idx:idx+1],
-                        lv,
-                        param_dict
-                    )
-
-            return -ll
-
-        result = optimize.minimize(
-            negative_ll,
-            initial_params,
-            method='BFGS',
-            options={'maxiter': 1000}
-        )
+        # MultinomialLogitChoice.fit() 메서드 사용
+        # 이 메서드는 요인점수를 받아서 선택모델을 추정합니다
+        results = choice_model.fit(data, factor_scores)
 
         return {
-            'params': result.x,
-            'log_likelihood': -result.fun,
-            'success': result.success,
-            'n_iterations': result.nit,
-            'full_results': result
+            'params': results['params'],
+            'log_likelihood': results['log_likelihood'],
+            'aic': results.get('aic', None),
+            'bic': results.get('bic', None),
+            'success': results.get('success', True),
+            'n_iterations': 0,  # MultinomialLogitChoice.fit()는 반복 횟수를 반환하지 않음
+            'parameter_statistics': results.get('parameter_statistics', None),
+            'full_results': results
         }
 
     # ========================================================================
@@ -424,31 +396,43 @@ class SequentialEstimator(BaseEstimator):
             통합 결과 딕셔너리
         """
         # 전체 파라미터 결합
+        # SEM 결과는 DataFrame이므로 처리 방식이 다름
+        measurement_params = self.measurement_results['params']
+        if isinstance(measurement_params, pd.DataFrame):
+            measurement_params = measurement_params['Estimate'].values
+        elif isinstance(measurement_params, dict):
+            measurement_params = np.array(list(measurement_params.values()))
+
+        structural_params = self.structural_results['params']
+        if isinstance(structural_params, pd.DataFrame):
+            structural_params = structural_params['Estimate'].values
+        elif isinstance(structural_params, dict):
+            structural_params = np.array(list(structural_params.values()))
+
+        choice_params = self.choice_results['params']
+        if isinstance(choice_params, dict):
+            # 딕셔너리의 값들을 flatten하여 결합
+            choice_params_list = []
+            for v in choice_params.values():
+                if isinstance(v, np.ndarray):
+                    choice_params_list.extend(v.flatten())
+                else:
+                    choice_params_list.append(v)
+            choice_params = np.array(choice_params_list)
+
         all_params = np.concatenate([
-            self.measurement_results['params'].flatten()
-            if isinstance(self.measurement_results['params'], np.ndarray)
-            else np.array(list(self.measurement_results['params'].values())).flatten(),
-
-            self.structural_results['params'].flatten()
-            if isinstance(self.structural_results['params'], np.ndarray)
-            else np.array(list(self.structural_results['params'].values())).flatten(),
-
-            self.choice_results['params'].flatten()
+            measurement_params.flatten(),
+            structural_params.flatten(),
+            choice_params.flatten()
         ])
 
         # 전체 로그우도 (각 단계 합산)
-        total_ll = (
-            self.measurement_results['log_likelihood'] +
-            self.structural_results['log_likelihood'] +
-            self.choice_results['log_likelihood']
-        )
+        # SEM은 측정모델과 구조모델을 통합 추정하므로 로그우도가 중복됨
+        # 선택모델 로그우도만 별도로 계산됨
+        total_ll = self.choice_results['log_likelihood']
 
         # 전체 반복 횟수
-        total_iterations = (
-            self.measurement_results['n_iterations'] +
-            self.structural_results['n_iterations'] +
-            self.choice_results['n_iterations']
-        )
+        total_iterations = self.choice_results.get('n_iterations', 0)
 
         # 수렴 여부
         success = (
