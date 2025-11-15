@@ -7,10 +7,89 @@ ICLV 테스트 스크립트 공통 유틸리티
 import sys
 from pathlib import Path
 import pandas as pd
+import numpy as np
 import multiprocessing
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from tqdm import tqdm
+from typing import Dict, Any, List
+import logging
 
 # 프로젝트 루트 경로
 project_root = Path(__file__).parent.parent
+
+logger = logging.getLogger(__name__)
+
+
+def _single_bootstrap_worker(args):
+    """
+    단일 부트스트랩 샘플 처리 (병렬 처리용 워커 함수)
+
+    Args:
+        args: (sample_idx, data, individual_ids, measurement_model, structural_model,
+               choice_model, random_seed)
+
+    Returns:
+        Dict: 파라미터 추정치 또는 None (실패 시)
+    """
+    (sample_idx, data, individual_ids, measurement_model,
+     structural_model, choice_model, random_seed) = args
+
+    try:
+        # 시드 설정 (각 샘플마다 다른 시드)
+        np.random.seed(random_seed + sample_idx)
+
+        # 1. 개인별 리샘플링 (with replacement)
+        bootstrap_ids = np.random.choice(individual_ids, size=len(individual_ids), replace=True)
+
+        # 2. 리샘플링된 개인들의 데이터 추출
+        bootstrap_data = pd.concat([
+            data[data['respondent_id'] == id_val].copy()
+            for id_val in bootstrap_ids
+        ]).reset_index(drop=True)
+
+        # 3. Step 1: SEM 추정
+        from src.analysis.hybrid_choice_model.iclv_models.sem_estimator import SEMEstimator
+
+        sem_estimator = SEMEstimator()
+        sem_results = sem_estimator.fit(
+            data=bootstrap_data,
+            measurement_model=measurement_model,
+            structural_model=structural_model
+        )
+
+        # 요인점수 추출
+        factor_scores = sem_results['factor_scores']
+
+        # 4. Step 2: 선택모델 추정
+        choice_results = choice_model.fit(
+            data=bootstrap_data,
+            factor_scores=factor_scores
+        )
+
+        # 5. 결과 통합
+        results = {
+            'stage_results': {
+                'measurement': {
+                    'full_results': sem_results,
+                    'parameters': sem_results.get('loadings', [])
+                },
+                'structural': {
+                    'parameters': sem_results.get('paths', [])
+                },
+                'choice': choice_results
+            }
+        }
+
+        # 6. 파라미터 추출
+        params = _extract_sequential_params(results)
+
+        return params
+
+    except Exception as e:
+        import traceback
+        logger.warning(f"Bootstrap sample {sample_idx} failed: {e}")
+        logger.debug(traceback.format_exc())
+        return None
 
 
 def load_integrated_data():
@@ -308,4 +387,283 @@ def save_results_to_csv(results, output_path, estimation_type='simultaneous'):
         print(f"   - 파라미터 개수: {len(param_list)}개")
     else:
         print("\n저장할 파라미터가 없습니다.")
+
+
+def bootstrap_sequential_estimation(
+    data: pd.DataFrame,
+    measurement_model,
+    structural_model,
+    choice_model,
+    n_bootstrap: int = 100,
+    n_workers: int = None,
+    confidence_level: float = 0.95,
+    random_seed: int = 42,
+    show_progress: bool = True
+) -> Dict[str, Any]:
+    """
+    순차추정 부트스트래핑 (CPU 병렬 처리)
+
+    각 부트스트랩 샘플마다:
+    1. 개인별 리샘플링 (with replacement)
+    2. Step 1: SEM 재추정 -> 요인점수 추출
+    3. Step 2: 선택모델 재추정
+    4. 파라미터 저장
+
+    Args:
+        data: 전체 데이터 (5,868행)
+        measurement_model: 측정모델 설정
+        structural_model: 구조모델 설정
+        choice_model: 선택모델 설정
+        n_bootstrap: 부트스트랩 샘플 수 (기본 100)
+        n_workers: 병렬 작업 수 (None이면 CPU 코어 수 - 1)
+        confidence_level: 신뢰수준 (기본 0.95)
+        random_seed: 랜덤 시드
+        show_progress: 진행 상황 표시
+
+    Returns:
+        Dict containing:
+        - bootstrap_estimates: 각 샘플의 파라미터 추정치 (List[Dict])
+        - confidence_intervals: 파라미터별 신뢰구간 (DataFrame)
+        - bootstrap_statistics: 평균, 표준편차, 편향 등 (DataFrame)
+        - n_successful: 성공한 샘플 수
+        - n_failed: 실패한 샘플 수
+    """
+    from src.analysis.hybrid_choice_model.iclv_models.sequential_estimator import SequentialEstimator
+
+    # 병렬 작업 수 설정
+    if n_workers is None:
+        n_cpus = multiprocessing.cpu_count()
+        n_workers = max(1, n_cpus - 1)
+
+    print(f"\n부트스트래핑 설정:")
+    print(f"   샘플 수: {n_bootstrap}")
+    print(f"   병렬 작업 수: {n_workers}")
+    print(f"   신뢰수준: {confidence_level}")
+
+    # 개인 ID 추출
+    individual_ids = data['respondent_id'].unique()
+    n_individuals = len(individual_ids)
+
+    print(f"   개인 수: {n_individuals}")
+
+    # 워커 함수에 전달할 인자 준비
+    worker_args = [
+        (i, data, individual_ids, measurement_model, structural_model, choice_model, random_seed)
+        for i in range(n_bootstrap)
+    ]
+
+    # 병렬 실행
+    print(f"\n부트스트래핑 시작...")
+    start_time = pd.Timestamp.now()
+
+    bootstrap_results = []
+
+    if n_workers > 1:
+        # 병렬 처리
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            futures = [executor.submit(_single_bootstrap_worker, args) for args in worker_args]
+
+            if show_progress:
+                # 진행 상황 표시
+                for future in tqdm(as_completed(futures), total=n_bootstrap, desc="Bootstrap"):
+                    result = future.result()
+                    if result is not None:
+                        bootstrap_results.append(result)
+            else:
+                for future in as_completed(futures):
+                    result = future.result()
+                    if result is not None:
+                        bootstrap_results.append(result)
+    else:
+        # 순차 처리
+        iterator = tqdm(worker_args, desc="Bootstrap") if show_progress else worker_args
+        for args in iterator:
+            result = _single_bootstrap_worker(args)
+            if result is not None:
+                bootstrap_results.append(result)
+
+    end_time = pd.Timestamp.now()
+    elapsed = (end_time - start_time).total_seconds()
+
+    n_successful = len(bootstrap_results)
+    n_failed = n_bootstrap - n_successful
+
+    print(f"\n부트스트래핑 완료!")
+    print(f"   성공: {n_successful}/{n_bootstrap}")
+    print(f"   실패: {n_failed}/{n_bootstrap}")
+    print(f"   소요 시간: {elapsed:.1f}초")
+
+    if n_successful == 0:
+        raise RuntimeError("모든 부트스트랩 샘플이 실패했습니다.")
+
+    # 5. 신뢰구간 계산
+    print(f"\n신뢰구간 계산 중...")
+    confidence_intervals = _calculate_bootstrap_ci(bootstrap_results, confidence_level)
+
+    # 6. 부트스트랩 통계량 계산
+    bootstrap_stats = _calculate_bootstrap_stats(bootstrap_results)
+
+    return {
+        'bootstrap_estimates': bootstrap_results,
+        'confidence_intervals': confidence_intervals,
+        'bootstrap_statistics': bootstrap_stats,
+        'n_successful': n_successful,
+        'n_failed': n_failed,
+        'elapsed_seconds': elapsed
+    }
+
+
+def _calculate_bootstrap_ci(bootstrap_results: List[List[Dict]],
+                            confidence_level: float = 0.95) -> pd.DataFrame:
+    """
+    부트스트랩 결과로부터 신뢰구간 및 p-value 계산
+
+    Args:
+        bootstrap_results: 부트스트랩 파라미터 리스트
+        confidence_level: 신뢰수준
+
+    Returns:
+        DataFrame: 파라미터별 신뢰구간 및 통계량
+    """
+    from scipy import stats
+
+    # 파라미터별로 값 수집
+    param_values = {}
+
+    for sample_params in bootstrap_results:
+        for param_dict in sample_params:
+            key = (param_dict['Model'], param_dict['Latent_Variable'], param_dict['Parameter'])
+
+            if key not in param_values:
+                param_values[key] = []
+
+            # Estimate 값 추출
+            estimate = param_dict['Estimate']
+            if isinstance(estimate, str):
+                try:
+                    estimate = float(estimate)
+                except (ValueError, TypeError):
+                    continue
+
+            param_values[key].append(estimate)
+
+    # 신뢰구간 계산
+    alpha = 1 - confidence_level
+    lower_percentile = (alpha / 2) * 100
+    upper_percentile = (1 - alpha / 2) * 100
+
+    ci_results = []
+
+    for key, values in param_values.items():
+        if len(values) == 0:
+            continue
+
+        values_array = np.array(values)
+
+        # Percentile method
+        lower_ci = np.percentile(values_array, lower_percentile)
+        upper_ci = np.percentile(values_array, upper_percentile)
+        mean_val = np.mean(values_array)
+        se_val = np.std(values_array, ddof=1)  # 표준오차
+
+        # p-value 계산 (3가지 방법)
+
+        # 1. Bootstrap p-value (양측검정)
+        # H0: parameter = 0
+        n_bootstrap = len(values_array)
+        if mean_val >= 0:
+            # 양수인 경우: 0 이하인 값의 비율 × 2
+            n_extreme = np.sum(values_array <= 0)
+        else:
+            # 음수인 경우: 0 이상인 값의 비율 × 2
+            n_extreme = np.sum(values_array >= 0)
+
+        p_value_bootstrap = 2 * (n_extreme + 1) / (n_bootstrap + 1)
+
+        # 2. Normal approximation p-value
+        if se_val > 0:
+            z_stat = mean_val / se_val
+            p_value_normal = 2 * (1 - stats.norm.cdf(abs(z_stat)))
+        else:
+            p_value_normal = 1.0
+
+        # 3. t-distribution p-value (더 보수적)
+        if se_val > 0:
+            t_stat = mean_val / se_val
+            df = n_bootstrap - 1
+            p_value_t = 2 * (1 - stats.t.cdf(abs(t_stat), df))
+        else:
+            p_value_t = 1.0
+
+        # 0을 포함하는지 확인 (유의성)
+        significant = not (lower_ci <= 0 <= upper_ci)
+
+        ci_results.append({
+            'Model': key[0],
+            'Latent_Variable': key[1],
+            'Parameter': key[2],
+            'Mean': mean_val,
+            'SE': se_val,
+            'CI_Lower': lower_ci,
+            'CI_Upper': upper_ci,
+            'p_value_bootstrap': p_value_bootstrap,
+            'p_value_normal': p_value_normal,
+            'p_value_t': p_value_t,
+            'Significant': significant
+        })
+
+    return pd.DataFrame(ci_results)
+
+
+def _calculate_bootstrap_stats(bootstrap_results: List[List[Dict]]) -> pd.DataFrame:
+    """
+    부트스트랩 통계량 계산
+
+    Args:
+        bootstrap_results: 부트스트랩 파라미터 리스트
+
+    Returns:
+        DataFrame: 파라미터별 통계량 (평균, 표준편차, 편향 등)
+    """
+    # 파라미터별로 값 수집
+    param_values = {}
+
+    for sample_params in bootstrap_results:
+        for param_dict in sample_params:
+            key = (param_dict['Model'], param_dict['Latent_Variable'], param_dict['Parameter'])
+
+            if key not in param_values:
+                param_values[key] = []
+
+            # Estimate 값 추출
+            estimate = param_dict['Estimate']
+            if isinstance(estimate, str):
+                try:
+                    estimate = float(estimate)
+                except (ValueError, TypeError):
+                    continue
+
+            param_values[key].append(estimate)
+
+    # 통계량 계산
+    stats_results = []
+
+    for key, values in param_values.items():
+        if len(values) == 0:
+            continue
+
+        values_array = np.array(values)
+
+        stats_results.append({
+            'Model': key[0],
+            'Latent_Variable': key[1],
+            'Parameter': key[2],
+            'Bootstrap_Mean': np.mean(values_array),
+            'Bootstrap_SE': np.std(values_array, ddof=1),
+            'Bootstrap_Min': np.min(values_array),
+            'Bootstrap_Max': np.max(values_array),
+            'N_Samples': len(values_array)
+        })
+
+    return pd.DataFrame(stats_results)
 

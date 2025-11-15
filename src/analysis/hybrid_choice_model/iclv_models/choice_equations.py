@@ -781,21 +781,33 @@ class MultinomialLogitChoice(BaseICLVChoice):
         n_rows = len(data)
         n_individuals = len(next(iter(factor_scores.values())))
 
-        # 각 개인당 행 수 계산 (choice_sets × alternatives)
-        rows_per_individual = n_rows // n_individuals
-
         self.logger.info(f"요인점수 확장:")
         self.logger.info(f"  전체 데이터 행 수: {n_rows}")
         self.logger.info(f"  개인 수: {n_individuals}")
-        self.logger.info(f"  개인당 행 수: {rows_per_individual}")
 
-        # 요인점수를 선택 데이터 길이에 맞게 확장
-        lv_expanded = {}
-        for lv_name, scores in factor_scores.items():
-            # 각 개인의 점수를 rows_per_individual번 반복
-            expanded = np.repeat(scores, rows_per_individual)
-            lv_expanded[lv_name] = expanded
-            self.logger.info(f"  {lv_name}: {scores.shape} → {expanded.shape}")
+        # respondent_id 기준으로 요인점수 매핑 (부트스트랩 안전)
+        if 'respondent_id' in data.columns:
+            # 개인 ID 추출
+            unique_ids = data['respondent_id'].unique()
+
+            # 요인점수를 ID 순서대로 매핑
+            lv_expanded = {}
+            for lv_name, scores in factor_scores.items():
+                # 각 행의 respondent_id에 해당하는 요인점수 할당
+                id_to_score = {unique_ids[i]: scores[i] for i in range(len(unique_ids))}
+                expanded = np.array([id_to_score[rid] for rid in data['respondent_id']])
+                lv_expanded[lv_name] = expanded
+                self.logger.info(f"  {lv_name}: {scores.shape} → {expanded.shape}")
+        else:
+            # respondent_id가 없는 경우 (하위 호환)
+            rows_per_individual = n_rows // n_individuals
+            self.logger.info(f"  개인당 행 수: {rows_per_individual}")
+
+            lv_expanded = {}
+            for lv_name, scores in factor_scores.items():
+                expanded = np.repeat(scores, rows_per_individual)
+                lv_expanded[lv_name] = expanded
+                self.logger.info(f"  {lv_name}: {scores.shape} → {expanded.shape}")
 
         # 3. 초기 파라미터 생성
         initial_params = self.get_initial_params(data)
