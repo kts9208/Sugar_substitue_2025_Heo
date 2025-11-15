@@ -101,6 +101,9 @@ class GPUBatchEstimator(SimultaneousEstimator):
         self.memory_monitor_gpu_threshold_mb = memory_monitor_gpu_threshold_mb
         self.memory_monitor = None  # estimate()에서 초기화
 
+        # 사용자 정의 초기값 저장
+        self.user_initial_params = None
+
         if self.use_gpu:
             if self.use_full_parallel:
                 logger.info("✨ GPU 완전 병렬 처리 활성화 (Advanced Indexing)")
@@ -113,7 +116,8 @@ class GPUBatchEstimator(SimultaneousEstimator):
                 measurement_model,
                 structural_model,
                 choice_model,
-                log_file: Optional[str] = None) -> Dict:
+                log_file: Optional[str] = None,
+                initial_params: Optional[np.ndarray] = None) -> Dict:
         """
         ICLV 모델 추정 (GPU 배치 가속)
 
@@ -123,10 +127,13 @@ class GPUBatchEstimator(SimultaneousEstimator):
             structural_model: 구조모델 인스턴스
             choice_model: 선택모델 인스턴스
             log_file: 로그 파일 경로
+            initial_params: 사용자 정의 초기 파라미터 (선택사항)
 
         Returns:
             추정 결과 딕셔너리
         """
+        # 사용자 정의 초기값 저장
+        self.user_initial_params = initial_params
         # GPU 측정모델 생성
         if self.use_gpu:
             if hasattr(self.config, 'measurement_configs'):
@@ -635,8 +642,14 @@ class GPUBatchEstimator(SimultaneousEstimator):
         """
         초기 파라미터 설정 (다중 잠재변수 지원)
 
-        ✅ 최종 수렴값 (Iteration 24) 기반 초기값 사용
+        ✅ 사용자 정의 초기값이 있으면 우선 사용
+        ✅ 없으면 최종 수렴값 (Iteration 24) 기반 초기값 사용
         """
+        # 사용자 정의 초기값이 있으면 그것을 사용
+        if self.user_initial_params is not None:
+            logger.info(f"사용자 정의 초기값 사용 (파라미터 수: {len(self.user_initial_params)})")
+            return self.user_initial_params
+
         from .initial_values_final import (
             get_zeta_initial_value,
             get_sigma_sq_initial_value,

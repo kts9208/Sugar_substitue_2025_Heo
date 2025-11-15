@@ -204,8 +204,30 @@ def main():
         traceback.print_exc()
         return
 
-    # 5. ICLV 동시추정 실행
-    print("\n5. ICLV 동시추정 실행...")
+    # 5. 초기값 로드 (gpu_batch_iclv_results_20251114_070950.csv)
+    print("\n5. 초기값 로드...")
+    initial_params_file = project_root / 'results' / 'gpu_batch_iclv_results_20251114_070950.csv'
+
+    initial_params = None
+    if initial_params_file.exists():
+        print(f"   초기값 파일: {initial_params_file}")
+        df_initial = pd.read_csv(initial_params_file)
+
+        # Estimation statistics 행 제거 (빈 행 이후)
+        first_empty_idx = df_initial[df_initial['Coefficient'].isna()].index
+        if len(first_empty_idx) > 0:
+            df_initial = df_initial.iloc[:first_empty_idx[0]]
+
+        # Estimate 값만 추출 (순서대로)
+        initial_params = df_initial['Estimate'].values.astype(float)
+        print(f"   초기값 개수: {len(initial_params)}")
+        print(f"   초기값 범위: [{initial_params.min():.4f}, {initial_params.max():.4f}]")
+    else:
+        print(f"   [경고] 초기값 파일을 찾을 수 없습니다: {initial_params_file}")
+        print(f"   랜덤 초기값을 사용합니다.")
+
+    # 6. ICLV 동시추정 실행
+    print("\n6. ICLV 동시추정 실행...")
     print("   (GPU 배치 처리 - 다중 잠재변수)")
     print("\n   [주의] GPU 배치 처리는 5-10분 정도 소요될 수 있습니다...")
 
@@ -221,12 +243,13 @@ def main():
             measurement_model=measurement_model,
             structural_model=structural_model,
             choice_model=choice_model,
-            log_file=str(log_file)
+            log_file=str(log_file),
+            initial_params=initial_params  # 초기값 전달
         )
 
         elapsed_time = time.time() - start_time
 
-        # 6. 결과 출력
+        # 7. 결과 출력
         print("\n" + "="*70)
         print("추정 결과 (GPU 배치 - 다중 잠재변수)")
         print("="*70)
@@ -250,7 +273,7 @@ def main():
             print(f"최대 GPU 메모리: {mem_summary['gpu_max_mb']:.1f}MB")
             print(f"평균 GPU 메모리: {mem_summary['gpu_avg_mb']:.1f}MB")
 
-        # 7. 결과 저장
+        # 8. 결과 저장
         output_dir = project_root / 'results'
         output_dir.mkdir(exist_ok=True)
 

@@ -2187,11 +2187,16 @@ class SimultaneousEstimator:
                 lv_config = self.config.measurement_configs[lv_name]
                 fix_first_loading = getattr(lv_config, 'fix_first_loading', True)
 
-                if fix_first_loading:
-                    # 첫 번째 zeta gradient 제외
+                # ✅ GPU gradient는 이미 첫 번째 요소가 제외되어 있음
+                # CPU gradient는 모든 요소를 포함하므로 첫 번째 제외 필요
+                use_gpu = hasattr(self, 'use_gpu') and self.use_gpu
+
+                if fix_first_loading and not use_gpu:
+                    # CPU gradient: 첫 번째 zeta gradient 제외
                     gradient_list.append(lv_grad['grad_zeta'][1:])
                     logger.info(f"[_pack_gradient]   Added grad_zeta (excluding first), size: {len(lv_grad['grad_zeta'][1:])}")
                 else:
+                    # GPU gradient 또는 fix_first_loading=False: 그대로 사용
                     gradient_list.append(lv_grad['grad_zeta'])
                     logger.info(f"[_pack_gradient]   Added grad_zeta, size: {len(lv_grad['grad_zeta'])}")
 
