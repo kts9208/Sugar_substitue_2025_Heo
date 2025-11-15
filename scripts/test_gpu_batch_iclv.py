@@ -1,8 +1,12 @@
 """
-GPU 배치 처리 ICLV 모델 테스트 - 다중 잠재변수
+ICLV 모델 테스트 - 다중 잠재변수
 
-완전한 GPU 배치 처리로 다중 잠재변수 ICLV 모델을 추정합니다.
-5개 잠재변수 (4개 외생 + 1개 내생) 동시추정
+다중 잠재변수 ICLV 모델을 추정합니다.
+5개 잠재변수 (4개 외생 + 1개 내생)
+
+추정 방법 선택:
+- USE_SEQUENTIAL = False: 동시추정 (GPU 배치 처리)
+- USE_SEQUENTIAL = True: 순차추정 (3단계 추정)
 """
 
 import sys
@@ -11,6 +15,11 @@ import numpy as np
 import time
 from pathlib import Path
 from datetime import datetime
+
+# ============================================================================
+# 추정 방법 선택
+# ============================================================================
+USE_SEQUENTIAL = False  # True: 순차추정, False: 동시추정 (GPU 배치)
 
 # 프로젝트 루트를 경로에 추가
 project_root = Path(__file__).parent.parent
@@ -25,7 +34,15 @@ from src.analysis.hybrid_choice_model.iclv_models.multi_latent_config import (
     MultiLatentStructuralConfig,
     MultiLatentConfig
 )
-from src.analysis.hybrid_choice_model.iclv_models.gpu_batch_estimator import GPUBatchEstimator
+
+# 추정 방법에 따라 다른 Estimator import
+if USE_SEQUENTIAL:
+    from src.analysis.hybrid_choice_model.iclv_models.sequential_estimator import SequentialEstimator
+    print("✅ 순차추정 모드 (Sequential Estimation)")
+else:
+    from src.analysis.hybrid_choice_model.iclv_models.simultaneous_gpu_batch_estimator import SimultaneousGPUBatchEstimator
+    print("✅ 동시추정 모드 (Simultaneous Estimation with GPU Batch)")
+
 from src.analysis.hybrid_choice_model.iclv_models.multi_latent_measurement import MultiLatentMeasurement
 from src.analysis.hybrid_choice_model.iclv_models.multi_latent_structural import MultiLatentStructural
 from src.analysis.hybrid_choice_model.iclv_models.choice_equations import BinaryProbitChoice, MultinomialLogitChoice
@@ -186,23 +203,34 @@ def main():
         traceback.print_exc()
         return
 
-    # 4. GPU 배치 Estimator 생성 (메모리 모니터링 포함)
-    print("\n4. GPU 배치 Estimator 생성...")
-
-    try:
-        estimator = GPUBatchEstimator(
-            config,
-            use_gpu=True,
-            memory_monitor_cpu_threshold_mb=2000,  # CPU 메모리 임계값 2GB
-            memory_monitor_gpu_threshold_mb=5000   # GPU 메모리 임계값 5GB
-        )
-        print("   - GPU 배치 Estimator 생성 완료")
-        print("   - 메모리 모니터링 활성화 (CPU: 2GB, GPU: 5GB 임계값)")
-    except Exception as e:
-        print(f"   [ERROR] Estimator 생성 실패: {e}")
-        import traceback
-        traceback.print_exc()
-        return
+    # 4. Estimator 생성 (추정 방법에 따라 다름)
+    if USE_SEQUENTIAL:
+        print("\n4. 순차 Estimator 생성...")
+        try:
+            estimator = SequentialEstimator(config)
+            print("   - 순차 Estimator 생성 완료")
+            print("   - 3단계 추정: 측정모델 → 구조모델 → 선택모델")
+        except Exception as e:
+            print(f"   [ERROR] Estimator 생성 실패: {e}")
+            import traceback
+            traceback.print_exc()
+            return
+    else:
+        print("\n4. 동시추정 GPU 배치 Estimator 생성...")
+        try:
+            estimator = SimultaneousGPUBatchEstimator(
+                config,
+                use_gpu=True,
+                memory_monitor_cpu_threshold_mb=2000,  # CPU 메모리 임계값 2GB
+                memory_monitor_gpu_threshold_mb=5000   # GPU 메모리 임계값 5GB
+            )
+            print("   - 동시추정 GPU 배치 Estimator 생성 완료")
+            print("   - 메모리 모니터링 활성화 (CPU: 2GB, GPU: 5GB 임계값)")
+        except Exception as e:
+            print(f"   [ERROR] Estimator 생성 실패: {e}")
+            import traceback
+            traceback.print_exc()
+            return
 
     # 5. 초기값 로드 (gpu_batch_iclv_results_20251114_070950.csv)
     print("\n5. 초기값 로드...")
@@ -226,10 +254,15 @@ def main():
         print(f"   [경고] 초기값 파일을 찾을 수 없습니다: {initial_params_file}")
         print(f"   랜덤 초기값을 사용합니다.")
 
-    # 6. ICLV 동시추정 실행
-    print("\n6. ICLV 동시추정 실행...")
-    print("   (GPU 배치 처리 - 다중 잠재변수)")
-    print("\n   [주의] GPU 배치 처리는 5-10분 정도 소요될 수 있습니다...")
+    # 6. ICLV 추정 실행
+    if USE_SEQUENTIAL:
+        print("\n6. ICLV 순차추정 실행...")
+        print("   (3단계 추정 - 다중 잠재변수)")
+        print("\n   [주의] 순차추정은 2-5분 정도 소요될 수 있습니다...")
+    else:
+        print("\n6. ICLV 동시추정 실행...")
+        print("   (GPU 배치 처리 - 다중 잠재변수)")
+        print("\n   [주의] GPU 배치 처리는 5-10분 정도 소요될 수 있습니다...")
 
     # 로그 파일 경로 설정
     log_file = project_root / 'results' / 'gpu_batch_iclv_estimation_log.txt'
@@ -251,27 +284,41 @@ def main():
 
         # 7. 결과 출력
         print("\n" + "="*70)
-        print("추정 결과 (GPU 배치 - 다중 잠재변수)")
+        if USE_SEQUENTIAL:
+            print("추정 결과 (순차추정 - 다중 잠재변수)")
+        else:
+            print("추정 결과 (GPU 배치 - 다중 잠재변수)")
         print("="*70)
         print(f"\n추정 시간: {elapsed_time/60:.2f}분 ({elapsed_time:.1f}초)")
         print(f"수렴 여부: {result['success']}")
         print(f"반복 횟수: {result.get('n_iterations', result.get('iterations', 'N/A'))}")
         print(f"최종 로그우도: {result['log_likelihood']:.4f}")
 
-        # 메모리 사용 요약
-        print("\n" + "="*70)
-        print("메모리 사용 요약")
-        print("="*70)
-        mem_summary = estimator.memory_monitor.get_memory_summary()
-        print(f"현재 CPU 메모리: {mem_summary['current_cpu_mb']:.1f}MB")
-        if mem_summary['current_gpu_mb'] is not None:
-            print(f"현재 GPU 메모리: {mem_summary['current_gpu_mb']:.1f}MB")
-        if 'cpu_max_mb' in mem_summary:
-            print(f"최대 CPU 메모리: {mem_summary['cpu_max_mb']:.1f}MB")
-            print(f"평균 CPU 메모리: {mem_summary['cpu_avg_mb']:.1f}MB")
-        if 'gpu_max_mb' in mem_summary:
-            print(f"최대 GPU 메모리: {mem_summary['gpu_max_mb']:.1f}MB")
-            print(f"평균 GPU 메모리: {mem_summary['gpu_avg_mb']:.1f}MB")
+        # 순차추정인 경우 단계별 결과 출력
+        if USE_SEQUENTIAL and 'stage_results' in result:
+            print("\n" + "-"*70)
+            print("단계별 결과")
+            print("-"*70)
+            stage_results = result['stage_results']
+            print(f"1단계 (측정모델): LL = {stage_results['measurement']['log_likelihood']:.4f}")
+            print(f"2단계 (구조모델): LL = {stage_results['structural']['log_likelihood']:.4f}")
+            print(f"3단계 (선택모델): LL = {stage_results['choice']['log_likelihood']:.4f}")
+
+        # 메모리 사용 요약 (동시추정만)
+        if not USE_SEQUENTIAL and hasattr(estimator, 'memory_monitor'):
+            print("\n" + "="*70)
+            print("메모리 사용 요약")
+            print("="*70)
+            mem_summary = estimator.memory_monitor.get_memory_summary()
+            print(f"현재 CPU 메모리: {mem_summary['current_cpu_mb']:.1f}MB")
+            if mem_summary['current_gpu_mb'] is not None:
+                print(f"현재 GPU 메모리: {mem_summary['current_gpu_mb']:.1f}MB")
+            if 'cpu_max_mb' in mem_summary:
+                print(f"최대 CPU 메모리: {mem_summary['cpu_max_mb']:.1f}MB")
+                print(f"평균 CPU 메모리: {mem_summary['cpu_avg_mb']:.1f}MB")
+            if 'gpu_max_mb' in mem_summary:
+                print(f"최대 GPU 메모리: {mem_summary['gpu_max_mb']:.1f}MB")
+                print(f"평균 GPU 메모리: {mem_summary['gpu_avg_mb']:.1f}MB")
 
         # 8. 결과 저장
         output_dir = project_root / 'results'
@@ -280,8 +327,11 @@ def main():
         # 타임스탬프 생성 (CSV와 동일한 타임스탬프 사용)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+        # 파일명 prefix 설정
+        file_prefix = 'sequential_iclv' if USE_SEQUENTIAL else 'gpu_batch_iclv'
+
         # 파라미터 저장 (npy)
-        params_file = output_dir / f'gpu_batch_iclv_params_{timestamp}.npy'
+        params_file = output_dir / f'{file_prefix}_params_{timestamp}.npy'
         np.save(params_file, result['raw_params'])
 
         # ✅ 로그 파일에서 최종 파라미터 값 파싱
@@ -634,7 +684,7 @@ def main():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         # CSV 저장 (상세 파라미터)
-        csv_file = output_dir / f'gpu_batch_iclv_results_{timestamp}.csv'
+        csv_file = output_dir / f'{file_prefix}_results_{timestamp}.csv'
         df_combined.to_csv(csv_file, index=False, encoding='utf-8-sig')
         print(f"\n   ✓ 결과 저장 완료: {csv_file}")
         print(f"     - 파라미터 수: {len(param_list)}")
@@ -659,7 +709,7 @@ def main():
             )
 
             # CSV 저장
-            hessian_file = output_dir / f'gpu_batch_iclv_hessian_inv_{timestamp}.csv'
+            hessian_file = output_dir / f'{file_prefix}_hessian_inv_{timestamp}.csv'
             df_hessian.to_csv(hessian_file, encoding='utf-8-sig')
             print(f"     - Hessian 역행렬 저장 완료: {hessian_file}")
             print(f"     - Shape: {hess_inv.shape}")
@@ -681,7 +731,7 @@ def main():
             )
 
             # CSV 저장
-            hessian_file = output_dir / f'gpu_batch_iclv_hessian_inv_{timestamp}.csv'
+            hessian_file = output_dir / f'{file_prefix}_hessian_inv_{timestamp}.csv'
             df_hessian.to_csv(hessian_file, encoding='utf-8-sig')
             print(f"     - Hessian 역행렬 저장 완료: {hessian_file}")
             print(f"     - Shape: {hess_inv.shape}")
@@ -689,14 +739,18 @@ def main():
             print(f"\n   ⚠️  Hessian 역행렬 없음 (저장 건너뜀)")
 
         # 요약정보 저장 (CSV)
+        optimizer_name = 'Sequential_3Step' if USE_SEQUENTIAL else 'BFGS_GPU_Batch'
+        gpu_enabled = 'False' if USE_SEQUENTIAL else 'True'
+        halton_draws = 'N/A' if USE_SEQUENTIAL else str(estimation_config.n_draws)
+
         summary_data = {
             'Metric': ['Estimation_Time_Minutes', 'N_Individuals', 'N_Observations',
                        'Halton_Draws', 'Optimizer', 'Log_Likelihood', 'N_Parameters',
                        'GPU_Enabled', 'AIC', 'BIC'],
             'Value': [f"{elapsed_time/60:.2f}", str(n_individuals), str(data.shape[0]),
-                      str(estimation_config.n_draws), 'BFGS_GPU_Batch',
+                      halton_draws, optimizer_name,
                       f"{result['log_likelihood']:.4f}", str(result['n_parameters']),
-                      'True', f"{result['aic']:.2f}", f"{result['bic']:.2f}"]
+                      gpu_enabled, f"{result['aic']:.2f}", f"{result['bic']:.2f}"]
         }
 
         if n_iter != 'N/A':
@@ -704,7 +758,7 @@ def main():
             summary_data['Value'].append(str(n_iter))
 
         df_summary = pd.DataFrame(summary_data)
-        summary_file = output_dir / f'gpu_batch_iclv_summary_{timestamp}.csv'
+        summary_file = output_dir / f'{file_prefix}_summary_{timestamp}.csv'
         df_summary.to_csv(summary_file, index=False, encoding='utf-8-sig')
 
         print(f"\n결과 저장:")
@@ -719,7 +773,10 @@ def main():
         return
 
     print("\n" + "="*70)
-    print("GPU 배치 추정 완료!")
+    if USE_SEQUENTIAL:
+        print("순차 추정 완료!")
+    else:
+        print("GPU 배치 추정 완료!")
     print("="*70)
 
 

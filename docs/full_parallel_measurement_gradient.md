@@ -228,13 +228,13 @@ def compute_all_individuals_gradients_full_parallel_gpu(
 
 ## 사용 방법
 
-### 1. GPUBatchEstimator에서 활성화
+### 1. SimultaneousGPUBatchEstimator에서 활성화
 
 ```python
-from src.analysis.hybrid_choice_model.iclv_models.gpu_batch_estimator import GPUBatchEstimator
+from src.analysis.hybrid_choice_model.iclv_models.simultaneous_gpu_batch_estimator import SimultaneousGPUBatchEstimator
 
 # 완전 병렬 처리 활성화 (기본값)
-estimator = GPUBatchEstimator(
+estimator = SimultaneousGPUBatchEstimator(
     config,
     use_gpu=True,
     use_full_parallel=True  # ✨ 완전 병렬 처리
@@ -248,7 +248,7 @@ results = estimator.estimate(data, measurement_model, structural_model, choice_m
 
 ```python
 # LV별 순차, 지표별 병렬 (5번 GPU 호출)
-estimator = GPUBatchEstimator(
+estimator = SimultaneousGPUBatchEstimator(
     config,
     use_gpu=True,
     use_full_parallel=False

@@ -157,10 +157,10 @@ Iteration 45: 누적 450MB ✅ 안정적
 
 ### **기본 사용**
 ```python
-from src.analysis.hybrid_choice_model.iclv_models.gpu_batch_estimator import GPUBatchEstimator
+from src.analysis.hybrid_choice_model.iclv_models.simultaneous_gpu_batch_estimator import SimultaneousGPUBatchEstimator
 
 # Estimator 생성 (기본 임계값)
-estimator = GPUBatchEstimator(config, use_gpu=True)
+estimator = SimultaneousGPUBatchEstimator(config, use_gpu=True)
 
 # 추정 실행
 results = estimator.estimate(data, measurement_model, structural_model, choice_model)
@@ -172,16 +172,16 @@ summary = estimator.memory_monitor.get_memory_summary()
 ### **커스텀 임계값**
 ```python
 # 보수적 설정 (안정성 우선)
-estimator = GPUBatchEstimator(
-    config, 
+estimator = SimultaneousGPUBatchEstimator(
+    config,
     use_gpu=True,
     memory_monitor_cpu_threshold_mb=1500,  # 1.5GB
     memory_monitor_gpu_threshold_mb=1000   # 1GB
 )
 
 # 공격적 설정 (성능 우선)
-estimator = GPUBatchEstimator(
-    config, 
+estimator = SimultaneousGPUBatchEstimator(
+    config,
     use_gpu=True,
     memory_monitor_cpu_threshold_mb=3000,  # 3GB
     memory_monitor_gpu_threshold_mb=2000   # 2GB

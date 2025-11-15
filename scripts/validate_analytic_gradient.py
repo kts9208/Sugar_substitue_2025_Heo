@@ -29,7 +29,7 @@ from src.analysis.hybrid_choice_model.iclv_models.multi_latent_config import (
     MultiLatentStructuralConfig,
     MultiLatentConfig
 )
-from src.analysis.hybrid_choice_model.iclv_models.gpu_batch_estimator import GPUBatchEstimator
+from src.analysis.hybrid_choice_model.iclv_models.simultaneous_gpu_batch_estimator import SimultaneousGPUBatchEstimator
 from src.analysis.hybrid_choice_model.iclv_models.multi_latent_measurement import MultiLatentMeasurement
 from src.analysis.hybrid_choice_model.iclv_models.multi_latent_structural import MultiLatentStructural
 from src.analysis.hybrid_choice_model.iclv_models.choice_equations import MultinomialLogitChoice
@@ -393,10 +393,10 @@ def main():
         return
 
     # 4. Estimator 생성
-    print("\n4. GPUBatchEstimator 생성...")
+    print("\n4. SimultaneousGPUBatchEstimator 생성...")
 
     try:
-        estimator = GPUBatchEstimator(
+        estimator = SimultaneousGPUBatchEstimator(
             config,
             use_gpu=True,
             memory_monitor_cpu_threshold_mb=2000,
@@ -421,7 +421,7 @@ def main():
 
         print(f"   - Halton draws 생성 중... (n_individuals={n_individuals}, n_dimensions={n_dimensions})")
 
-        from src.analysis.hybrid_choice_model.iclv_models.gpu_batch_estimator import MultiDimensionalHaltonDrawGenerator
+        from src.analysis.hybrid_choice_model.iclv_models.simultaneous_gpu_batch_estimator import MultiDimensionalHaltonDrawGenerator
         estimator.halton_generator = MultiDimensionalHaltonDrawGenerator(
             n_draws=config.estimation.n_draws,
             n_individuals=n_individuals,

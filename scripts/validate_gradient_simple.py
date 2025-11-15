@@ -27,7 +27,7 @@ from src.analysis.hybrid_choice_model.iclv_models.multi_latent_config import (
     MultiLatentStructuralConfig,
     MultiLatentConfig
 )
-from src.analysis.hybrid_choice_model.iclv_models.gpu_batch_estimator import GPUBatchEstimator
+from src.analysis.hybrid_choice_model.iclv_models.simultaneous_gpu_batch_estimator import SimultaneousGPUBatchEstimator
 from src.analysis.hybrid_choice_model.iclv_models.multi_latent_measurement import MultiLatentMeasurement
 from src.analysis.hybrid_choice_model.iclv_models.multi_latent_structural import MultiLatentStructural
 from src.analysis.hybrid_choice_model.iclv_models.choice_equations import MultinomialLogitChoice
@@ -232,16 +232,16 @@ def main():
     choice_model = MultinomialLogitChoice(choice_config)
     print("   - 측정모델, 구조모델, 선택모델 생성 완료")
 
-    # 4. GPUBatchEstimator 생성 (CPU 모드로 사용)
-    print("\n4. GPUBatchEstimator 생성 (CPU 모드)...")
-    estimator = GPUBatchEstimator(
+    # 4. SimultaneousGPUBatchEstimator 생성 (CPU 모드로 사용)
+    print("\n4. SimultaneousGPUBatchEstimator 생성 (CPU 모드)...")
+    estimator = SimultaneousGPUBatchEstimator(
         config,
         use_gpu=False  # ✅ CPU 모드로 설정
     )
     estimator.data = data
 
     # Halton draws 생성
-    from src.analysis.hybrid_choice_model.iclv_models.gpu_batch_estimator import MultiDimensionalHaltonDrawGenerator
+    from src.analysis.hybrid_choice_model.iclv_models.simultaneous_gpu_batch_estimator import MultiDimensionalHaltonDrawGenerator
     n_individuals = len(sample_ids)
     n_first_order = len(structural_model.exogenous_lvs)
     n_higher_order = len(structural_model.get_higher_order_lvs())

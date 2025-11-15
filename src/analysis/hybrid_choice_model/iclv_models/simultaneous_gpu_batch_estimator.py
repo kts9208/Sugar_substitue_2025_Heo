@@ -1,8 +1,11 @@
 """
-GPU 배치 처리 ICLV 동시추정
+동시추정 GPU 배치 처리 ICLV Estimator
 
 SimultaneousEstimator를 상속하여 GPU 배치 처리로 가속합니다.
 개인별 우도 계산 부분만 GPU 배치로 오버라이드합니다.
+
+주의: 이 클래스는 동시추정(Simultaneous Estimation) 전용입니다.
+순차추정(Sequential Estimation)에는 SequentialEstimator를 사용하세요.
 """
 
 import numpy as np
@@ -71,12 +74,15 @@ class MultiDimensionalHaltonDrawGenerator:
         return self.draws
 
 
-class GPUBatchEstimator(SimultaneousEstimator):
+class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
     """
-    GPU 배치 처리 ICLV 동시추정
-    
+    동시추정 GPU 배치 처리 ICLV Estimator
+
     SimultaneousEstimator를 상속하여 GPU 배치 처리로 가속합니다.
     개인별 우도 계산 부분만 GPU 배치로 오버라이드합니다.
+
+    주의: 이 클래스는 동시추정(Simultaneous Estimation) 전용입니다.
+    순차추정(Sequential Estimation)에는 SequentialEstimator를 사용하세요.
     """
     
     def __init__(self, config, use_gpu: bool = True,

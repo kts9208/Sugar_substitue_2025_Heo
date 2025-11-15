@@ -17,7 +17,7 @@ from src.analysis.hybrid_choice_model.iclv_models.multi_latent_config import (
     MultiLatentStructuralConfig,
     MultiLatentConfig
 )
-from src.analysis.hybrid_choice_model.iclv_models.gpu_batch_estimator import GPUBatchEstimator
+from src.analysis.hybrid_choice_model.iclv_models.simultaneous_gpu_batch_estimator import SimultaneousGPUBatchEstimator
 from dataclasses import dataclass
 
 @dataclass
@@ -68,7 +68,7 @@ config = MultiLatentConfig(
 config.data = DataConfig()
 
 # Estimator 생성
-estimator = GPUBatchEstimator(config, data, use_gpu=False)
+estimator = SimultaneousGPUBatchEstimator(config, data, use_gpu=False)
 
 # 초기 파라미터
 init_params = estimator._initialize_parameters()
