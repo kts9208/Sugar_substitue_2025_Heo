@@ -67,6 +67,9 @@ class MultiLatentStructuralConfig:
     # ✅ 계층적 경로 (디폴트: 건강관심도 → 건강유익성 → 구매의도)
     hierarchical_paths: Optional[List[Dict[str, Any]]] = None
 
+    # ✅ 엄격한 검증 모드 (False로 설정 시 PI로 끝나야 하는 제약 제거)
+    strict_validation: bool = True
+
     # 오차항 분산
     error_variance: float = 1.0
     fix_error_variance: bool = True
@@ -165,13 +168,14 @@ class MultiLatentStructuralConfig:
             # target을 정의된 LV에 추가
             all_lvs.add(target)
 
-        # 최종 target이 endogenous_lv인지 확인
-        final_targets = [path['target'] for path in self.hierarchical_paths]
-        if self.endogenous_lv not in final_targets:
-            raise ValueError(
-                f"계층적 경로의 최종 target이 '{self.endogenous_lv}'가 아닙니다. "
-                f"현재 targets: {final_targets}"
-            )
+        # 최종 target이 endogenous_lv인지 확인 (strict_validation=True일 때만)
+        if self.strict_validation:
+            final_targets = [path['target'] for path in self.hierarchical_paths]
+            if self.endogenous_lv not in final_targets:
+                raise ValueError(
+                    f"계층적 경로의 최종 target이 '{self.endogenous_lv}'가 아닙니다. "
+                    f"현재 targets: {final_targets}"
+                )
 
 
 @dataclass
@@ -241,6 +245,9 @@ def create_sugar_substitute_multi_lv_config(
     use_moderation: bool = False,   # 조절효과 (하위 호환)
     use_full_paths: bool = False,   # ✅ 신규: 모든 잠재변수 간 경로 추정
     custom_paths: Optional[List[Dict[str, Any]]] = None,  # ✅ 사용자 정의 경로
+    strict_validation: bool = True,  # ✅ 엄격한 검증 모드 (False로 설정 시 PI로 끝나야 하는 제약 제거)
+    endogenous_lv: Optional[str] = None,  # ✅ 내생변수 (디폴트: purchase_intention)
+    exogenous_lvs: Optional[List[str]] = None,  # ✅ 외생변수 (디폴트: HC, PP, NK)
     **kwargs
 ) -> MultiLatentConfig:
     """
@@ -312,13 +319,20 @@ def create_sugar_substitute_multi_lv_config(
     }
 
     # 2. 구조모델 설정
+    # 디폴트 값 설정
+    if endogenous_lv is None:
+        endogenous_lv = 'purchase_intention'
+    if exogenous_lvs is None:
+        exogenous_lvs = ['health_concern', 'perceived_price', 'nutrition_knowledge']
+
     if custom_paths is not None:
         # ✅ 사용자 정의 경로
         structural_config = MultiLatentStructuralConfig(
-            endogenous_lv='purchase_intention',
-            exogenous_lvs=['health_concern', 'perceived_price', 'nutrition_knowledge'],
+            endogenous_lv=endogenous_lv,  # ✅ 유연한 내생변수
+            exogenous_lvs=exogenous_lvs,  # ✅ 유연한 외생변수
             covariates=[],
             hierarchical_paths=custom_paths,
+            strict_validation=strict_validation,  # ✅ 검증 모드 전달
             error_variance=1.0,
             fix_error_variance=True
         )

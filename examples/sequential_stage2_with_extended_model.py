@@ -164,7 +164,7 @@ def main():
     # 예시: [] = Base Model (잠재변수 없음)
     #      ['purchase_intention'] = Base + PI 주효과
     #      ['purchase_intention', 'nutrition_knowledge'] = Base + PI + NK 주효과
-    MAIN_LVS = ['nutrition_knowledge']  # ✅ 여기에 잠재변수 추가!
+    MAIN_LVS = []  # ✅ 여기에 잠재변수 추가!
 
     # 📌 조절효과 (잠재변수 2개 세트)
     # 예시: [('perceived_price', 'nutrition_knowledge')] = PP와 NK의 조절효과
