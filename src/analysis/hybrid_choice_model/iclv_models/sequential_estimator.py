@@ -112,6 +112,17 @@ class SequentialEstimator(BaseEstimator):
             self.factor_scores = sem_results['factor_scores']
             self.logger.info(f"요인점수 추출 완료: {list(self.factor_scores.keys())}")
 
+            # ✅ 요인점수 상세 로깅 (표준화 전)
+            self._log_factor_scores(self.factor_scores, stage="SEM 추출 직후 (표준화 전)")
+
+            # ✅ 요인점수 Z-score 표준화
+            self.logger.info("\n요인점수 Z-score 표준화 적용...")
+            self.factor_scores = self._standardize_factor_scores(self.factor_scores)
+            self.logger.info("요인점수 표준화 완료")
+
+            # ✅ 표준화 후 로깅
+            self._log_factor_scores(self.factor_scores, stage="SEM 추출 직후 (표준화 후)")
+
             # 측정모델 및 구조모델 결과 저장
             self.measurement_results = {
                 'params': sem_results['loadings'],
@@ -128,6 +139,10 @@ class SequentialEstimator(BaseEstimator):
             
             # 2단계: 선택모델 추정
             self.logger.info("\n[2단계] 선택모델 추정 시작...")
+
+            # ✅ 선택모델로 전달 직전 로깅
+            self._log_factor_scores(self.factor_scores, stage="선택모델 전달 직전")
+
             self.choice_results = self._estimate_choice(
                 data, choice_model, self.factor_scores
             )
@@ -514,4 +529,93 @@ class SequentialEstimator(BaseEstimator):
             idx += 1
 
         return param_dict
+
+    def _standardize_factor_scores(self, factor_scores: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        """
+        요인점수 Z-score 표준화
+
+        각 잠재변수의 요인점수를 평균 0, 표준편차 1로 표준화합니다.
+
+        z = (x - mean(x)) / std(x)
+
+        Args:
+            factor_scores: 원본 요인점수 딕셔너리
+                {
+                    'purchase_intention': np.ndarray (n_individuals,),
+                    'perceived_price': np.ndarray (n_individuals,),
+                    ...
+                }
+
+        Returns:
+            표준화된 요인점수 딕셔너리 (동일한 구조)
+        """
+        standardized = {}
+
+        self.logger.info("요인점수 Z-score 표준화:")
+        self.logger.info(f"{'변수':30s} {'원본 평균':>12s} {'원본 std':>12s} → {'표준화 평균':>12s} {'표준화 std':>12s}")
+        self.logger.info('-' * 90)
+
+        for lv_name, scores in factor_scores.items():
+            # 평균과 표준편차 계산
+            mean = np.mean(scores)
+            std = np.std(scores, ddof=0)  # 모집단 표준편차 (N으로 나눔)
+
+            # Z-score 표준화
+            if std > 1e-10:  # 표준편차가 0이 아닌 경우만
+                standardized_scores = (scores - mean) / std
+            else:
+                self.logger.warning(f"  {lv_name}: 표준편차가 0에 가까워 표준화하지 않음")
+                standardized_scores = scores - mean  # 평균만 제거
+
+            standardized[lv_name] = standardized_scores
+
+            # 검증
+            new_mean = np.mean(standardized_scores)
+            new_std = np.std(standardized_scores, ddof=0)
+
+            self.logger.info(
+                f'{lv_name:30s} {mean:>12.4f} {std:>12.4f} → {new_mean:>12.6f} {new_std:>12.6f}'
+            )
+
+        self.logger.info('-' * 90)
+        self.logger.info("✅ 모든 요인점수가 평균 0, 표준편차 1로 표준화됨")
+
+        return standardized
+
+    def _log_factor_scores(self, factor_scores: Dict[str, np.ndarray], stage: str = ""):
+        """
+        요인점수 상세 로깅 및 파일 저장
+
+        Args:
+            factor_scores: 요인점수 딕셔너리
+            stage: 로깅 단계 설명
+        """
+        import os
+        from pathlib import Path
+
+        self.logger.info("=" * 70)
+        self.logger.info(f"요인점수 상세 정보 [{stage}]")
+        self.logger.info("=" * 70)
+
+        # 기본 통계
+        for lv_name, scores in factor_scores.items():
+            self.logger.info(f"\n{lv_name}:")
+            self.logger.info(f"  Shape: {scores.shape}")
+            self.logger.info(f"  Mean: {np.mean(scores):.4f}")
+            self.logger.info(f"  Std: {np.std(scores):.4f}")
+            self.logger.info(f"  Min: {np.min(scores):.4f}")
+            self.logger.info(f"  Max: {np.max(scores):.4f}")
+            self.logger.info(f"  First 5: {scores[:5]}")
+
+            # NaN/Inf 체크
+            n_nan = np.sum(np.isnan(scores))
+            n_inf = np.sum(np.isinf(scores))
+            if n_nan > 0 or n_inf > 0:
+                self.logger.warning(f"  ⚠️ NaN: {n_nan}, Inf: {n_inf}")
+
+        # 로그 파일로 저장 (부트스트랩 중에는 비활성화)
+        # self.logger.info("\n파일 저장 시작...")
+        # 디스크 공간 절약을 위해 파일 저장 비활성화
+
+        self.logger.info("=" * 70)
 

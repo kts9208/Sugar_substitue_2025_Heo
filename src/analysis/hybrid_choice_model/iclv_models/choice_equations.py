@@ -785,6 +785,9 @@ class MultinomialLogitChoice(BaseICLVChoice):
         self.logger.info(f"  전체 데이터 행 수: {n_rows}")
         self.logger.info(f"  개인 수: {n_individuals}")
 
+        # ✅ 확장 전 요인점수 로깅
+        self._log_factor_scores(factor_scores, stage="선택모델_확장_전")
+
         # respondent_id 기준으로 요인점수 매핑 (부트스트랩 안전)
         if 'respondent_id' in data.columns:
             # 개인 ID 추출
@@ -808,6 +811,9 @@ class MultinomialLogitChoice(BaseICLVChoice):
                 expanded = np.repeat(scores, rows_per_individual)
                 lv_expanded[lv_name] = expanded
                 self.logger.info(f"  {lv_name}: {scores.shape} → {expanded.shape}")
+
+        # ✅ 확장 후 요인점수 로깅
+        self._log_factor_scores(lv_expanded, stage="선택모델_확장_후")
 
         # 3. 초기 파라미터 생성
         initial_params = self.get_initial_params(data)
@@ -1134,4 +1140,75 @@ class MultinomialLogitChoice(BaseICLVChoice):
                 stats[name] = stat_dict
 
         return stats
+
+    def _log_factor_scores(self, factor_scores: Dict[str, np.ndarray], stage: str = ""):
+        """
+        요인점수 상세 로깅 및 파일 저장
+
+        Args:
+            factor_scores: 요인점수 딕셔너리
+            stage: 로깅 단계 설명
+        """
+        from pathlib import Path
+
+        self.logger.info("=" * 70)
+        self.logger.info(f"요인점수 상세 정보 [{stage}]")
+        self.logger.info("=" * 70)
+
+        # 기본 통계
+        for lv_name, scores in factor_scores.items():
+            self.logger.info(f"\n{lv_name}:")
+            self.logger.info(f"  Shape: {scores.shape}")
+            self.logger.info(f"  Mean: {np.mean(scores):.4f}")
+            self.logger.info(f"  Std: {np.std(scores):.4f}")
+            self.logger.info(f"  Min: {np.min(scores):.4f}")
+            self.logger.info(f"  Max: {np.max(scores):.4f}")
+            self.logger.info(f"  First 5: {scores[:5]}")
+
+            # NaN/Inf 체크
+            n_nan = np.sum(np.isnan(scores))
+            n_inf = np.sum(np.isinf(scores))
+            if n_nan > 0 or n_inf > 0:
+                self.logger.warning(f"  ⚠️ NaN: {n_nan}, Inf: {n_inf}")
+
+        # 로그 파일로 저장
+        self.logger.info("\n파일 저장 시작...")
+        try:
+            from datetime import datetime
+            import os
+
+            # 절대 경로 사용
+            current_dir = Path(os.getcwd())
+            log_dir = current_dir / "logs" / "factor_scores"
+            self.logger.info(f"현재 디렉토리: {current_dir}")
+            self.logger.info(f"로그 디렉토리: {log_dir}")
+            log_dir.mkdir(parents=True, exist_ok=True)
+
+            # 타임스탬프
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            # 단계별 파일명
+            stage_clean = stage.replace(" ", "_").replace("[", "").replace("]", "")
+            log_file = log_dir / f"factor_scores_{stage_clean}_{timestamp}.csv"
+            self.logger.info(f"저장 파일: {log_file}")
+
+            # DataFrame으로 변환하여 저장
+            df = pd.DataFrame(factor_scores)
+            self.logger.info(f"DataFrame 생성 완료: {df.shape}")
+            df.to_csv(str(log_file), index=False)
+            self.logger.info(f"CSV 저장 완료")
+
+            # 파일 존재 확인
+            if log_file.exists():
+                self.logger.info(f"파일 존재 확인: {log_file.exists()}, 크기: {log_file.stat().st_size} bytes")
+            else:
+                self.logger.warning(f"파일이 생성되지 않았습니다!")
+
+            self.logger.info(f"\n✅ 요인점수 저장: {log_file}")
+        except Exception as e:
+            import traceback
+            self.logger.error(f"\n❌ 요인점수 저장 실패: {e}")
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
+
+        self.logger.info("=" * 70)
 

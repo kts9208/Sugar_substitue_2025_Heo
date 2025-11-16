@@ -11,10 +11,25 @@ Date: 2025-11-15
 import sys
 from pathlib import Path
 import time
+import logging
 
 # 프로젝트 루트 경로 추가
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+
+# ✅ 로깅 설정
+log_dir = project_root / 'logs'
+log_dir.mkdir(exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_dir / 'sequential_estimation.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # 공통 유틸리티 임포트
 from iclv_test_utils import (
