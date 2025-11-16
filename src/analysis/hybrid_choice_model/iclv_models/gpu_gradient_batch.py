@@ -620,9 +620,27 @@ def compute_choice_gradient_batch_gpu(
     intercept = params['intercept']
     beta = params['beta']
 
-    # ✅ 조절효과 지원
+    # ✅ 모든 LV 주효과 vs 조절효과 vs 기본 모델 확인
+    lambda_lv_keys = [key for key in params.keys() if key.startswith('lambda_') and key not in ['lambda_main']]
+
+    all_lvs_as_main = len(lambda_lv_keys) > 1
     moderation_enabled = 'lambda_main' in params
-    if moderation_enabled:
+
+    if all_lvs_as_main:
+        # 모든 LV 주효과 모델
+        lambda_lvs = {}
+        for key in lambda_lv_keys:
+            lv_name = key.replace('lambda_', '')
+            lambda_lvs[lv_name] = params[key]
+
+        if iteration_logger and log_level == 'DETAILED':
+            iteration_logger.info(f"  모든 LV 주효과 모델:")
+            iteration_logger.info(f"    - intercept: {intercept:.6f}")
+            iteration_logger.info(f"    - beta: {beta[:min(3, len(beta))]}")
+            for lv_name, lambda_val in lambda_lvs.items():
+                iteration_logger.info(f"    - lambda_{lv_name}: {lambda_val:.6f}")
+    elif moderation_enabled:
+        # 조절효과 모델
         lambda_main = params['lambda_main']
         # lambda_mod는 딕셔너리 형태: {'perceived_price': -0.3, 'nutrition_knowledge': 0.2}
         lambda_mod = {}
@@ -639,6 +657,7 @@ def compute_choice_gradient_batch_gpu(
             for mod_lv_name, lambda_mod_val in lambda_mod.items():
                 iteration_logger.info(f"    - lambda_mod_{mod_lv_name}: {lambda_mod_val:.6f}")
     else:
+        # 기본 모델
         lambda_lv = params['lambda']
 
         if iteration_logger and log_level == 'DETAILED':
@@ -649,14 +668,21 @@ def compute_choice_gradient_batch_gpu(
 
     weights_gpu = cp.asarray(weights)  # (n_draws,)
 
-    # LV 값들 - main LV
-    main_lv_values = np.array([lvs[endogenous_lv] for lvs in lvs_list])
-
-    # ✅ 조절효과: moderator LV 값들
-    if moderation_enabled:
+    # ✅ LV 값들 준비
+    if all_lvs_as_main:
+        # 모든 LV 주효과: 모든 LV 값 추출
+        lv_values = {}
+        for lv_name in lambda_lvs.keys():
+            lv_values[lv_name] = np.array([lvs[lv_name] for lvs in lvs_list])
+    elif moderation_enabled:
+        # 조절효과: main LV + moderator LV 값들
+        main_lv_values = np.array([lvs[endogenous_lv] for lvs in lvs_list])
         mod_lv_values = {}
         for mod_lv_name in lambda_mod.keys():
             mod_lv_values[mod_lv_name] = np.array([lvs[mod_lv_name] for lvs in lvs_list])
+    else:
+        # 기본 모델: main LV만
+        main_lv_values = np.array([lvs[endogenous_lv] for lvs in lvs_list])
 
     # 선택 변수 찾기
     choice_var = None
@@ -682,30 +708,45 @@ def compute_choice_gradient_batch_gpu(
     choices = np.array(choices)  # (n_situations,)
 
     # GPU로 전송
-    main_lv_gpu = cp.asarray(main_lv_values)  # (n_draws,)
     attr_gpu = cp.asarray(attributes_matrix)  # (n_situations, n_attributes)
     choices_gpu = cp.asarray(choices)  # (n_situations,)
     beta_gpu = cp.asarray(beta)  # (n_attributes,)
 
-    # ✅ 조절효과: moderator LV GPU 전송
-    if moderation_enabled:
+    # ✅ LV GPU 전송
+    if all_lvs_as_main:
+        # 모든 LV 주효과: 모든 LV GPU 전송
+        lv_gpu = {}
+        for lv_name, lv_vals in lv_values.items():
+            lv_gpu[lv_name] = cp.asarray(lv_vals)  # (n_draws,)
+    elif moderation_enabled:
+        # 조절효과: main LV + moderator LV GPU 전송
+        main_lv_gpu = cp.asarray(main_lv_values)  # (n_draws,)
         mod_lv_gpu = {}
         for mod_lv_name, mod_values in mod_lv_values.items():
             mod_lv_gpu[mod_lv_name] = cp.asarray(mod_values)  # (n_draws,)
+    else:
+        # 기본 모델: main LV만
+        main_lv_gpu = cp.asarray(main_lv_values)  # (n_draws,)
 
     # ✅ 개선: 배치 처리 (for loop 제거)
     # Broadcasting을 사용하여 모든 draws를 동시에 처리
-
-    # main_lv_batch: (n_draws, 1)
-    main_lv_batch = main_lv_gpu[:, None]
 
     # attr_batch: (1, n_situations, n_attributes)
     attr_batch = attr_gpu[None, :, :]
 
     # V_batch: (n_draws, n_situations)
-    if moderation_enabled:
-        # ✅ 조절효과 모델: V = intercept + β'X + λ_main*PI + Σ λ_mod_k * (PI × LV_k)
-        V_batch = intercept + cp.dot(attr_batch, beta_gpu[:, None]).squeeze(-1) + lambda_main * main_lv_batch
+    # V = intercept + β'X
+    V_batch = intercept + cp.dot(attr_batch, beta_gpu[:, None]).squeeze(-1)
+
+    if all_lvs_as_main:
+        # ✅ 모든 LV 주효과: V += Σ(λ_i * LV_i)
+        for lv_name, lambda_val in lambda_lvs.items():
+            lv_batch = lv_gpu[lv_name][:, None]  # (n_draws, 1)
+            V_batch = V_batch + lambda_val * lv_batch
+    elif moderation_enabled:
+        # ✅ 조절효과 모델: V += λ_main*PI + Σ λ_mod_k * (PI × LV_k)
+        main_lv_batch = main_lv_gpu[:, None]  # (n_draws, 1)
+        V_batch = V_batch + lambda_main * main_lv_batch
 
         # 조절효과 항 추가
         for mod_lv_name, lambda_mod_val in lambda_mod.items():
@@ -713,8 +754,9 @@ def compute_choice_gradient_batch_gpu(
             interaction = main_lv_batch * mod_lv_batch  # (n_draws, 1)
             V_batch = V_batch + lambda_mod_val * interaction
     else:
-        # 기본 모델: V = intercept + β'X + λ*LV
-        V_batch = intercept + cp.dot(attr_batch, beta_gpu[:, None]).squeeze(-1) + lambda_lv * main_lv_batch
+        # 기본 모델: V += λ*LV
+        main_lv_batch = main_lv_gpu[:, None]  # (n_draws, 1)
+        V_batch = V_batch + lambda_lv * main_lv_batch
 
     # Φ(V): (n_draws, n_situations)
     prob_batch = cp_ndtr(V_batch)
@@ -753,8 +795,15 @@ def compute_choice_gradient_batch_gpu(
     # = (n_attributes, n_draws) → sum over draws
     grad_beta = cp.dot(attr_gpu.T, weighted_mills.T).sum(axis=1)  # (n_attributes,)
 
-    # ✅ 조절효과 gradient 계산
-    if moderation_enabled:
+    # ✅ Lambda gradient 계산
+    if all_lvs_as_main:
+        # 모든 LV 주효과: ∂V/∂λ_i = LV_i
+        grad_lambda = {}
+        for lv_name in lambda_lvs.keys():
+            lv_batch = lv_gpu[lv_name][:, None]  # (n_draws, 1)
+            grad_lambda[lv_name] = cp.sum(weighted_mills * lv_batch).item()
+    elif moderation_enabled:
+        # 조절효과 모델
         # ∂V/∂λ_main = PI
         grad_lambda_main = cp.sum(weighted_mills * main_lv_batch).item()
 
@@ -765,7 +814,7 @@ def compute_choice_gradient_batch_gpu(
             interaction = main_lv_batch * mod_lv_batch  # (n_draws, 1)
             grad_lambda_mod[mod_lv_name] = cp.sum(weighted_mills * interaction).item()
     else:
-        # ∂V/∂λ = LV
+        # 기본 모델: ∂V/∂λ = LV
         grad_lambda = cp.sum(weighted_mills * main_lv_batch).item()
 
     # NaN 체크
@@ -777,7 +826,14 @@ def compute_choice_gradient_batch_gpu(
         logger.warning("NaN detected in grad_beta")
         grad_beta = cp.nan_to_num(grad_beta, nan=0.0)
 
-    if moderation_enabled:
+    if all_lvs_as_main:
+        # 모든 LV 주효과
+        for lv_name in grad_lambda.keys():
+            if np.isnan(grad_lambda[lv_name]):
+                logger.warning(f"NaN detected in grad_lambda_{lv_name}")
+                grad_lambda[lv_name] = 0.0
+    elif moderation_enabled:
+        # 조절효과 모델
         if np.isnan(grad_lambda_main):
             logger.warning("NaN detected in grad_lambda_main")
             grad_lambda_main = 0.0
@@ -787,6 +843,7 @@ def compute_choice_gradient_batch_gpu(
                 logger.warning(f"NaN detected in grad_lambda_mod_{mod_lv_name}")
                 grad_lambda_mod[mod_lv_name] = 0.0
     else:
+        # 기본 모델
         if np.isnan(grad_lambda):
             logger.warning("NaN detected in grad_lambda")
             grad_lambda = 0.0
@@ -795,7 +852,28 @@ def compute_choice_gradient_batch_gpu(
     grad_intercept = np.clip(grad_intercept, -1e6, 1e6)
     grad_beta = cp.clip(grad_beta, -1e6, 1e6)
 
-    if moderation_enabled:
+    if all_lvs_as_main:
+        # 모든 LV 주효과
+        for lv_name in grad_lambda.keys():
+            grad_lambda[lv_name] = np.clip(grad_lambda[lv_name], -1e6, 1e6)
+
+        if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+            iteration_logger.info(f"\n  [최종 그래디언트]")
+            iteration_logger.info(f"    - grad_intercept: {grad_intercept:.6f}")
+            iteration_logger.info(f"    - grad_beta: {cp.asnumpy(grad_beta)[:min(3, len(grad_beta))]}")
+            for lv_name, grad_val in grad_lambda.items():
+                iteration_logger.info(f"    - grad_lambda_{lv_name}: {grad_val:.6f}")
+
+        # 결과 반환
+        result = {
+            'grad_intercept': grad_intercept,
+            'grad_beta': cp.asnumpy(grad_beta)
+        }
+        for lv_name, grad_val in grad_lambda.items():
+            result[f'grad_lambda_{lv_name}'] = grad_val
+
+        return result
+    elif moderation_enabled:
         grad_lambda_main = np.clip(grad_lambda_main, -1e6, 1e6)
         for mod_lv_name in grad_lambda_mod.keys():
             grad_lambda_mod[mod_lv_name] = np.clip(grad_lambda_mod[mod_lv_name], -1e6, 1e6)
@@ -1476,9 +1554,20 @@ def compute_choice_full_batch_gpu(
     beta = params['beta']
     n_attributes = len(beta)
 
-    # 조절효과 여부 확인
+    # ✅ 모든 LV 주효과 vs 조절효과 vs 기본 모델 확인
+    lambda_lv_keys = [key for key in params.keys() if key.startswith('lambda_') and key not in ['lambda_main']]
+
+    all_lvs_as_main = len(lambda_lv_keys) > 1
     moderation_enabled = 'lambda_main' in params
-    if moderation_enabled:
+
+    if all_lvs_as_main:
+        # 모든 LV 주효과 모델
+        lambda_lvs = {}
+        for key in lambda_lv_keys:
+            lv_name = key.replace('lambda_', '')
+            lambda_lvs[lv_name] = params[key]
+    elif moderation_enabled:
+        # 조절효과 모델
         lambda_main = params['lambda_main']
         lambda_mod = {}
         for key in params:
@@ -1487,6 +1576,7 @@ def compute_choice_full_batch_gpu(
                 lambda_mod[mod_lv_name] = params[key]
         main_lv = choice_model.config.main_lv
     else:
+        # 기본 모델
         lambda_lv = params['lambda']
         # main_lv 찾기
         if hasattr(choice_model.config, 'main_lv'):
@@ -1521,20 +1611,25 @@ def compute_choice_full_batch_gpu(
     all_attr_gpu = cp.asarray(all_attributes)  # (326, 18, 3)
     beta_gpu = cp.asarray(beta)  # (3,)
 
-    # Main LV 추출: (326, 100)
-    main_lv_idx = lv_names.index(main_lv)
-    main_lv_gpu = all_lvs_gpu[:, :, main_lv_idx]
-    main_lv_batch = main_lv_gpu[:, :, None]  # (326, 100, 1)
-
     # 속성 배치: (326, 1, 18, 3)
     attr_batch = all_attr_gpu[:, None, :, :]
 
     # 효용 계산: (326, 100, 18)
-    # V = intercept + β'X + λ*LV
+    # V = intercept + β'X
     V_batch = intercept + cp.sum(attr_batch * beta_gpu[None, None, None, :], axis=-1)
 
-    if moderation_enabled:
+    if all_lvs_as_main:
+        # ✅ 모든 LV 주효과: V += Σ(λ_i * LV_i)
+        for lv_name, lambda_val in lambda_lvs.items():
+            lv_idx = lv_names.index(lv_name)
+            lv_batch = all_lvs_gpu[:, :, lv_idx:lv_idx+1]  # (326, 100, 1)
+            V_batch = V_batch + lambda_val * lv_batch
+    elif moderation_enabled:
         # 조절효과: V += λ_main * PI + Σ λ_mod_k * (PI × LV_k)
+        main_lv_idx = lv_names.index(main_lv)
+        main_lv_gpu = all_lvs_gpu[:, :, main_lv_idx]
+        main_lv_batch = main_lv_gpu[:, :, None]  # (326, 100, 1)
+
         V_batch = V_batch + lambda_main * main_lv_batch
 
         for mod_lv_name, lambda_mod_val in lambda_mod.items():
@@ -1543,6 +1638,10 @@ def compute_choice_full_batch_gpu(
             interaction = main_lv_batch * mod_lv_batch  # (326, 100, 1)
             V_batch = V_batch + lambda_mod_val * interaction
     else:
+        # 기본 모델: V += λ * LV
+        main_lv_idx = lv_names.index(main_lv)
+        main_lv_gpu = all_lvs_gpu[:, :, main_lv_idx]
+        main_lv_batch = main_lv_gpu[:, :, None]  # (326, 100, 1)
         V_batch = V_batch + lambda_lv * main_lv_batch
 
     # 확률 계산: (326, 100, 18)
@@ -1571,7 +1670,19 @@ def compute_choice_full_batch_gpu(
     grad_beta = cp.sum(weighted_mills[:, :, :, None] * attr_batch, axis=(1, 2))
     gradients['grad_beta'] = cp.asnumpy(grad_beta)
 
-    if moderation_enabled:
+    if all_lvs_as_main:
+        # ✅ 모든 LV 주효과: grad_lambda_{lv_name}
+        for lv_name in lambda_lvs.keys():
+            lv_idx = lv_names.index(lv_name)
+            lv_batch = all_lvs_gpu[:, :, lv_idx:lv_idx+1]  # (326, 100, 1)
+            grad_lambda_lv = cp.sum(weighted_mills * lv_batch, axis=(1, 2))
+            gradients[f'grad_lambda_{lv_name}'] = cp.asnumpy(grad_lambda_lv)
+    elif moderation_enabled:
+        # 조절효과 모델
+        main_lv_idx = lv_names.index(main_lv)
+        main_lv_gpu = all_lvs_gpu[:, :, main_lv_idx]
+        main_lv_batch = main_lv_gpu[:, :, None]  # (326, 100, 1)
+
         # grad_lambda_main: (326,)
         gradients['grad_lambda_main'] = cp.asnumpy(cp.sum(weighted_mills * main_lv_batch, axis=(1, 2)))
 
@@ -1583,6 +1694,11 @@ def compute_choice_full_batch_gpu(
             grad_lambda_mod = cp.sum(weighted_mills * interaction, axis=(1, 2))
             gradients[f'grad_lambda_mod_{mod_lv_name}'] = cp.asnumpy(grad_lambda_mod)
     else:
+        # 기본 모델
+        main_lv_idx = lv_names.index(main_lv)
+        main_lv_gpu = all_lvs_gpu[:, :, main_lv_idx]
+        main_lv_batch = main_lv_gpu[:, :, None]  # (326, 100, 1)
+
         # grad_lambda: (326,)
         gradients['grad_lambda'] = cp.asnumpy(cp.sum(weighted_mills * main_lv_batch, axis=(1, 2)))
 

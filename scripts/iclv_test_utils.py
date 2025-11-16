@@ -354,7 +354,23 @@ def _extract_sequential_params(results):
                         s['estimate'], s['se'], s['p']
                     ))
 
-            # Lambda
+            # Lambda - 모든 LV 주효과
+            lambda_keys = [
+                'lambda_health_concern',
+                'lambda_perceived_benefit',
+                'lambda_perceived_price',
+                'lambda_nutrition_knowledge',
+                'lambda_purchase_intention'
+            ]
+            for key in lambda_keys:
+                if key in stats:
+                    s = stats[key]
+                    param_list.append(_create_param_dict(
+                        'Choice', None, key,
+                        s['estimate'], s['se'], s['p']
+                    ))
+
+            # Lambda - 조절효과 모델 (하위 호환)
             for key in ['lambda_main', 'lambda_mod_perceived_price', 'lambda_mod_nutrition_knowledge']:
                 if key in stats:
                     s = stats[key]

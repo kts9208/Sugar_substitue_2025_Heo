@@ -62,7 +62,11 @@ class BaseICLVChoice(ABC):
         self.choice_attributes = config.choice_attributes
         self.price_variable = config.price_variable
 
-        # ✅ 조절효과 설정 (디폴트: 활성화)
+        # ✅ 모든 LV 주효과 설정 (디폴트: 활성화)
+        self.all_lvs_as_main = getattr(config, 'all_lvs_as_main', False)
+        self.main_lvs = getattr(config, 'main_lvs', None)
+
+        # 조절효과 설정 (하위 호환성)
         self.moderation_enabled = getattr(config, 'moderation_enabled', False)
         self.moderator_lvs = getattr(config, 'moderator_lvs', None)
         self.main_lv = getattr(config, 'main_lv', 'purchase_intention')
@@ -72,6 +76,9 @@ class BaseICLVChoice(ABC):
         self.logger.info(f"{self.__class__.__name__} 초기화")
         self.logger.info(f"  선택 속성: {self.choice_attributes}")
         self.logger.info(f"  가격 변수: {self.price_variable}")
+        self.logger.info(f"  모든 LV 주효과: {self.all_lvs_as_main}")
+        if self.all_lvs_as_main:
+            self.logger.info(f"  주효과 LV: {self.main_lvs}")
         self.logger.info(f"  조절효과: {self.moderation_enabled}")
         if self.moderation_enabled:
             self.logger.info(f"  주 LV: {self.main_lv}")
@@ -81,19 +88,22 @@ class BaseICLVChoice(ABC):
         """
         효용 계산 (공통 로직)
 
-        ✅ 조절효과 지원
+        ✅ 모든 LV 주효과 지원 (디폴트)
+
+        모든 LV 주효과 모델:
+            V = intercept + β*X + Σ(λ_i * LV_i)
+
+        조절효과 모델:
+            V = intercept + β*X + λ_main*LV_main + Σ(λ_mod_i * LV_main * LV_mod_i)
 
         기본 모델:
             V = intercept + β*X + λ*LV
 
-        조절효과 모델 (디폴트):
-            V = intercept + β*X + λ_main*LV_main + Σ(λ_mod_i * LV_main * LV_mod_i)
-
         Args:
             data: 선택 데이터
             lv: 잠재변수 값
-                - Dict[str, np.ndarray] (조절효과 모델)
-                - np.ndarray 또는 float (기본 모델)
+                - Dict[str, np.ndarray] (다중 LV 모델)
+                - np.ndarray 또는 float (단일 LV 모델)
             params: 파라미터 딕셔너리
 
         Returns:
@@ -111,8 +121,39 @@ class BaseICLVChoice(ABC):
         # 효용 계산
         V = np.zeros(len(data))
 
-        if self.moderation_enabled and isinstance(lv, dict):
-            # ✅ 조절효과 모델
+        if self.all_lvs_as_main and isinstance(lv, dict):
+            # ✅ 모든 LV 주효과 모델 (디폴트)
+            # V = intercept + β*X + Σ(λ_i * LV_i)
+
+            # 각 LV를 배열로 변환
+            lv_arrays = {}
+            for lv_name in self.main_lvs:
+                if lv_name not in lv:
+                    raise KeyError(f"잠재변수 '{lv_name}'가 lv dict에 없습니다.")
+
+                lv_value = lv[lv_name]
+                if np.isscalar(lv_value):
+                    lv_arrays[lv_name] = np.full(len(data), lv_value)
+                else:
+                    lv_arrays[lv_name] = lv_value
+
+            # 효용 계산
+            for i in range(len(data)):
+                if has_nan[i]:
+                    V[i] = 0.0  # opt-out: 효용 = 0
+                else:
+                    # 기본 효용
+                    V[i] = intercept + X[i] @ beta
+
+                    # 모든 LV 주효과 추가
+                    for lv_name in self.main_lvs:
+                        param_name = f'lambda_{lv_name}'
+                        if param_name in params:
+                            lambda_lv = params[param_name]
+                            V[i] += lambda_lv * lv_arrays[lv_name][i]
+
+        elif self.moderation_enabled and isinstance(lv, dict):
+            # 조절효과 모델 (하위 호환)
             lambda_main = params.get('lambda_main', params.get('lambda', 1.0))
 
             # 주 LV 추출
@@ -148,7 +189,7 @@ class BaseICLVChoice(ABC):
                             V[i] += lambda_mod * interaction
 
         else:
-            # 기본 모델 (하위 호환)
+            # 기본 모델 (단일 LV, 하위 호환)
             lambda_lv = params.get('lambda', params.get('lambda_main', 1.0))
 
             # 잠재변수 처리 (스칼라 또는 배열)
@@ -192,7 +233,11 @@ class BinaryProbitChoice(BaseICLVChoice):
     """
     Binary Probit 선택모델 (ICLV용)
 
-    ✅ 디폴트: 조절효과 활성화
+    ✅ 디폴트: 모든 LV 주효과
+
+    모든 LV 주효과 모델:
+        V = intercept + β*X + Σ(λ_i * LV_i)
+        P(Yes) = Φ(V)
 
     기본 모델:
         V = intercept + β*X + λ*LV
@@ -412,14 +457,23 @@ class BinaryProbitChoice(BaseICLVChoice):
         """
         초기 파라미터 생성
 
+        ✅ 모든 LV 주효과 지원
         ✅ 조절효과 지원
 
         Args:
             data: 선택 데이터
 
         Returns:
-            기본 모델:
-                {'intercept': float, 'beta': np.ndarray, 'lambda': float}
+            모든 LV 주효과 모델:
+                {
+                    'intercept': float,
+                    'beta': np.ndarray,
+                    'lambda_health_concern': float,
+                    'lambda_perceived_benefit': float,
+                    'lambda_perceived_price': float,
+                    'lambda_nutrition_knowledge': float,
+                    'lambda_purchase_intention': float
+                }
 
             조절효과 모델:
                 {
@@ -429,6 +483,9 @@ class BinaryProbitChoice(BaseICLVChoice):
                     'lambda_mod_perceived_price': float,
                     'lambda_mod_nutrition_knowledge': float
                 }
+
+            기본 모델:
+                {'intercept': float, 'beta': np.ndarray, 'lambda': float}
 
         Example:
             >>> params = model.get_initial_params(data)
@@ -446,7 +503,11 @@ class BinaryProbitChoice(BaseICLVChoice):
             price_idx = self.choice_attributes.index(self.price_variable)
             params['beta'][price_idx] = -1.0
 
-        if self.moderation_enabled:
+        # ✅ 모든 LV 주효과 모델
+        if self.all_lvs_as_main and self.main_lvs is not None:
+            for lv_name in self.main_lvs:
+                params[f'lambda_{lv_name}'] = 1.0
+        elif self.moderation_enabled:
             # ✅ 조절효과 모델
             params['lambda_main'] = 1.0
 
@@ -958,12 +1019,24 @@ class MultinomialLogitChoice(BaseICLVChoice):
         """
         초기 파라미터 생성
 
+        ✅ 모든 LV 주효과 지원
         ✅ 조절효과 지원
 
         Args:
             data: 선택 데이터
 
         Returns:
+            모든 LV 주효과 모델:
+                {
+                    'intercept': float,
+                    'beta': np.ndarray,
+                    'lambda_health_concern': float,
+                    'lambda_perceived_benefit': float,
+                    'lambda_perceived_price': float,
+                    'lambda_nutrition_knowledge': float,
+                    'lambda_purchase_intention': float
+                }
+
             조절효과 모델:
                 {
                     'intercept': float,
@@ -972,6 +1045,9 @@ class MultinomialLogitChoice(BaseICLVChoice):
                     'lambda_mod_perceived_price': float,
                     'lambda_mod_nutrition_knowledge': float
                 }
+
+            기본 모델:
+                {'intercept': float, 'beta': np.ndarray, 'lambda': float}
 
         Example:
             >>> params = model.get_initial_params(data)
@@ -989,7 +1065,11 @@ class MultinomialLogitChoice(BaseICLVChoice):
             price_idx = self.choice_attributes.index(self.price_variable)
             params['beta'][price_idx] = -1.0
 
-        if self.moderation_enabled:
+        # ✅ 모든 LV 주효과 모델
+        if self.all_lvs_as_main and self.main_lvs is not None:
+            for lv_name in self.main_lvs:
+                params[f'lambda_{lv_name}'] = 1.0
+        elif self.moderation_enabled:
             # ✅ 조절효과 모델
             params['lambda_main'] = 1.0
 
@@ -1015,6 +1095,8 @@ class MultinomialLogitChoice(BaseICLVChoice):
         """
         파라미터 딕셔너리를 배열로 변환 (최적화용)
 
+        ✅ 모든 LV 주효과 지원
+
         Args:
             params: 파라미터 딕셔너리
 
@@ -1033,11 +1115,19 @@ class MultinomialLogitChoice(BaseICLVChoice):
             param_names.append(f'beta_{attr}')
             param_values.append(params['beta'][i])
 
-        # lambda_main 또는 lambda
-        if 'lambda_main' in params:
+        # ✅ 모든 LV 주효과 lambda 파라미터
+        if self.all_lvs_as_main and self.main_lvs is not None:
+            for lv_name in self.main_lvs:
+                param_name = f'lambda_{lv_name}'
+                if param_name in params:
+                    param_names.append(param_name)
+                    param_values.append(params[param_name])
+        elif 'lambda_main' in params:
+            # 조절효과 모델
             param_names.append('lambda_main')
             param_values.append(params['lambda_main'])
         elif 'lambda' in params:
+            # 기본 모델
             param_names.append('lambda')
             param_values.append(params['lambda'])
 
@@ -1054,6 +1144,8 @@ class MultinomialLogitChoice(BaseICLVChoice):
     def _array_to_params(self, param_names: List[str], param_array: np.ndarray) -> Dict:
         """
         배열을 파라미터 딕셔너리로 변환
+
+        ✅ 모든 LV 주효과 지원
 
         Args:
             param_names: 파라미터 이름 리스트
@@ -1077,6 +1169,9 @@ class MultinomialLogitChoice(BaseICLVChoice):
             elif name == 'lambda':
                 params['lambda'] = value
             elif name.startswith('lambda_mod_'):
+                params[name] = value
+            elif name.startswith('lambda_'):
+                # ✅ 모든 LV 주효과: lambda_{lv_name}
                 params[name] = value
 
         # beta 배열로 변환
@@ -1137,6 +1232,9 @@ class MultinomialLogitChoice(BaseICLVChoice):
             elif name == 'lambda':
                 stats['lambda'] = stat_dict
             elif name.startswith('lambda_mod_'):
+                stats[name] = stat_dict
+            elif name.startswith('lambda_'):
+                # ✅ 모든 LV 주효과: lambda_{lv_name}
                 stats[name] = stat_dict
 
         return stats

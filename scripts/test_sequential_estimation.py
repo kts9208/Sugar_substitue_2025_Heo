@@ -44,7 +44,7 @@ from src.analysis.hybrid_choice_model.iclv_models.multi_latent_measurement impor
 from src.analysis.hybrid_choice_model.iclv_models.multi_latent_structural import MultiLatentStructural
 from src.analysis.hybrid_choice_model.iclv_models.choice_equations import MultinomialLogitChoice
 from src.analysis.hybrid_choice_model.iclv_models.multi_latent_config import (
-    create_default_multi_lv_config
+    create_sugar_substitute_multi_lv_config
 )
 
 
@@ -66,22 +66,23 @@ def format_pvalue(p):
 
 def create_config():
     """
-    5개 잠재변수 설정 생성
+    5개 잠재변수 설정 생성 (모든 LV 주효과)
 
-    동시추정(test_multi_latent_iclv.py)과 동일한 설정 사용
+    ✅ 모든 잠재변수가 선택모델의 주효과로 추정됨
     """
     print("\n설정 생성 중...")
 
-    # create_default_multi_lv_config() 사용 (동시추정과 동일)
-    # 순차추정에서는 n_draws, max_iterations 등은 사용하지 않음
-    config = create_default_multi_lv_config(
+    # ✅ create_sugar_substitute_multi_lv_config() 사용
+    # 디폴트: all_lvs_as_main=True (모든 LV 주효과)
+    config = create_sugar_substitute_multi_lv_config(
         n_draws=100,  # 순차추정에서는 사용 안 함
         max_iterations=1000,  # 순차추정에서는 사용 안 함
-        use_parallel=False,
-        n_cores=1
+        all_lvs_as_main=True,  # ✅ 모든 LV 주효과
+        use_moderation=False   # 조절효과 비활성화
     )
 
     print("   설정 완료")
+    print(f"   - 선택모델: 모든 LV 주효과 ({config.choice.n_main_lvs}개)")
 
     return config
 
@@ -144,7 +145,24 @@ def print_results(results, elapsed_time):
                     p_str = format_pvalue(s['p'])
                     print(f"    β_{attr}: {s['estimate']:.4f} (p={p_str}) {sig}")
 
-            # Lambda
+            # Lambda - 모든 LV 주효과
+            lambda_keys = [
+                'lambda_health_concern',
+                'lambda_perceived_benefit',
+                'lambda_perceived_price',
+                'lambda_nutrition_knowledge',
+                'lambda_purchase_intention'
+            ]
+
+            for key in lambda_keys:
+                if key in stats:
+                    s = stats[key]
+                    sig = "***" if s['p'] < 0.001 else "**" if s['p'] < 0.01 else "*" if s['p'] < 0.05 else ""
+                    p_str = format_pvalue(s['p'])
+                    lv_name = key.replace('lambda_', '')
+                    print(f"    λ_{lv_name}: {s['estimate']:.4f} (p={p_str}) {sig}")
+
+            # 조절효과 모델 (하위 호환)
             if 'lambda_main' in stats:
                 s = stats['lambda_main']
                 sig = "***" if s['p'] < 0.001 else "**" if s['p'] < 0.01 else "*" if s['p'] < 0.05 else ""
@@ -189,7 +207,7 @@ def main():
     print("   - 구조모델 생성 완료 (계층적: HC → PB → PI)")
 
     choice_model = MultinomialLogitChoice(config.choice)
-    print("   - 선택모델 생성 완료 (조절효과 포함)")
+    print("   - 선택모델 생성 완료 (모든 LV 주효과)")
 
     # 6. 순차추정 실행
     print("\n순차추정 실행 중...")

@@ -64,20 +64,24 @@ class ChoiceConfig:
     """
     선택모델 설정
 
-    ✅ 디폴트: 조절효과 활성화
+    ✅ 디폴트: 모든 잠재변수 주효과 (All Main Effects)
 
-    조절효과 모드:
+    모든 LV 주효과 모드 (all_lvs_as_main=True):
+    - V = intercept + β·X + Σ(λ_i · LV_i)
+    - 모든 잠재변수가 독립적으로 선택에 영향
+
+    조절효과 모드 (moderation_enabled=True):
     - V = intercept + β·X + λ_main·LV_main + Σ(λ_mod_i · LV_main · LV_mod_i)
 
-    기본 모드 (moderation_enabled=False):
+    기본 모드 (단일 LV):
     - V = intercept + β·X + λ·LV
 
-    Example (조절효과):
+    Example (모든 LV 주효과):
         >>> config = ChoiceConfig(
         ...     choice_attributes=['sugar_free', 'health_label', 'price'],
-        ...     moderation_enabled=True,
-        ...     moderator_lvs=['perceived_price', 'nutrition_knowledge'],
-        ...     main_lv='purchase_intention'
+        ...     all_lvs_as_main=True,
+        ...     main_lvs=['health_concern', 'perceived_benefit', 'perceived_price',
+        ...               'nutrition_knowledge', 'purchase_intention']
         ... )
     """
 
@@ -90,16 +94,24 @@ class ChoiceConfig:
     # 가격 변수 (WTP 계산용)
     price_variable: str = 'price'
 
-    # ✅ 조절효과 설정 (디폴트: 활성화)
-    moderation_enabled: bool = True
-    moderator_lvs: Optional[List[str]] = field(default_factory=lambda: ['perceived_price', 'nutrition_knowledge'])
-    main_lv: str = 'purchase_intention'
+    # ✅ 모든 LV 주효과 설정 (디폴트: 활성화)
+    all_lvs_as_main: bool = True
+    main_lvs: Optional[List[str]] = field(default_factory=lambda: [
+        'health_concern', 'perceived_benefit', 'perceived_price',
+        'nutrition_knowledge', 'purchase_intention'
+    ])
+
+    # 조절효과 설정 (하위 호환성)
+    moderation_enabled: bool = False
+    moderator_lvs: Optional[List[str]] = None
+    main_lv: str = 'purchase_intention'  # 단일 LV 모드용
 
     # 초기값
     initial_betas: Optional[Dict[str, float]] = None
     initial_lambda: float = 1.0  # 잠재변수 계수 (하위 호환성)
     initial_lambda_main: float = 1.0  # 주효과 계수
     initial_lambda_mod: Optional[List[float]] = None  # 조절효과 계수
+    initial_lambdas: Optional[Dict[str, float]] = None  # 각 LV별 초기값
 
     # Ordered Probit 설정 (binary choice의 경우)
     thresholds: Optional[List[float]] = None
@@ -110,6 +122,13 @@ class ChoiceConfig:
         if not self.moderation_enabled or self.moderator_lvs is None:
             return 0
         return len(self.moderator_lvs)
+
+    @property
+    def n_main_lvs(self) -> int:
+        """주효과 잠재변수 개수"""
+        if self.all_lvs_as_main and self.main_lvs is not None:
+            return len(self.main_lvs)
+        return 1  # 단일 LV 모드
 
 
 @dataclass

@@ -653,9 +653,11 @@ class MultiLatentJointGradient:
                 hierarchical_paths=hierarchical_paths
             )
             
-            # ✅ 조절효과 모델은 latent_vars 전체를 전달
-            if 'lambda_main' in params_dict['choice']:
-                # 조절효과 모델: 모든 LV 전달
+            # ✅ 모든 LV 주효과 또는 조절효과 모델은 latent_vars 전체를 전달
+            lambda_lv_keys = [key for key in params_dict['choice'].keys() if key.startswith('lambda_') and key not in ['lambda_main']]
+
+            if len(lambda_lv_keys) > 1 or 'lambda_main' in params_dict['choice']:
+                # 모든 LV 주효과 또는 조절효과 모델: 모든 LV 전달
                 grad_choice = self.choice_grad.compute_gradient(
                     ind_data, latent_vars, params_dict['choice'],
                     choice_model.config.choice_attributes
@@ -729,8 +731,14 @@ class MultiLatentJointGradient:
             'grad_beta': np.zeros_like(first_grad['choice']['grad_beta'])
         }
 
-        # 조절효과 vs 기본 모델
-        if 'grad_lambda_main' in first_grad['choice']:
+        # ✅ 모든 LV 주효과 vs 조절효과 vs 기본 모델
+        lambda_grad_keys = [key for key in first_grad['choice'].keys() if key.startswith('grad_lambda_')]
+
+        if len(lambda_grad_keys) > 1 and 'grad_lambda_main' not in first_grad['choice']:
+            # 모든 LV 주효과 모델: grad_lambda_{lv_name}
+            for key in lambda_grad_keys:
+                weighted_choice[key] = 0.0
+        elif 'grad_lambda_main' in first_grad['choice']:
             # 조절효과 모델
             weighted_choice['grad_lambda_main'] = 0.0
             for key in first_grad['choice'].keys():

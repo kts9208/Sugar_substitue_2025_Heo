@@ -341,33 +341,95 @@ class ChoiceGradient:
         """
         선택모델 그래디언트 계산 (Panel Product 포함)
 
-        ✅ 조절효과 지원 추가
+        ✅ 모든 LV 주효과 지원 (디폴트)
 
-        기본 모델:
-            V = β*X + λ*LV
+        모든 LV 주효과 모델:
+            V = β*X + Σ(λ_i * LV_i)
 
         조절효과 모델:
             V = β*X + λ_main*LV_main + Σ(λ_mod_i * LV_main * LV_mod_i)
 
+        기본 모델:
+            V = β*X + λ*LV
+
         Args:
             data: 선택 데이터 (여러 선택 상황)
             lv: 잠재변수 값
-                - 기본 모델: float
+                - 모든 LV 주효과: Dict[str, float]
                 - 조절효과 모델: Dict[str, float]
+                - 기본 모델: float
             params:
-                - 기본 모델: {'intercept': float, 'beta': np.ndarray, 'lambda': float}
+                - 모든 LV 주효과: {'intercept': float, 'beta': np.ndarray, 'lambda_{lv_name}': float, ...}
                 - 조절효과 모델: {'intercept': float, 'beta': np.ndarray, 'lambda_main': float, 'lambda_mod_{lv}': float, ...}
+                - 기본 모델: {'intercept': float, 'beta': np.ndarray, 'lambda': float}
             choice_attributes: 선택 속성 변수명 리스트
 
         Returns:
-            - 기본 모델: {'grad_intercept': float, 'grad_beta': np.ndarray, 'grad_lambda': float}
+            - 모든 LV 주효과: {'grad_intercept': float, 'grad_beta': np.ndarray, 'grad_lambda_{lv_name}': float, ...}
             - 조절효과 모델: {'grad_intercept': float, 'grad_beta': np.ndarray, 'grad_lambda_main': float, 'grad_lambda_mod_{lv}': float, ...}
+            - 기본 모델: {'grad_intercept': float, 'grad_beta': np.ndarray, 'grad_lambda': float}
         """
         intercept = params['intercept']
         beta = params['beta']
 
+        # ✅ 모든 LV 주효과 여부 확인 (디폴트)
+        lambda_lv_keys = [key for key in params.keys() if key.startswith('lambda_') and key not in ['lambda_main']]
+
+        if len(lambda_lv_keys) > 1:
+            # 모든 LV 주효과 모델: lambda_{lv_name}
+            if not isinstance(lv, dict):
+                raise ValueError("모든 LV 주효과 모델에서는 lv가 딕셔너리여야 합니다")
+
+            grad_intercept = 0.0
+            grad_beta = np.zeros(self.n_attributes)
+            grad_lambda = {lv_name: 0.0 for lv_name in lv.keys()}
+
+            # Panel Product: 모든 선택 상황에 대해 합산
+            for idx in range(len(data)):
+                row = data.iloc[idx]
+
+                # 선택 속성
+                X = np.array([row[attr] for attr in choice_attributes])
+
+                # NaN 처리 (opt-out)
+                if np.isnan(X).any():
+                    continue
+
+                # 선택 결과
+                choice = row['choice']
+
+                # 효용 계산: V = intercept + β*X + Σ(λ_i * LV_i)
+                V = intercept + np.dot(beta, X)
+                for lv_name in lv.keys():
+                    lambda_lv = params[f'lambda_{lv_name}']
+                    V += lambda_lv * lv[lv_name]
+
+                # ✅ 공통 함수 사용: Binary Probit gradient 공통항 계산
+                common_term = compute_probit_gradient_common_term(
+                    choice=choice,
+                    utility=V
+                )
+
+                # 각 파라미터의 gradient = common_term × 미분항
+                grad_intercept += common_term  # ∂V/∂intercept = 1
+                grad_beta += common_term * X  # ∂V/∂β = X
+
+                # 각 LV의 gradient: ∂V/∂λ_i = LV_i
+                for lv_name in lv.keys():
+                    grad_lambda[lv_name] += common_term * lv[lv_name]
+
+            # 결과 반환
+            result = {
+                'grad_intercept': grad_intercept,
+                'grad_beta': grad_beta
+            }
+            for lv_name in lv.keys():
+                result[f'grad_lambda_{lv_name}'] = grad_lambda[lv_name]
+
+            return result
+
         # ✅ 조절효과 여부 확인
-        if 'lambda_main' in params:
+        elif 'lambda_main' in params:
             # 조절효과 모델
             lambda_main = params['lambda_main']
 

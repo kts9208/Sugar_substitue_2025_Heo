@@ -786,7 +786,14 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
                 params.append(0.2)
 
         # - 잠재변수 계수
-        if hasattr(self.config.choice, 'moderation_enabled') and self.config.choice.moderation_enabled:
+        # ✅ 모든 LV 주효과 지원
+        if hasattr(self.config.choice, 'all_lvs_as_main') and self.config.choice.all_lvs_as_main:
+            # 모든 LV 주효과 모델: lambda_{lv_name}
+            if hasattr(self.config.choice, 'main_lvs'):
+                for lv_name in self.config.choice.main_lvs:
+                    # 각 LV별 초기값 (1.0)
+                    params.append(1.0)
+        elif hasattr(self.config.choice, 'moderation_enabled') and self.config.choice.moderation_enabled:
             # ✅ 조절효과 모델 - 최종 수렴값 기반 초기값 사용
             params.append(get_choice_initial_value('lambda_main', default=0.45))
 

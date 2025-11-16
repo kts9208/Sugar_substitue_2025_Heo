@@ -1751,8 +1751,13 @@ class SimultaneousEstimator:
         for attr in attributes:
             names.append(f"beta_{attr}")
 
-        # ✅ 조절효과 지원
-        if hasattr(self.config.choice, 'moderation_enabled') and self.config.choice.moderation_enabled:
+        # ✅ 모든 LV 주효과 지원
+        if hasattr(self.config.choice, 'all_lvs_as_main') and self.config.choice.all_lvs_as_main:
+            # 모든 LV 주효과 모델: lambda_{lv_name}
+            if hasattr(self.config.choice, 'main_lvs'):
+                for lv_name in self.config.choice.main_lvs:
+                    names.append(f"lambda_{lv_name}")
+        elif hasattr(self.config.choice, 'moderation_enabled') and self.config.choice.moderation_enabled:
             # 조절효과 모델: lambda_main + lambda_mod_*
             names.append("lambda_main")
 
@@ -1839,12 +1844,24 @@ class SimultaneousEstimator:
 
             # lambda (latent variable coefficients) 스케일
             elif name.startswith('lambda_'):
+                # ✅ 모든 LV 주효과 지원
                 if name == 'lambda_main':
                     custom_scales[name] = 0.890
                 elif name == 'lambda_mod_perceived_price':
                     custom_scales[name] = 0.470
                 elif name == 'lambda_mod_nutrition_knowledge':
                     custom_scales[name] = 1.200
+                # 개별 LV lambda 스케일
+                elif name == 'lambda_health_concern':
+                    custom_scales[name] = 0.8
+                elif name == 'lambda_perceived_benefit':
+                    custom_scales[name] = 0.8
+                elif name == 'lambda_perceived_price':
+                    custom_scales[name] = 0.8
+                elif name == 'lambda_nutrition_knowledge':
+                    custom_scales[name] = 0.8
+                elif name == 'lambda_purchase_intention':
+                    custom_scales[name] = 0.8
                 else:
                     custom_scales[name] = 0.5  # 기본값
 
@@ -1899,10 +1916,27 @@ class SimultaneousEstimator:
                 params.append(0.1)
 
         # - 잠재변수 계수 (lambda)
-        params.append(1.0)
+        # ✅ 모든 LV 주효과 지원
+        if hasattr(self.config.choice, 'all_lvs_as_main') and self.config.choice.all_lvs_as_main:
+            # 모든 LV 주효과 모델: lambda_{lv_name}
+            if hasattr(self.config.choice, 'main_lvs'):
+                for lv_name in self.config.choice.main_lvs:
+                    # 각 LV별 초기값 (1.0)
+                    params.append(1.0)
+        elif hasattr(self.config.choice, 'moderation_enabled') and self.config.choice.moderation_enabled:
+            # 조절효과 모델: lambda_main + lambda_mod_*
+            params.append(1.0)  # lambda_main
+
+            # lambda_mod (조절효과 계수)
+            if hasattr(self.config.choice, 'moderator_lvs'):
+                for mod_lv in self.config.choice.moderator_lvs:
+                    params.append(0.0)  # lambda_mod_{mod_lv}
+        else:
+            # 기본 모델: lambda
+            params.append(1.0)
 
         # - 사회인구학적 변수 계수 (선택모델에 포함되는 경우)
-        if self.config.structural.include_in_choice:
+        if hasattr(self.config.structural, 'include_in_choice') and self.config.structural.include_in_choice:
             params.extend([0.0] * n_sociodem)
 
         return np.array(params)
@@ -1987,14 +2021,33 @@ class SimultaneousEstimator:
         n_attributes = len(self.config.choice.choice_attributes)
         param_dict['choice']['beta'] = params[idx:idx+n_attributes]
         idx += n_attributes
-        
-        param_dict['choice']['lambda'] = params[idx]
-        idx += 1
-        
-        if self.config.structural.include_in_choice:
+
+        # ✅ 모든 LV 주효과 지원
+        if hasattr(self.config.choice, 'all_lvs_as_main') and self.config.choice.all_lvs_as_main:
+            # 모든 LV 주효과 모델: lambda_{lv_name}
+            if hasattr(self.config.choice, 'main_lvs'):
+                for lv_name in self.config.choice.main_lvs:
+                    param_dict['choice'][f'lambda_{lv_name}'] = params[idx]
+                    idx += 1
+        elif hasattr(self.config.choice, 'moderation_enabled') and self.config.choice.moderation_enabled:
+            # 조절효과 모델: lambda_main + lambda_mod_*
+            param_dict['choice']['lambda_main'] = params[idx]
+            idx += 1
+
+            # lambda_mod (조절효과 계수)
+            if hasattr(self.config.choice, 'moderator_lvs'):
+                for mod_lv in self.config.choice.moderator_lvs:
+                    param_dict['choice'][f'lambda_mod_{mod_lv}'] = params[idx]
+                    idx += 1
+        else:
+            # 기본 모델: lambda
+            param_dict['choice']['lambda'] = params[idx]
+            idx += 1
+
+        if hasattr(self.config.structural, 'include_in_choice') and self.config.structural.include_in_choice:
             param_dict['choice']['beta_sociodem'] = params[idx:idx+n_sociodem]
             idx += n_sociodem
-        
+
         return param_dict
 
     def _compute_gradient(self, params: np.ndarray,
@@ -2255,8 +2308,18 @@ class SimultaneousEstimator:
         gradient_list.append(np.array([grad_dict['choice']['grad_intercept']]))
         gradient_list.append(grad_dict['choice']['grad_beta'])
 
-        # grad_dict에 있는 키를 기준으로 조절효과 vs 일반 판단
-        if 'grad_lambda_main' in grad_dict['choice']:
+        # ✅ 모든 LV 주효과 지원
+        # grad_dict에 있는 키를 기준으로 모든 LV 주효과 vs 조절효과 vs 일반 판단
+        if hasattr(self.config.choice, 'all_lvs_as_main') and self.config.choice.all_lvs_as_main:
+            # 모든 LV 주효과: lambda_{lv_name}
+            if hasattr(self.config.choice, 'main_lvs'):
+                for lv_name in self.config.choice.main_lvs:
+                    grad_key = f'grad_lambda_{lv_name}'
+                    if grad_key in grad_dict['choice']:
+                        gradient_list.append(np.array([grad_dict['choice'][grad_key]]))
+                    else:
+                        raise KeyError(f"Gradient key '{grad_key}' not found in choice gradients. Available keys: {list(grad_dict['choice'].keys())}")
+        elif 'grad_lambda_main' in grad_dict['choice']:
             # 조절효과: lambda_main + lambda_mod_{moderator}
             gradient_list.append(np.array([grad_dict['choice']['grad_lambda_main']]))
 
@@ -2269,7 +2332,7 @@ class SimultaneousEstimator:
             # 일반: lambda
             gradient_list.append(np.array([grad_dict['choice']['grad_lambda']]))
         else:
-            raise KeyError(f"Neither grad_lambda nor grad_lambda_main found in choice gradients. Available keys: {list(grad_dict['choice'].keys())}")
+            raise KeyError(f"Neither grad_lambda nor grad_lambda_main nor grad_lambda_{{lv_name}} found in choice gradients. Available keys: {list(grad_dict['choice'].keys())}")
 
         # 사회인구학적 변수가 선택모델에 포함되는 경우
         if hasattr(self.config.structural, 'include_in_choice') and self.config.structural.include_in_choice:
