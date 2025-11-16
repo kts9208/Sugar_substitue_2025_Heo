@@ -507,15 +507,18 @@ class SequentialEstimator(BaseEstimator):
             )
 
             # 요인점수 추출
-            self.factor_scores = sem_results['factor_scores']
-            self.logger.info(f"요인점수 추출 완료: {list(self.factor_scores.keys())}")
+            original_factor_scores = sem_results['factor_scores']  # 원본 요인점수 보관
+            self.logger.info(f"요인점수 추출 완료: {list(original_factor_scores.keys())}")
 
             # 요인점수 로깅 (표준화 전)
-            self._log_factor_scores(self.factor_scores, stage="SEM 추출 직후 (표준화 전)")
+            self._log_factor_scores(original_factor_scores, stage="SEM 추출 직후 (표준화 전)")
+
+            # ✅ 표준화 전 분산 체크 (원본 요인점수)
+            self._check_factor_score_variance(original_factor_scores)
 
             # 요인점수 Z-score 표준화
             self.logger.info("\n요인점수 Z-score 표준화 적용...")
-            self.factor_scores = self._standardize_factor_scores(self.factor_scores)
+            self.factor_scores = self._standardize_factor_scores(original_factor_scores)
             self.logger.info("요인점수 표준화 완료")
 
             # 표준화 후 로깅
@@ -545,7 +548,8 @@ class SequentialEstimator(BaseEstimator):
                     )
                     stage1_results_with_mi = {
                         'sem_results': sem_results,
-                        'factor_scores': self.factor_scores,
+                        'factor_scores': self.factor_scores,  # 표준화된 요인점수
+                        'original_factor_scores': original_factor_scores,  # 원본 요인점수 (분산 체크용)
                         'paths': sem_results['paths'],
                         'loadings': sem_results['loadings'],
                         'fit_indices': sem_results['fit_indices'],
@@ -561,7 +565,8 @@ class SequentialEstimator(BaseEstimator):
                     # 반환 결과 구성 (MI 없이)
                     stage1_results = {
                         'sem_results': sem_results,
-                        'factor_scores': self.factor_scores,
+                        'factor_scores': self.factor_scores,  # 표준화된 요인점수
+                        'original_factor_scores': original_factor_scores,  # 원본 요인점수 (분산 체크용)
                         'paths': sem_results['paths'],
                         'loadings': sem_results['loadings'],
                         'fit_indices': sem_results['fit_indices'],
@@ -573,7 +578,8 @@ class SequentialEstimator(BaseEstimator):
                 # 반환 결과 구성 (MI 없이)
                 stage1_results = {
                     'sem_results': sem_results,
-                    'factor_scores': self.factor_scores,
+                    'factor_scores': self.factor_scores,  # 표준화된 요인점수
+                    'original_factor_scores': original_factor_scores,  # 원본 요인점수 (분산 체크용)
                     'paths': sem_results['paths'],
                     'loadings': sem_results['loadings'],
                     'fit_indices': sem_results['fit_indices'],
@@ -728,15 +734,18 @@ class SequentialEstimator(BaseEstimator):
             )
 
             # 요인점수 추출 (SEM 결과에서)
-            self.factor_scores = sem_results['factor_scores']
-            self.logger.info(f"요인점수 추출 완료: {list(self.factor_scores.keys())}")
+            original_factor_scores = sem_results['factor_scores']  # 원본 요인점수 보관
+            self.logger.info(f"요인점수 추출 완료: {list(original_factor_scores.keys())}")
 
             # ✅ 요인점수 상세 로깅 (표준화 전)
-            self._log_factor_scores(self.factor_scores, stage="SEM 추출 직후 (표준화 전)")
+            self._log_factor_scores(original_factor_scores, stage="SEM 추출 직후 (표준화 전)")
+
+            # ✅ 표준화 전 분산 체크 (원본 요인점수)
+            self._check_factor_score_variance(original_factor_scores)
 
             # ✅ 요인점수 Z-score 표준화
             self.logger.info("\n요인점수 Z-score 표준화 적용...")
-            self.factor_scores = self._standardize_factor_scores(self.factor_scores)
+            self.factor_scores = self._standardize_factor_scores(original_factor_scores)
             self.logger.info("요인점수 표준화 완료")
 
             # ✅ 표준화 후 로깅
@@ -1149,6 +1158,62 @@ class SequentialEstimator(BaseEstimator):
 
         return param_dict
 
+    def _check_factor_score_variance(self, factor_scores: Dict[str, np.ndarray]) -> None:
+        """
+        요인점수 분산 체크 (표준화 전)
+
+        각 잠재변수의 요인점수 분산을 계산하고, 분산이 너무 작은 경우 경고를 출력합니다.
+        이 메서드는 표준화 이전의 원본 요인점수에 대해 호출되어야 합니다.
+
+        Args:
+            factor_scores: 원본 요인점수 딕셔너리
+                {
+                    'purchase_intention': np.ndarray (n_individuals,),
+                    'perceived_price': np.ndarray (n_individuals,),
+                    ...
+                }
+        """
+        self.logger.info("\n" + "=" * 100)
+        self.logger.info("요인점수 분산 체크 (표준화 전)")
+        self.logger.info("=" * 100)
+        self.logger.info(f"{'변수':30s} {'평균':>12s} {'분산':>12s} {'표준편차':>12s} {'최소값':>12s} {'최대값':>12s}")
+        self.logger.info('-' * 100)
+
+        # 분산이 너무 작은 변수 추적
+        low_variance_vars = []
+        variance_threshold = 0.01  # 분산 임계값 (조정 가능)
+
+        for lv_name, scores in factor_scores.items():
+            # 통계 계산
+            mean = np.mean(scores)
+            variance = np.var(scores, ddof=0)  # 모집단 분산
+            std = np.std(scores, ddof=0)  # 모집단 표준편차
+            min_val = np.min(scores)
+            max_val = np.max(scores)
+
+            # 분산이 너무 작은지 확인
+            if variance < variance_threshold:
+                low_variance_vars.append((lv_name, variance))
+
+            self.logger.info(
+                f'{lv_name:30s} {mean:>12.4f} {variance:>12.6f} {std:>12.4f} {min_val:>12.4f} {max_val:>12.4f}'
+            )
+
+        self.logger.info('-' * 100)
+
+        # 분산이 너무 작은 변수에 대한 경고
+        if low_variance_vars:
+            self.logger.warning("\n⚠️  분산이 너무 작은 요인점수 발견 (표준화 전):")
+            self.logger.warning(f"   (임계값: {variance_threshold})")
+            for var_name, var_value in low_variance_vars:
+                self.logger.warning(f"   - {var_name}: 분산 = {var_value:.6f}")
+            self.logger.warning("   → 선택모델에서 비유의할 가능성이 높습니다.")
+            self.logger.warning("   → 측정모델 재검토 또는 지표 추가를 고려하세요.")
+        else:
+            self.logger.info(f"✅ 모든 변수의 분산이 임계값({variance_threshold}) 이상입니다.")
+
+        self.logger.info("=" * 100)
+
     def _standardize_factor_scores(self, factor_scores: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         """
         요인점수 Z-score 표준화
@@ -1170,7 +1235,7 @@ class SequentialEstimator(BaseEstimator):
         """
         standardized = {}
 
-        self.logger.info("요인점수 Z-score 표준화:")
+        self.logger.info("\n요인점수 Z-score 표준화:")
         self.logger.info(f"{'변수':30s} {'원본 평균':>12s} {'원본 std':>12s} → {'표준화 평균':>12s} {'표준화 std':>12s}")
         self.logger.info('-' * 90)
 
@@ -1268,13 +1333,17 @@ class SequentialEstimator(BaseEstimator):
 
         # 저장할 데이터 구성 (pickle 가능한 데이터만)
         save_data = {
-            'factor_scores': results['factor_scores'],
+            'factor_scores': results['factor_scores'],  # 표준화된 요인점수
             'paths': results['paths'],
             'loadings': results['loadings'],
             'fit_indices': results['fit_indices'],
             'log_likelihood': results['log_likelihood'],
-            'version': '1.0'  # 버전 정보
+            'version': '1.1'  # 버전 정보 (원본 요인점수 추가로 1.1로 업데이트)
         }
+
+        # 원본 요인점수도 저장 (있는 경우)
+        if 'original_factor_scores' in results:
+            save_data['original_factor_scores'] = results['original_factor_scores']
 
         # measurement_results와 structural_results에서 pickle 가능한 부분만 추출
         if 'measurement_results' in results and results['measurement_results']:
@@ -1321,22 +1390,62 @@ class SequentialEstimator(BaseEstimator):
             fit_df.to_csv(fit_csv, index=False, encoding='utf-8-sig')
             logger.info(f"적합도 지수 저장: {fit_csv}")
 
-        # 2-4. 요인점수 통계 저장
-        if 'factor_scores' in results and results['factor_scores']:
+        # 2-4. 요인점수 통계 저장 (원본 요인점수의 분산 포함)
+        if 'original_factor_scores' in results and results['original_factor_scores']:
             factor_stats_csv = f"{base_path}_factor_scores_stats.csv"
             stats_list = []
-            for lv_name, scores in results['factor_scores'].items():
+            variance_threshold = 0.01  # 분산 임계값
+
+            # ✅ 원본 요인점수의 통계 계산 (표준화 전)
+            for lv_name, scores in results['original_factor_scores'].items():
+                variance = np.var(scores, ddof=0)  # 모집단 분산
+                std = np.std(scores, ddof=0)  # 모집단 표준편차
+
                 stats_list.append({
                     'latent_variable': lv_name,
                     'mean': np.mean(scores),
-                    'std': np.std(scores),
+                    'variance': variance,
+                    'std': std,
                     'min': np.min(scores),
                     'max': np.max(scores),
-                    'n_observations': len(scores)
+                    'n_observations': len(scores),
+                    'low_variance_warning': 'YES' if variance < variance_threshold else 'NO'
                 })
+
             stats_df = pd.DataFrame(stats_list)
             stats_df.to_csv(factor_stats_csv, index=False, encoding='utf-8-sig')
-            logger.info(f"요인점수 통계 저장: {factor_stats_csv}")
+            logger.info(f"요인점수 통계 저장 (표준화 전): {factor_stats_csv}")
+
+            # 분산이 너무 작은 변수 경고
+            low_var_count = (stats_df['low_variance_warning'] == 'YES').sum()
+            if low_var_count > 0:
+                logger.warning(f"⚠️  분산이 {variance_threshold} 미만인 변수: {low_var_count}개")
+                logger.warning("   → 선택모델에서 비유의할 가능성이 높습니다.")
+        elif 'factor_scores' in results and results['factor_scores']:
+            # 하위 호환성: original_factor_scores가 없으면 표준화된 요인점수 사용
+            logger.warning("⚠️  원본 요인점수가 없어 표준화된 요인점수의 통계를 저장합니다.")
+            factor_stats_csv = f"{base_path}_factor_scores_stats.csv"
+            stats_list = []
+            variance_threshold = 0.01
+
+            for lv_name, scores in results['factor_scores'].items():
+                variance = np.var(scores, ddof=0)
+                std = np.std(scores, ddof=0)
+
+                stats_list.append({
+                    'latent_variable': lv_name,
+                    'mean': np.mean(scores),
+                    'variance': variance,
+                    'std': std,
+                    'min': np.min(scores),
+                    'max': np.max(scores),
+                    'n_observations': len(scores),
+                    'low_variance_warning': 'YES' if variance < variance_threshold else 'NO'
+                })
+
+            stats_df = pd.DataFrame(stats_list)
+            stats_df.to_csv(factor_stats_csv, index=False, encoding='utf-8-sig')
+            logger.info(f"요인점수 통계 저장 (표준화 후): {factor_stats_csv}")
 
         # 2-5. 요인점수 전체 저장 (개인별)
         if 'factor_scores' in results and results['factor_scores']:

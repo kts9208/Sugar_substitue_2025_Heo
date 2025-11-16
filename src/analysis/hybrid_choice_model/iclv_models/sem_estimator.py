@@ -439,8 +439,10 @@ class SEMEstimator:
         """
         요인점수 추출
 
-        semopy의 predict_factors() 사용 (가능한 경우)
-        불가능하면 수동 계산 (Bartlett 방법)
+        ✅ 수동 계산 (Bartlett 방법)을 사용하여 원본 스케일의 요인점수를 추출합니다.
+
+        semopy의 predict_factors()는 잠재변수 분산 제약으로 인해
+        표준화된 요인점수를 반환하므로 사용하지 않습니다.
 
         Args:
             data: 분석 데이터
@@ -456,25 +458,10 @@ class SEMEstimator:
         if not self.fitted:
             raise ValueError("모델이 추정되지 않았습니다. fit()을 먼저 실행하세요.")
 
-        logger.info("요인점수 추출 시작")
+        logger.info("요인점수 추출 시작 (수동 계산 - 원본 스케일)")
 
-        # semopy의 predict_factors() 사용 시도
-        try:
-            factor_scores_df = self.model.predict_factors(data)
-
-            # Dict 형태로 변환
-            factor_scores = {}
-            for col in factor_scores_df.columns:
-                factor_scores[col] = factor_scores_df[col].values
-
-            logger.info(f"요인점수 추출 완료 (semopy.predict_factors): {list(factor_scores.keys())}")
-            return factor_scores
-
-        except (AttributeError, NotImplementedError) as e:
-            # semopy 구버전 또는 미지원: 수동 계산
-            logger.warning(f"semopy.predict_factors() 미지원: {e}")
-            logger.info("수동 요인점수 계산 (Bartlett 방법)")
-            return self._manual_factor_scores(data, measurement_model)
+        # ✅ 항상 수동 계산 사용 (원본 스케일 유지)
+        return self._manual_factor_scores(data, measurement_model)
 
     def _manual_factor_scores(self, data: pd.DataFrame,
                               measurement_model: MultiLatentMeasurement) -> Dict[str, np.ndarray]:
@@ -492,7 +479,17 @@ class SEMEstimator:
         """
         # 파라미터 추출
         params = self.model.inspect()
-        loadings = params[params['op'] == '=~'].copy()
+
+        # ✅ semopy는 '~'를 사용하므로 '~'로 필터링
+        # 잠재변수 목록
+        latent_vars = list(measurement_model.configs.keys())
+
+        # 요인적재량: op == '~' AND rval이 잠재변수 AND lval이 관측변수
+        loadings = params[
+            (params['op'] == '~') &
+            (params['rval'].isin(latent_vars)) &
+            (~params['lval'].isin(latent_vars))
+        ].copy()
 
         factor_scores = {}
 
