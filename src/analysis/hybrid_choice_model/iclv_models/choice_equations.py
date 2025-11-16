@@ -131,10 +131,131 @@ class BaseICLVChoice(ABC):
         # 효용 계산
         V = np.zeros(len(data))
 
-        if self.all_lvs_as_main and isinstance(lv, dict):
-            # ✅ 모든 LV 주효과 모델 (디폴트)
+        # ✅ 대안별 파라미터 사용 여부 확인 (Multinomial Logit)
+        # Base Model (잠재변수 없음)도 대안별 ASC 사용
+        use_alternative_specific = 'asc_sugar' in params or 'ASC_sugar' in params or 'asc_A' in params or 'ASC_A' in params
+
+        if use_alternative_specific:
+            # ✅ 대안별 모델 (Multinomial Logit with ASC)
+            # V_alt = ASC_alt + Σ(θ_alt_i * LV_i) + β*X_alt
+            # Base Model의 경우: V_alt = ASC_alt + β*X_alt (잠재변수 없음)
+
+            # 각 LV를 배열로 변환 (잠재변수가 있는 경우만)
+            lv_arrays = {}
+            if self.all_lvs_as_main and isinstance(lv, dict) and self.main_lvs:
+                for lv_name in self.main_lvs:
+                    if lv_name not in lv:
+                        raise KeyError(f"잠재변수 '{lv_name}'가 lv dict에 없습니다.")
+
+                    lv_value = lv[lv_name]
+                    if np.isscalar(lv_value):
+                        lv_arrays[lv_name] = np.full(len(data), lv_value)
+                    else:
+                        lv_arrays[lv_name] = lv_value
+
+            # 효용 계산
+            for i in range(len(data)):
+                if has_nan[i]:
+                    V[i] = 0.0  # opt-out: 효용 = 0
+                else:
+                    # ✅ sugar_content 기준으로 대안 구분
+                    if 'sugar_content' in data.columns:
+                        sugar_content = data['sugar_content'].iloc[i]
+
+                        if pd.isna(sugar_content):
+                            # opt-out (구매안함)
+                            V[i] = 0.0
+                        elif sugar_content == '알반당':  # ✅ 데이터에는 '알반당'으로 저장됨
+                            # 일반당 대안
+                            asc = params.get('asc_sugar', params.get('ASC_sugar', 0.0))
+                            V[i] = asc + X[i] @ beta
+
+                            # 잠재변수 효과 추가 (대안별) - 잠재변수가 있는 경우만
+                            if lv_arrays:
+                                for lv_name in self.main_lvs:
+                                    param_name = f'theta_sugar_{lv_name}'
+                                    if param_name in params:
+                                        theta = params[param_name]
+                                        V[i] += theta * lv_arrays[lv_name][i // self.n_alternatives]
+
+                            # ✅ LV-Attribute 상호작용 추가 (대안별) - 잠재변수가 있는 경우만
+                            if lv_arrays and self.lv_attribute_interactions is not None:
+                                for interaction in self.lv_attribute_interactions:
+                                    lv_name = interaction['lv']
+                                    attr_name = interaction['attribute']
+                                    param_name = f'gamma_sugar_{lv_name}_{attr_name}'
+
+                                    if param_name in params and attr_name in self.choice_attributes:
+                                        gamma = params[param_name]
+                                        attr_idx = self.choice_attributes.index(attr_name)
+                                        lv_value = lv_arrays[lv_name][i // self.n_alternatives]
+                                        attr_value = X[i, attr_idx]
+                                        V[i] += gamma * lv_value * attr_value
+
+                        elif sugar_content == '무설탕':
+                            # 무설탕 대안
+                            asc = params.get('asc_sugar_free', params.get('ASC_sugar_free', 0.0))
+                            V[i] = asc + X[i] @ beta
+
+                            # 잠재변수 효과 추가 (대안별) - 잠재변수가 있는 경우만
+                            if lv_arrays:
+                                for lv_name in self.main_lvs:
+                                    param_name = f'theta_sugar_free_{lv_name}'
+                                    if param_name in params:
+                                        theta = params[param_name]
+                                        V[i] += theta * lv_arrays[lv_name][i // self.n_alternatives]
+
+                            # ✅ LV-Attribute 상호작용 추가 (대안별) - 잠재변수가 있는 경우만
+                            if lv_arrays and self.lv_attribute_interactions is not None:
+                                for interaction in self.lv_attribute_interactions:
+                                    lv_name = interaction['lv']
+                                    attr_name = interaction['attribute']
+                                    param_name = f'gamma_sugar_free_{lv_name}_{attr_name}'
+
+                                    if param_name in params and attr_name in self.choice_attributes:
+                                        gamma = params[param_name]
+                                        attr_idx = self.choice_attributes.index(attr_name)
+                                        lv_value = lv_arrays[lv_name][i // self.n_alternatives]
+                                        attr_value = X[i, attr_idx]
+                                        V[i] += gamma * lv_value * attr_value
+                        else:
+                            # 알 수 없는 값
+                            V[i] = 0.0
+
+                    else:
+                        # sugar_content 컬럼이 없으면 기존 방식 (alternative 기준)
+                        alt_idx = i % self.n_alternatives
+
+                        if alt_idx == 0:  # 대안 A
+                            asc = params.get('asc_A', params.get('ASC_A', 0.0))
+                            V[i] = asc + X[i] @ beta
+
+                            # 잠재변수 효과 추가 - 잠재변수가 있는 경우만
+                            if lv_arrays:
+                                for lv_name in self.main_lvs:
+                                    param_name = f'theta_A_{lv_name}'
+                                    if param_name in params:
+                                        theta = params[param_name]
+                                        V[i] += theta * lv_arrays[lv_name][i // self.n_alternatives]
+
+                        elif alt_idx == 1:  # 대안 B
+                            asc = params.get('asc_B', params.get('ASC_B', 0.0))
+                            V[i] = asc + X[i] @ beta
+
+                            # 잠재변수 효과 추가 - 잠재변수가 있는 경우만
+                            if lv_arrays:
+                                for lv_name in self.main_lvs:
+                                    param_name = f'theta_B_{lv_name}'
+                                    if param_name in params:
+                                        theta = params[param_name]
+                                        V[i] += theta * lv_arrays[lv_name][i // self.n_alternatives]
+
+                        else:  # 대안 C (opt-out)
+                            V[i] = 0.0
+
+        elif self.all_lvs_as_main and isinstance(lv, dict) and self.main_lvs:
+            # ✅ 모든 LV 주효과 모델 (대안별이 아닌 경우)
             # V = intercept + β*X + Σ(λ_i * LV_i)
-            # 또는 대안별 모델: V_alt = ASC_alt + Σ(θ_alt_i * LV_i) + β*X_alt
 
             # 각 LV를 배열로 변환
             lv_arrays = {}
@@ -148,117 +269,20 @@ class BaseICLVChoice(ABC):
                 else:
                     lv_arrays[lv_name] = lv_value
 
-            # 대안별 파라미터 사용 여부 확인 (Multinomial Logit)
-            use_alternative_specific = 'asc_sugar' in params or 'ASC_sugar' in params or 'asc_A' in params or 'ASC_A' in params
-
             # 효용 계산
+            intercept = params.get('intercept', 0.0)
             for i in range(len(data)):
                 if has_nan[i]:
-                    V[i] = 0.0  # opt-out: 효용 = 0
+                    V[i] = 0.0
                 else:
-                    if use_alternative_specific:
-                        # ✅ sugar_content 기준으로 대안 구분
-                        if 'sugar_content' in data.columns:
-                            sugar_content = data['sugar_content'].iloc[i]
+                    V[i] = intercept + X[i] @ beta
 
-                            if pd.isna(sugar_content):
-                                # opt-out (구매안함)
-                                V[i] = 0.0
-                            elif sugar_content == '알반당':  # ✅ 데이터에는 '알반당'으로 저장됨
-                                # 일반당 대안
-                                asc = params.get('asc_sugar', params.get('ASC_sugar', 0.0))
-                                V[i] = asc + X[i] @ beta
-
-                                # 잠재변수 효과 추가 (대안별)
-                                for lv_name in self.main_lvs:
-                                    param_name = f'theta_sugar_{lv_name}'
-                                    if param_name in params:
-                                        theta = params[param_name]
-                                        V[i] += theta * lv_arrays[lv_name][i // self.n_alternatives]
-
-                                # ✅ LV-Attribute 상호작용 추가 (대안별)
-                                if self.lv_attribute_interactions is not None:
-                                    for interaction in self.lv_attribute_interactions:
-                                        lv_name = interaction['lv']
-                                        attr_name = interaction['attribute']
-                                        param_name = f'gamma_sugar_{lv_name}_{attr_name}'
-
-                                        if param_name in params and attr_name in self.choice_attributes:
-                                            gamma = params[param_name]
-                                            attr_idx = self.choice_attributes.index(attr_name)
-                                            lv_value = lv_arrays[lv_name][i // self.n_alternatives]
-                                            attr_value = X[i, attr_idx]
-                                            V[i] += gamma * lv_value * attr_value
-
-                            elif sugar_content == '무설탕':
-                                # 무설탕 대안
-                                asc = params.get('asc_sugar_free', params.get('ASC_sugar_free', 0.0))
-                                V[i] = asc + X[i] @ beta
-
-                                # 잠재변수 효과 추가 (대안별)
-                                for lv_name in self.main_lvs:
-                                    param_name = f'theta_sugar_free_{lv_name}'
-                                    if param_name in params:
-                                        theta = params[param_name]
-                                        V[i] += theta * lv_arrays[lv_name][i // self.n_alternatives]
-
-                                # ✅ LV-Attribute 상호작용 추가 (대안별)
-                                if self.lv_attribute_interactions is not None:
-                                    for interaction in self.lv_attribute_interactions:
-                                        lv_name = interaction['lv']
-                                        attr_name = interaction['attribute']
-                                        param_name = f'gamma_sugar_free_{lv_name}_{attr_name}'
-
-                                        if param_name in params and attr_name in self.choice_attributes:
-                                            gamma = params[param_name]
-                                            attr_idx = self.choice_attributes.index(attr_name)
-                                            lv_value = lv_arrays[lv_name][i // self.n_alternatives]
-                                            attr_value = X[i, attr_idx]
-                                            V[i] += gamma * lv_value * attr_value
-                            else:
-                                # 알 수 없는 값
-                                V[i] = 0.0
-
-                        else:
-                            # sugar_content 컬럼이 없으면 기존 방식 (alternative 기준)
-                            alt_idx = i % self.n_alternatives
-
-                            if alt_idx == 0:  # 대안 A
-                                asc = params.get('asc_A', params.get('ASC_A', 0.0))
-                                V[i] = asc + X[i] @ beta
-
-                                # 잠재변수 효과 추가
-                                for lv_name in self.main_lvs:
-                                    param_name = f'theta_A_{lv_name}'
-                                    if param_name in params:
-                                        theta = params[param_name]
-                                        V[i] += theta * lv_arrays[lv_name][i // self.n_alternatives]
-
-                            elif alt_idx == 1:  # 대안 B
-                                asc = params.get('asc_B', params.get('ASC_B', 0.0))
-                                V[i] = asc + X[i] @ beta
-
-                                # 잠재변수 효과 추가
-                                for lv_name in self.main_lvs:
-                                    param_name = f'theta_B_{lv_name}'
-                                    if param_name in params:
-                                        theta = params[param_name]
-                                        V[i] += theta * lv_arrays[lv_name][i // self.n_alternatives]
-
-                            else:  # 대안 C (opt-out)
-                                V[i] = 0.0
-
-                    else:
-                        # 기존 방식: 모든 대안에 동일한 intercept와 lambda
-                        intercept = params.get('intercept', 0.0)
-                        V[i] = intercept + X[i] @ beta
-
-                        # 모든 LV 주효과 추가
-                        for lv_name in self.main_lvs:
-                            param_name = f'lambda_{lv_name}'
-                            if param_name in params:
-                                lambda_lv = params[param_name]
-                                V[i] += lambda_lv * lv_arrays[lv_name][i]
+                    # 모든 LV 주효과 추가
+                    for lv_name in self.main_lvs:
+                        param_name = f'lambda_{lv_name}'
+                        if param_name in params:
+                            lambda_lv = params[param_name]
+                            V[i] += lambda_lv * lv_arrays[lv_name][i]
 
             # ✅ LV-Attribute 상호작용 추가
             if self.lv_attribute_interactions is not None:
@@ -1220,9 +1244,9 @@ class MultinomialLogitChoice(BaseICLVChoice):
         if hasattr(self, 'n_alternatives') and self.n_alternatives == 3:
             # ✅ sugar_content 기준으로 ASC 초기화
             if 'sugar_content' in data.columns:
-                # ASC (opt-out은 reference이므로 0)
-                params['asc_sugar'] = 0.0  # 일반당
-                params['asc_sugar_free'] = 0.0  # 무설탕
+                # ASC (opt-out은 reference이므로 0, 나머지는 추정)
+                params['asc_sugar'] = 0.5  # 일반당 (초기값 0.5)
+                params['asc_sugar_free'] = 0.5  # 무설탕 (초기값 0.5)
 
                 # 대안별 잠재변수 계수
                 if self.all_lvs_as_main and self.main_lvs is not None:
@@ -1239,8 +1263,8 @@ class MultinomialLogitChoice(BaseICLVChoice):
                         params[f'gamma_sugar_free_{lv_name}_{attr_name}'] = 0.0
             else:
                 # sugar_content 컬럼이 없으면 기존 방식 (alternative 기준)
-                params['asc_A'] = 0.0
-                params['asc_B'] = 0.0
+                params['asc_A'] = 0.5
+                params['asc_B'] = 0.5
 
                 # 대안별 잠재변수 계수
                 if self.all_lvs_as_main and self.main_lvs is not None:

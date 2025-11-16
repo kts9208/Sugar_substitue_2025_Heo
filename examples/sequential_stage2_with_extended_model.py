@@ -34,9 +34,79 @@ from src.analysis.hybrid_choice_model.iclv_models.multi_latent_config import (
 from src.analysis.hybrid_choice_model.iclv_models.choice_equations import MultinomialLogitChoice
 
 
+def generate_stage2_filename(config) -> str:
+    """
+    선택모델 설정을 기반으로 2단계 결과 파일명 생성
+
+    Args:
+        config: ChoiceConfig 또는 MultiLatentConfig 객체
+
+    Returns:
+        파일명 접두사 (예: "stage2_PI_NK_3int", "stage2_base_model")
+    """
+    # config가 MultiLatentConfig인 경우 choice 속성 추출
+    choice_config = getattr(config, 'choice', config)
+
+    # 1. 잠재변수가 없는 경우 -> base_model
+    has_lvs = False
+
+    # 주효과 LV 확인
+    if getattr(choice_config, 'all_lvs_as_main', False):
+        main_lvs = getattr(choice_config, 'main_lvs', None)
+        if main_lvs and len(main_lvs) > 0:
+            has_lvs = True
+
+    # 조절효과 확인
+    if getattr(choice_config, 'moderation_enabled', False):
+        has_lvs = True
+
+    # LV-Attribute 상호작용 확인 (주효과 없이 상호작용만 있을 수도 있음)
+    lv_attr_interactions = getattr(choice_config, 'lv_attribute_interactions', None)
+    if lv_attr_interactions and len(lv_attr_interactions) > 0:
+        has_lvs = True
+
+    # 잠재변수가 전혀 없으면 base_model
+    if not has_lvs:
+        return "stage2_base_model"
+
+    # 2. 잠재변수가 있는 경우 -> 구성 요소별 파일명 생성
+    parts = ["stage2"]
+
+    # 2-1. 주효과 LV
+    if getattr(choice_config, 'all_lvs_as_main', False):
+        main_lvs = getattr(choice_config, 'main_lvs', None)
+        if main_lvs and len(main_lvs) > 0:
+            # LV 약어 생성 (예: purchase_intention -> PI)
+            lv_abbr = []
+            abbr_map = {
+                'health_concern': 'HC',
+                'perceived_benefit': 'PB',
+                'perceived_price': 'PP',
+                'nutrition_knowledge': 'NK',
+                'purchase_intention': 'PI'
+            }
+            for lv in main_lvs:
+                lv_abbr.append(abbr_map.get(lv, lv[:2].upper()))
+            parts.append('_'.join(lv_abbr))
+
+    # 2-2. 조절효과
+    if getattr(choice_config, 'moderation_enabled', False):
+        moderator_lvs = getattr(choice_config, 'moderator_lvs', None)
+        if moderator_lvs:
+            n_mods = len(moderator_lvs)
+            parts.append(f"mod{n_mods}")
+
+    # 2-3. LV-Attribute 상호작용
+    if lv_attr_interactions and len(lv_attr_interactions) > 0:
+        n_interactions = len(lv_attr_interactions)
+        parts.append(f"{n_interactions}int")
+
+    return '_'.join(parts)
+
+
 def main():
     print("=" * 70)
-    print("2단계 추정: 선택모델 (PI + NK 주 효과)")
+    print("2단계 추정: 선택모델 (Base Model - 잠재변수 없음)")
     print("=" * 70)
     
     # 1. 데이터 로드
@@ -75,29 +145,23 @@ def main():
     # 선택모델 설정 수정: PI와 NK만 주 효과로 사용
     from src.analysis.hybrid_choice_model.iclv_models.iclv_config import ChoiceConfig
 
+    # ✅ Base Model: 잠재변수 없이 선택속성만 사용
     config.choice = ChoiceConfig(
         choice_attributes=['health_label', 'price'],  # sugar_free 제거 (대안 A/B로 구분됨)
         choice_type='binary',
         price_variable='price',
-        all_lvs_as_main=True,
-        main_lvs=['purchase_intention', 'nutrition_knowledge'],  # PI와 NK만
+        all_lvs_as_main=False,  # 잠재변수 주효과 사용 안 함
+        main_lvs=None,  # 잠재변수 없음
         moderation_enabled=False,
-        # ✅ LV-Attribute 상호작용 추가
-        lv_attribute_interactions=[
-            {'lv': 'purchase_intention', 'attribute': 'price'},  # PI × price
-            {'lv': 'purchase_intention', 'attribute': 'health_label'},  # PI × health_label
-            {'lv': 'nutrition_knowledge', 'attribute': 'health_label'}  # NK × health_label
-        ]
+        lv_attribute_interactions=None  # 상호작용 없음
     )
 
-    # 선택모델에 사용할 잠재변수 확인
-    print(f"✅ 선택모델 주 효과:")
-    print(f"   - purchase_intention (PI): 구매의도")
-    print(f"   - nutrition_knowledge (NK): 영양지식")
-    print(f"\n✅ LV-Attribute 상호작용:")
-    print(f"   - PI × price: 구매의도가 높을수록 가격 민감도 변화")
-    print(f"   - PI × health_label: 구매의도가 높을수록 건강라벨 선호 변화")
-    print(f"   - NK × health_label: 영양지식이 높을수록 건강라벨 선호 변화")
+    # 선택모델 설정 확인
+    print(f"✅ 선택모델 설정:")
+    print(f"   - 모델 유형: Base Model (잠재변수 없음)")
+    print(f"   - 선택 속성만 사용: health_label, price")
+    print(f"   - 잠재변수 주효과: 없음")
+    print(f"   - LV-Attribute 상호작용: 없음")
 
     # 4. 선택모델 생성
     print("\n[4] 선택모델 생성 중...")
@@ -257,9 +321,13 @@ def main():
     print("\n" + "=" * 70)
     print("결과 저장")
     print("=" * 70)
-    
+
     save_dir = project_root / "results" / "sequential_stage_wise"
     save_dir.mkdir(parents=True, exist_ok=True)
+
+    # 동적 파일명 생성
+    filename_prefix = generate_stage2_filename(config)
+    print(f"\n파일명 접두사: {filename_prefix}")
 
     # 파라미터 저장 (통계량 포함)
     if 'parameter_statistics' in results and results['parameter_statistics'] is not None:
@@ -388,7 +456,7 @@ def main():
             })
 
         param_df = pd.DataFrame(param_data)
-        param_path = save_dir / "stage2_extended_model_parameters.csv"
+        param_path = save_dir / f"{filename_prefix}_parameters.csv"
         param_df.to_csv(param_path, index=False, encoding='utf-8-sig')
         print(f"\n  📁 {param_path}")
 
@@ -442,12 +510,12 @@ def main():
                 param_data.append({'parameter': key, 'value': params[key], 'description': desc})
 
         param_df = pd.DataFrame(param_data)
-        param_path = save_dir / "stage2_extended_model_parameters.csv"
+        param_path = save_dir / f"{filename_prefix}_parameters.csv"
         param_df.to_csv(param_path, index=False, encoding='utf-8-sig')
         print(f"\n  📁 {param_path}")
 
     # 적합도 저장
-    fit_path = save_dir / "stage2_extended_model_fit.csv"
+    fit_path = save_dir / f"{filename_prefix}_fit.csv"
     fit_df = pd.DataFrame([{
         'log_likelihood': results['log_likelihood'],
         'AIC': results['aic'],
