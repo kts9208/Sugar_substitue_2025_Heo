@@ -1,7 +1,7 @@
 # 2단계 선택모델 요인점수 사용 검증 보고서
 
-**날짜**: 2025-11-16  
-**검증 대상**: `examples/sequential_stage2_example.py` 실행 결과
+**날짜**: 2025-11-16
+**검증 대상**: `examples/sequential_stage2_with_extended_model.py` 실행 결과
 
 ---
 
@@ -97,15 +97,15 @@ V_optout = 0 (reference)
                ...
            }
 
-2. 2단계 추정 (sequential_stage2_example.py)
+2. 2단계 추정 (sequential_stage2_with_extended_model.py)
    └─> SequentialEstimator.estimate_stage2_only()
-       └─> load_stage1_results() 
+       └─> load_stage1_results()
            └─> factor_scores 로드 (326,)
-       
+
        └─> MultinomialLogitChoice.fit()
            └─> 요인점수 확장 (326,) → (5904,)
                └─> respondent_id 기준 매핑
-           
+
            └─> 효용함수 계산
                └─> V[i] += theta * lv_arrays['purchase_intention'][i // n_alternatives]
 ```

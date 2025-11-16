@@ -57,10 +57,12 @@ python examples/sequential_stage1_example.py
 
 #### 2단계 실행
 ```bash
-python examples/sequential_stage2_example.py
+python examples/sequential_stage2_with_extended_model.py
 ```
 
 **출력:**
+- `results/sequential_stage_wise/{모델명}_parameters.csv`: 파라미터 추정치 (계수, 표준오차, t값, p값)
+- `results/sequential_stage_wise/{모델명}_fit.csv`: 적합도 (로그우도, AIC, BIC)
 - `logs/stage2_estimation.log`: 추정 로그
 - 콘솔: 선택모델 파라미터, AIC, BIC
 

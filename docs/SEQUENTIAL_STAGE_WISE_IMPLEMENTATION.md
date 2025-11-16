@@ -60,8 +60,8 @@ src/analysis/hybrid_choice_model/iclv_models/
     └── load_factor_scores()        # 요인점수 로드
 
 examples/
-├── sequential_stage1_example.py    # 1단계 실행 예제
-└── sequential_stage2_example.py    # 2단계 실행 예제
+├── sequential_stage1_example.py              # 1단계 실행 예제
+└── sequential_stage2_with_extended_model.py  # 2단계 실행 예제 (결과 CSV 저장)
 
 tests/
 └── test_sequential_stage_wise.py   # 단위 테스트
@@ -85,8 +85,10 @@ python examples/sequential_stage1_example.py
 # 결과 검토 (경로계수, 적합도 지수 확인)
 
 # 2단계 실행
-python examples/sequential_stage2_example.py
+python examples/sequential_stage2_with_extended_model.py
 # → 1단계 결과 자동 로드 및 선택모델 추정
+# → results/sequential_stage_wise/{모델명}_parameters.csv 생성
+# → results/sequential_stage_wise/{모델명}_fit.csv 생성
 ```
 
 ### 예제 2: Python 코드

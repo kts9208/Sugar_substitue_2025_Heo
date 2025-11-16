@@ -1,9 +1,52 @@
 """
-2단계 추정: 확장 모델(HC→PB→PI, HC→PP→PI)의 요인점수를 사용한 선택모델 추정
+2단계 추정: 1단계 요인점수를 사용한 선택모델 추정
 
-선택모델에 포함되는 잠재변수:
-- purchase_intention (PI): 구매의도 - 주 효과
-- nutrition_knowledge (NK): 영양지식 - 주 효과
+🎯 사용법:
+    main() 함수 내 상단의 설정 변수만 수정하면 됩니다!
+
+📌 설정 예시:
+
+1. Base Model (잠재변수 없음):
+    MAIN_LVS = []
+    MODERATION_LVS = []
+    LV_ATTRIBUTE_INTERACTIONS = []
+
+2. Base + PI 주효과:
+    MAIN_LVS = ['purchase_intention']
+    MODERATION_LVS = []
+    LV_ATTRIBUTE_INTERACTIONS = []
+
+3. Base + PI + NK 주효과:
+    MAIN_LVS = ['purchase_intention', 'nutrition_knowledge']
+    MODERATION_LVS = []
+    LV_ATTRIBUTE_INTERACTIONS = []
+
+4. Base + PI 주효과 + PI×price 상호작용:
+    MAIN_LVS = ['purchase_intention']
+    MODERATION_LVS = []
+    LV_ATTRIBUTE_INTERACTIONS = [('purchase_intention', 'price')]
+
+5. Base + PI + NK 주효과 + 조절효과 + 상호작용:
+    MAIN_LVS = ['purchase_intention', 'nutrition_knowledge']
+    MODERATION_LVS = [('perceived_price', 'nutrition_knowledge')]
+    LV_ATTRIBUTE_INTERACTIONS = [
+        ('purchase_intention', 'price'),
+        ('nutrition_knowledge', 'health_label')
+    ]
+
+💡 사용 가능한 잠재변수:
+    - 'purchase_intention' (PI): 구매의도
+    - 'nutrition_knowledge' (NK): 영양지식
+    - 'perceived_benefit' (PB): 건강유익성
+    - 'perceived_price' (PP): 가격수준
+    - 'health_concern' (HC): 건강관심도
+
+💡 사용 가능한 속성:
+    - 'health_label': 건강 라벨
+    - 'price': 가격
+
+Author: ICLV Team
+Date: 2025-01-16
 """
 
 import sys
@@ -105,25 +148,70 @@ def generate_stage2_filename(config) -> str:
 
 
 def main():
+    # ═══════════════════════════════════════════════════════════════════
+    # 🎯 사용자 설정 영역 - 여기만 수정하세요!
+    # ═══════════════════════════════════════════════════════════════════
+
+    # 📌 1단계 결과 파일명 (1단계에서 생성된 파일명)
+    STAGE1_RESULT_FILE = "stage1_HC-PB_HC-PP_PB-PI_PP-PI_results.pkl"
+
+    # 📌 선택모델 설정
+    CHOICE_ATTRIBUTES = ['health_label', 'price']  # 선택 속성
+    CHOICE_TYPE = 'binary'  # 'binary' 또는 'multinomial'
+    PRICE_VARIABLE = 'price'  # 가격 변수명
+
+    # 📌 잠재변수 주효과 (원하는 잠재변수만 추가)
+    # 예시: [] = Base Model (잠재변수 없음)
+    #      ['purchase_intention'] = Base + PI 주효과
+    #      ['purchase_intention', 'nutrition_knowledge'] = Base + PI + NK 주효과
+    MAIN_LVS = ['nutrition_knowledge']  # ✅ 여기에 잠재변수 추가!
+
+    # 📌 조절효과 (잠재변수 2개 세트)
+    # 예시: [('perceived_price', 'nutrition_knowledge')] = PP와 NK의 조절효과
+    MODERATION_LVS = []  # ✅ 여기에 조절효과 추가! 예: [('lv1', 'lv2')]
+
+    # 📌 LV-Attribute 상호작용 (잠재변수-속성 2개 세트)
+    # 예시: [('purchase_intention', 'price')] = PI × price 상호작용
+    #      [('purchase_intention', 'price'), ('nutrition_knowledge', 'health_label')]
+    LV_ATTRIBUTE_INTERACTIONS = [('nutrition_knowledge', 'price')]  # ✅ 여기에 상호작용 추가! 예: [('lv', 'attr')]
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 🤖 자동 처리 영역 - 수정 불필요
+    # ═══════════════════════════════════════════════════════════════════
+
+    # 모델 유형 자동 판단
+    model_type_parts = ["Base Model"]
+    if MAIN_LVS:
+        lv_abbr = {'purchase_intention': 'PI', 'nutrition_knowledge': 'NK',
+                   'perceived_benefit': 'PB', 'perceived_price': 'PP', 'health_concern': 'HC'}
+        lv_names = [lv_abbr.get(lv, lv.upper()) for lv in MAIN_LVS]
+        model_type_parts.append(f"+ {' + '.join(lv_names)} 주효과")
+    if MODERATION_LVS:
+        model_type_parts.append(f"+ 조절효과 {len(MODERATION_LVS)}개")
+    if LV_ATTRIBUTE_INTERACTIONS:
+        model_type_parts.append(f"+ LV-Attr 상호작용 {len(LV_ATTRIBUTE_INTERACTIONS)}개")
+
+    model_type_str = " ".join(model_type_parts)
+
     print("=" * 70)
-    print("2단계 추정: 선택모델 (Base Model - 잠재변수 없음)")
+    print(f"2단계 추정: 선택모델 ({model_type_str})")
     print("=" * 70)
-    
+
     # 1. 데이터 로드
     print("\n[1] 데이터 로드 중...")
     data_path = project_root / "data" / "processed" / "iclv" / "integrated_data_cleaned.csv"
     data = pd.read_csv(data_path)
     print(f"✅ 데이터 로드 완료: {len(data)}행, {len(data.columns)}열")
-    
+
     # 2. 1단계 결과 로드
     print("\n[2] 1단계 결과 로드 중...")
-    stage1_path = project_root / "results" / "sequential_stage_wise" / "stage1_HC-PB_HC-PP_PB-PI_PP-PI_results.pkl"
-    
+    stage1_path = project_root / "results" / "sequential_stage_wise" / STAGE1_RESULT_FILE
+
     if not stage1_path.exists():
         raise FileNotFoundError(f"1단계 결과 파일이 없습니다: {stage1_path}")
-    
+
     print(f"✅ 1단계 결과 파일: {stage1_path.name}")
-    
+
     # 3. 모델 설정 생성
     print("\n[3] 선택모델 설정 중...")
 
@@ -138,30 +226,66 @@ def main():
         n_draws=100,
         max_iterations=1000,
         use_hierarchical=False,
-        all_lvs_as_main=False,  # 모든 LV 주효과 사용 안 함
+        all_lvs_as_main=False,
         custom_paths=custom_paths
     )
 
-    # 선택모델 설정 수정: PI와 NK만 주 효과로 사용
+    # 선택모델 설정 자동 생성
     from src.analysis.hybrid_choice_model.iclv_models.iclv_config import ChoiceConfig
 
-    # ✅ Base Model: 잠재변수 없이 선택속성만 사용
+    # 조절효과 설정 변환
+    # MODERATION_LVS = [('lv1', 'lv2')] → moderator_lvs = ['lv2'] (두 번째 변수가 조절변수)
+    moderator_lvs = None
+    main_lv = 'purchase_intention'  # 기본값
+    if MODERATION_LVS:
+        # 첫 번째 튜플의 첫 번째 요소를 main_lv로, 나머지를 moderator_lvs로
+        main_lv = MODERATION_LVS[0][0]
+        moderator_lvs = [pair[1] for pair in MODERATION_LVS]
+
+    # LV-Attribute 상호작용 설정 변환
+    lv_attr_config = None
+    if LV_ATTRIBUTE_INTERACTIONS:
+        lv_attr_config = [{'lv': pair[0], 'attribute': pair[1]} for pair in LV_ATTRIBUTE_INTERACTIONS]
+
     config.choice = ChoiceConfig(
-        choice_attributes=['health_label', 'price'],  # sugar_free 제거 (대안 A/B로 구분됨)
-        choice_type='binary',
-        price_variable='price',
-        all_lvs_as_main=False,  # 잠재변수 주효과 사용 안 함
-        main_lvs=None,  # 잠재변수 없음
-        moderation_enabled=False,
-        lv_attribute_interactions=None  # 상호작용 없음
+        choice_attributes=CHOICE_ATTRIBUTES,
+        choice_type=CHOICE_TYPE,
+        price_variable=PRICE_VARIABLE,
+        all_lvs_as_main=bool(MAIN_LVS),  # 자동 설정
+        main_lvs=MAIN_LVS if MAIN_LVS else None,  # 자동 설정
+        moderation_enabled=bool(MODERATION_LVS),  # 자동 설정
+        moderator_lvs=moderator_lvs,  # 자동 설정
+        main_lv=main_lv,  # 자동 설정
+        lv_attribute_interactions=lv_attr_config  # 자동 설정
     )
 
-    # 선택모델 설정 확인
+    # 선택모델 설정 자동 출력
     print(f"✅ 선택모델 설정:")
-    print(f"   - 모델 유형: Base Model (잠재변수 없음)")
-    print(f"   - 선택 속성만 사용: health_label, price")
-    print(f"   - 잠재변수 주효과: 없음")
-    print(f"   - LV-Attribute 상호작용: 없음")
+    print(f"   - 모델 유형: {model_type_str}")
+    print(f"   - 선택 속성: {', '.join(CHOICE_ATTRIBUTES)}")
+
+    if MAIN_LVS:
+        lv_full_names = {'purchase_intention': '구매의도(PI)', 'nutrition_knowledge': '영양지식(NK)',
+                        'perceived_benefit': '건강유익성(PB)', 'perceived_price': '가격수준(PP)',
+                        'health_concern': '건강관심도(HC)'}
+        lv_display = [lv_full_names.get(lv, lv) for lv in MAIN_LVS]
+        print(f"   - 잠재변수 주효과: {', '.join(lv_display)}")
+    else:
+        print(f"   - 잠재변수 주효과: 없음")
+
+    if MODERATION_LVS:
+        print(f"   - 조절효과: {len(MODERATION_LVS)}개")
+        for mod, moderated in MODERATION_LVS:
+            print(f"      * {mod} × {moderated}")
+    else:
+        print(f"   - 조절효과: 없음")
+
+    if LV_ATTRIBUTE_INTERACTIONS:
+        print(f"   - LV-Attribute 상호작용: {len(LV_ATTRIBUTE_INTERACTIONS)}개")
+        for lv, attr in LV_ATTRIBUTE_INTERACTIONS:
+            print(f"      * {lv} × {attr}")
+    else:
+        print(f"   - LV-Attribute 상호작용: 없음")
 
     # 4. 선택모델 생성
     print("\n[4] 선택모델 생성 중...")

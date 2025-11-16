@@ -107,7 +107,7 @@ def main():
     print(f"\n1단계 결과가 저장되었습니다:")
     print(f"  📁 {stage1_results['save_path']}")
     print(f"\n2단계를 실행하려면:")
-    print(f"  python examples/sequential_stage2_example.py")
+    print(f"  python examples/sequential_stage2_with_extended_model.py")
 
 
 if __name__ == "__main__":

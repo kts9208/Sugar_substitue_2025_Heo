@@ -128,7 +128,7 @@ V = 0.0 (intercept)
 
 ```bash
 # 2단계 추정 실행 (상호작용 포함)
-python examples/sequential_stage2_example.py
+python examples/sequential_stage2_with_extended_model.py
 ```
 
 출력 예시:
