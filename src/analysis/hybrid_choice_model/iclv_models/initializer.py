@@ -173,8 +173,19 @@ class SimultaneousInitializer(BaseInitializer):
         n_attrs = len(choice_model.choice_attributes)
         params.extend([0.0] * n_attrs)
 
-        # 조절효과 모델인 경우
-        if hasattr(choice_model, 'moderation_enabled') and choice_model.moderation_enabled:
+        # ✅ 모든 LV 주효과 모델인 경우
+        if hasattr(choice_model, 'all_lvs_as_main') and choice_model.all_lvs_as_main:
+            # lambda_i (각 LV별 주효과)
+            if hasattr(choice_model, 'main_lvs') and choice_model.main_lvs:
+                params.extend([1.0] * len(choice_model.main_lvs))
+
+            # ✅ LV-Attribute 상호작용 초기값
+            if hasattr(choice_model, 'lv_attribute_interactions') and choice_model.lv_attribute_interactions:
+                # gamma (상호작용 계수): 0.0으로 초기화 (주효과보다 작게)
+                params.extend([0.0] * len(choice_model.lv_attribute_interactions))
+
+        # 조절효과 모델인 경우 (하위 호환성)
+        elif hasattr(choice_model, 'moderation_enabled') and choice_model.moderation_enabled:
             # lambda_main (주효과)
             params.append(1.0)
 
@@ -241,7 +252,22 @@ class SimultaneousInitializer(BaseInitializer):
         for attr in choice_model.choice_attributes:
             names.append(f'beta_{attr}')
 
-        if hasattr(choice_model, 'moderation_enabled') and choice_model.moderation_enabled:
+        # ✅ 모든 LV 주효과 모델인 경우
+        if hasattr(choice_model, 'all_lvs_as_main') and choice_model.all_lvs_as_main:
+            # lambda_i (각 LV별 주효과)
+            if hasattr(choice_model, 'main_lvs') and choice_model.main_lvs:
+                for lv_name in choice_model.main_lvs:
+                    names.append(f'lambda_{lv_name}')
+
+            # ✅ LV-Attribute 상호작용 파라미터 이름
+            if hasattr(choice_model, 'lv_attribute_interactions') and choice_model.lv_attribute_interactions:
+                for interaction in choice_model.lv_attribute_interactions:
+                    lv_name = interaction['lv']
+                    attr_name = interaction['attribute']
+                    names.append(f'gamma_{lv_name}_{attr_name}')
+
+        # 조절효과 모델인 경우 (하위 호환성)
+        elif hasattr(choice_model, 'moderation_enabled') and choice_model.moderation_enabled:
             names.append('lambda_main')
             if hasattr(choice_model, 'moderator_lvs'):
                 for mod_lv in choice_model.moderator_lvs:

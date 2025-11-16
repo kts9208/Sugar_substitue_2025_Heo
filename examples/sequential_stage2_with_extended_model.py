@@ -81,13 +81,23 @@ def main():
         price_variable='price',
         all_lvs_as_main=True,
         main_lvs=['purchase_intention', 'nutrition_knowledge'],  # PI와 NK만
-        moderation_enabled=False
+        moderation_enabled=False,
+        # ✅ LV-Attribute 상호작용 추가
+        lv_attribute_interactions=[
+            {'lv': 'purchase_intention', 'attribute': 'price'},  # PI × price
+            {'lv': 'purchase_intention', 'attribute': 'health_label'},  # PI × health_label
+            {'lv': 'nutrition_knowledge', 'attribute': 'health_label'}  # NK × health_label
+        ]
     )
 
     # 선택모델에 사용할 잠재변수 확인
     print(f"✅ 선택모델 주 효과:")
     print(f"   - purchase_intention (PI): 구매의도")
     print(f"   - nutrition_knowledge (NK): 영양지식")
+    print(f"\n✅ LV-Attribute 상호작용:")
+    print(f"   - PI × price: 구매의도가 높을수록 가격 민감도 변화")
+    print(f"   - PI × health_label: 구매의도가 높을수록 건강라벨 선호 변화")
+    print(f"   - NK × health_label: 영양지식이 높을수록 건강라벨 선호 변화")
 
     # 4. 선택모델 생성
     print("\n[4] 선택모델 생성 중...")
@@ -163,6 +173,12 @@ def main():
                 sig = _get_significance(stat['p'])
                 print(f"{key:40s} {stat['estimate']:12.4f} {stat['se']:12.4f} {stat['t']:12.4f} {stat['p']:12.4f} {sig:>10s}")
 
+        # ✅ gamma (LV-Attribute 상호작용)
+        for key in sorted([k for k in param_stats.keys() if k.startswith('gamma_')]):
+            stat = param_stats[key]
+            sig = _get_significance(stat['p'])
+            print(f"{key:40s} {stat['estimate']:12.4f} {stat['se']:12.4f} {stat['t']:12.4f} {stat['p']:12.4f} {sig:>10s}")
+
         print("-" * 100)
 
         # 유의한 파라미터 개수
@@ -174,7 +190,7 @@ def main():
         if 'beta' in param_stats:
             all_p_values.extend([stat['p'] for stat in param_stats['beta'].values()])
         for key in param_stats.keys():
-            if key.startswith('theta_') or key.startswith('lambda_'):
+            if key.startswith('theta_') or key.startswith('lambda_') or key.startswith('gamma_'):
                 all_p_values.append(param_stats[key]['p'])
 
         sig_count = sum(1 for p in all_p_values if p < 0.05)
@@ -220,6 +236,20 @@ def main():
 
         if 'lambda_mod_nutrition_knowledge' in params:
             print(f"{'lambda_mod_nutrition_knowledge':40s} {params['lambda_mod_nutrition_knowledge']:15.4f} {'지식 조절':>20s}")
+
+        # ✅ gamma (LV-Attribute 상호작용, 대안별)
+        gamma_descriptions = {
+            'gamma_sugar_purchase_intention_price': '일반당: PI × price',
+            'gamma_sugar_purchase_intention_health_label': '일반당: PI × health_label',
+            'gamma_sugar_nutrition_knowledge_health_label': '일반당: NK × health_label',
+            'gamma_sugar_free_purchase_intention_price': '무설탕: PI × price',
+            'gamma_sugar_free_purchase_intention_health_label': '무설탕: PI × health_label',
+            'gamma_sugar_free_nutrition_knowledge_health_label': '무설탕: NK × health_label'
+        }
+
+        for key, desc in gamma_descriptions.items():
+            if key in params:
+                print(f"{key:40s} {params[key]:15.4f} {desc:>20s}")
 
         print("-" * 80)
     
@@ -334,6 +364,29 @@ def main():
                     'description': desc
                 })
 
+        # ✅ gamma (LV-Attribute 상호작용, 대안별)
+        gamma_descriptions = {
+            'gamma_sugar_purchase_intention_price': '일반당: PI × price',
+            'gamma_sugar_purchase_intention_health_label': '일반당: PI × health_label',
+            'gamma_sugar_nutrition_knowledge_health_label': '일반당: NK × health_label',
+            'gamma_sugar_free_purchase_intention_price': '무설탕: PI × price',
+            'gamma_sugar_free_purchase_intention_health_label': '무설탕: PI × health_label',
+            'gamma_sugar_free_nutrition_knowledge_health_label': '무설탕: NK × health_label'
+        }
+
+        for key in sorted([k for k in param_stats.keys() if k.startswith('gamma_')]):
+            stat = param_stats[key]
+            desc = gamma_descriptions.get(key, key)
+            param_data.append({
+                'parameter': key,
+                'estimate': stat['estimate'],
+                'std_error': stat['se'],
+                't_statistic': stat['t'],
+                'p_value': stat['p'],
+                'significance': _get_significance(stat['p']),
+                'description': desc
+            })
+
         param_df = pd.DataFrame(param_data)
         param_path = save_dir / "stage2_extended_model_parameters.csv"
         param_df.to_csv(param_path, index=False, encoding='utf-8-sig')
@@ -373,6 +426,20 @@ def main():
             param_data.append({'parameter': 'lambda_mod_perceived_price', 'value': params['lambda_mod_perceived_price'], 'description': '가격 조절'})
         if 'lambda_mod_nutrition_knowledge' in params:
             param_data.append({'parameter': 'lambda_mod_nutrition_knowledge', 'value': params['lambda_mod_nutrition_knowledge'], 'description': '지식 조절'})
+
+        # ✅ gamma (LV-Attribute 상호작용, 대안별)
+        gamma_descriptions = {
+            'gamma_sugar_purchase_intention_price': '일반당: PI × price',
+            'gamma_sugar_purchase_intention_health_label': '일반당: PI × health_label',
+            'gamma_sugar_nutrition_knowledge_health_label': '일반당: NK × health_label',
+            'gamma_sugar_free_purchase_intention_price': '무설탕: PI × price',
+            'gamma_sugar_free_purchase_intention_health_label': '무설탕: PI × health_label',
+            'gamma_sugar_free_nutrition_knowledge_health_label': '무설탕: NK × health_label'
+        }
+
+        for key, desc in gamma_descriptions.items():
+            if key in params:
+                param_data.append({'parameter': key, 'value': params[key], 'description': desc})
 
         param_df = pd.DataFrame(param_data)
         param_path = save_dir / "stage2_extended_model_parameters.csv"

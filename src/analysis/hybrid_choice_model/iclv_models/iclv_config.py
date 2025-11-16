@@ -73,6 +73,10 @@ class ChoiceConfig:
     조절효과 모드 (moderation_enabled=True):
     - V = intercept + β·X + λ_main·LV_main + Σ(λ_mod_i · LV_main · LV_mod_i)
 
+    LV-Attribute 상호작용 모드 (lv_attribute_interactions):
+    - V = intercept + β·X + Σ(λ_i · LV_i) + Σ(γ_ij · LV_i · X_j)
+    - 잠재변수와 선택속성 간 상호작용 효과
+
     기본 모드 (단일 LV):
     - V = intercept + β·X + λ·LV
 
@@ -82,6 +86,18 @@ class ChoiceConfig:
         ...     all_lvs_as_main=True,
         ...     main_lvs=['health_concern', 'perceived_benefit', 'perceived_price',
         ...               'nutrition_knowledge', 'purchase_intention']
+        ... )
+
+    Example (LV-Attribute 상호작용):
+        >>> config = ChoiceConfig(
+        ...     choice_attributes=['sugar_free', 'health_label', 'price'],
+        ...     all_lvs_as_main=True,
+        ...     main_lvs=['purchase_intention', 'nutrition_knowledge'],
+        ...     lv_attribute_interactions=[
+        ...         {'lv': 'purchase_intention', 'attribute': 'price'},
+        ...         {'lv': 'purchase_intention', 'attribute': 'health_label'},
+        ...         {'lv': 'nutrition_knowledge', 'attribute': 'health_label'}
+        ...     ]
         ... )
     """
 
@@ -101,6 +117,10 @@ class ChoiceConfig:
         'nutrition_knowledge', 'purchase_intention'
     ])
 
+    # ✅ LV-Attribute 상호작용 설정
+    # 각 항목: {'lv': 잠재변수명, 'attribute': 속성명}
+    lv_attribute_interactions: Optional[List[Dict[str, str]]] = None
+
     # 조절효과 설정 (하위 호환성)
     moderation_enabled: bool = False
     moderator_lvs: Optional[List[str]] = None
@@ -112,6 +132,7 @@ class ChoiceConfig:
     initial_lambda_main: float = 1.0  # 주효과 계수
     initial_lambda_mod: Optional[List[float]] = None  # 조절효과 계수
     initial_lambdas: Optional[Dict[str, float]] = None  # 각 LV별 초기값
+    initial_lv_attr_interactions: Optional[Dict[str, float]] = None  # LV-Attribute 상호작용 초기값
 
     # Ordered Probit 설정 (binary choice의 경우)
     thresholds: Optional[List[float]] = None
@@ -128,6 +149,14 @@ class ChoiceConfig:
         """주효과 잠재변수 개수"""
         if self.all_lvs_as_main and self.main_lvs is not None:
             return len(self.main_lvs)
+        return 0
+
+    @property
+    def n_lv_attr_interactions(self) -> int:
+        """LV-Attribute 상호작용 개수"""
+        if self.lv_attribute_interactions is None:
+            return 0
+        return len(self.lv_attribute_interactions)
         return 1  # 단일 LV 모드
 
 

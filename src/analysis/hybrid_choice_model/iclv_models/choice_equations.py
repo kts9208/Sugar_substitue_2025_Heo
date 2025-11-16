@@ -66,6 +66,9 @@ class BaseICLVChoice(ABC):
         self.all_lvs_as_main = getattr(config, 'all_lvs_as_main', False)
         self.main_lvs = getattr(config, 'main_lvs', None)
 
+        # ✅ LV-Attribute 상호작용 설정
+        self.lv_attribute_interactions = getattr(config, 'lv_attribute_interactions', None)
+
         # 조절효과 설정 (하위 호환성)
         self.moderation_enabled = getattr(config, 'moderation_enabled', False)
         self.moderator_lvs = getattr(config, 'moderator_lvs', None)
@@ -79,6 +82,9 @@ class BaseICLVChoice(ABC):
         self.logger.info(f"  모든 LV 주효과: {self.all_lvs_as_main}")
         if self.all_lvs_as_main:
             self.logger.info(f"  주효과 LV: {self.main_lvs}")
+        self.logger.info(f"  LV-Attribute 상호작용: {self.lv_attribute_interactions is not None}")
+        if self.lv_attribute_interactions:
+            self.logger.info(f"  상호작용 항목: {self.lv_attribute_interactions}")
         self.logger.info(f"  조절효과: {self.moderation_enabled}")
         if self.moderation_enabled:
             self.logger.info(f"  주 LV: {self.main_lv}")
@@ -163,24 +169,52 @@ class BaseICLVChoice(ABC):
                                 asc = params.get('asc_sugar', params.get('ASC_sugar', 0.0))
                                 V[i] = asc + X[i] @ beta
 
-                                # 잠재변수 효과 추가
+                                # 잠재변수 효과 추가 (대안별)
                                 for lv_name in self.main_lvs:
                                     param_name = f'theta_sugar_{lv_name}'
                                     if param_name in params:
                                         theta = params[param_name]
                                         V[i] += theta * lv_arrays[lv_name][i // self.n_alternatives]
 
+                                # ✅ LV-Attribute 상호작용 추가 (대안별)
+                                if self.lv_attribute_interactions is not None:
+                                    for interaction in self.lv_attribute_interactions:
+                                        lv_name = interaction['lv']
+                                        attr_name = interaction['attribute']
+                                        param_name = f'gamma_sugar_{lv_name}_{attr_name}'
+
+                                        if param_name in params and attr_name in self.choice_attributes:
+                                            gamma = params[param_name]
+                                            attr_idx = self.choice_attributes.index(attr_name)
+                                            lv_value = lv_arrays[lv_name][i // self.n_alternatives]
+                                            attr_value = X[i, attr_idx]
+                                            V[i] += gamma * lv_value * attr_value
+
                             elif sugar_content == '무설탕':
                                 # 무설탕 대안
                                 asc = params.get('asc_sugar_free', params.get('ASC_sugar_free', 0.0))
                                 V[i] = asc + X[i] @ beta
 
-                                # 잠재변수 효과 추가
+                                # 잠재변수 효과 추가 (대안별)
                                 for lv_name in self.main_lvs:
                                     param_name = f'theta_sugar_free_{lv_name}'
                                     if param_name in params:
                                         theta = params[param_name]
                                         V[i] += theta * lv_arrays[lv_name][i // self.n_alternatives]
+
+                                # ✅ LV-Attribute 상호작용 추가 (대안별)
+                                if self.lv_attribute_interactions is not None:
+                                    for interaction in self.lv_attribute_interactions:
+                                        lv_name = interaction['lv']
+                                        attr_name = interaction['attribute']
+                                        param_name = f'gamma_sugar_free_{lv_name}_{attr_name}'
+
+                                        if param_name in params and attr_name in self.choice_attributes:
+                                            gamma = params[param_name]
+                                            attr_idx = self.choice_attributes.index(attr_name)
+                                            lv_value = lv_arrays[lv_name][i // self.n_alternatives]
+                                            attr_value = X[i, attr_idx]
+                                            V[i] += gamma * lv_value * attr_value
                             else:
                                 # 알 수 없는 값
                                 V[i] = 0.0
@@ -225,6 +259,29 @@ class BaseICLVChoice(ABC):
                             if param_name in params:
                                 lambda_lv = params[param_name]
                                 V[i] += lambda_lv * lv_arrays[lv_name][i]
+
+            # ✅ LV-Attribute 상호작용 추가
+            if self.lv_attribute_interactions is not None:
+                for interaction in self.lv_attribute_interactions:
+                    lv_name = interaction['lv']
+                    attr_name = interaction['attribute']
+
+                    # 파라미터 이름: gamma_PI_price, gamma_PI_health_label, gamma_NK_health_label
+                    param_name = f'gamma_{lv_name}_{attr_name}'
+
+                    if param_name in params:
+                        gamma = params[param_name]
+
+                        # 속성 인덱스 찾기
+                        if attr_name in self.choice_attributes:
+                            attr_idx = self.choice_attributes.index(attr_name)
+
+                            # 상호작용항 추가: γ * LV * Attribute
+                            for i in range(len(data)):
+                                if not has_nan[i]:  # opt-out이 아닌 경우만
+                                    lv_value = lv_arrays[lv_name][i]
+                                    attr_value = X[i, attr_idx]
+                                    V[i] += gamma * lv_value * attr_value
 
         elif self.moderation_enabled and isinstance(lv, dict):
             # 조절효과 모델 (하위 호환)
@@ -1172,6 +1229,14 @@ class MultinomialLogitChoice(BaseICLVChoice):
                     for lv_name in self.main_lvs:
                         params[f'theta_sugar_{lv_name}'] = 0.5
                         params[f'theta_sugar_free_{lv_name}'] = 0.5
+
+                # ✅ LV-Attribute 상호작용 초기값 (대안별)
+                if hasattr(self, 'lv_attribute_interactions') and self.lv_attribute_interactions:
+                    for interaction in self.lv_attribute_interactions:
+                        lv_name = interaction['lv']
+                        attr_name = interaction['attribute']
+                        params[f'gamma_sugar_{lv_name}_{attr_name}'] = 0.0
+                        params[f'gamma_sugar_free_{lv_name}_{attr_name}'] = 0.0
             else:
                 # sugar_content 컬럼이 없으면 기존 방식 (alternative 기준)
                 params['asc_A'] = 0.0
@@ -1304,6 +1369,21 @@ class MultinomialLogitChoice(BaseICLVChoice):
                     param_names.append(param_name)
                     param_values.append(params[param_name])
 
+        # ✅ gamma (LV-Attribute 상호작용, 대안별)
+        if hasattr(self, 'lv_attribute_interactions') and self.lv_attribute_interactions:
+            for interaction in self.lv_attribute_interactions:
+                lv_name = interaction['lv']
+                attr_name = interaction['attribute']
+                # sugar와 sugar_free 대안별로 추가
+                param_name_sugar = f'gamma_sugar_{lv_name}_{attr_name}'
+                param_name_sugar_free = f'gamma_sugar_free_{lv_name}_{attr_name}'
+                if param_name_sugar in params:
+                    param_names.append(param_name_sugar)
+                    param_values.append(params[param_name_sugar])
+                if param_name_sugar_free in params:
+                    param_names.append(param_name_sugar_free)
+                    param_values.append(params[param_name_sugar_free])
+
         return param_names, np.array(param_values)
 
     def _array_to_params(self, param_names: List[str], param_array: np.ndarray) -> Dict:
@@ -1346,6 +1426,9 @@ class MultinomialLogitChoice(BaseICLVChoice):
                 params[name] = value
             elif name.startswith('lambda_'):
                 # ✅ 모든 LV 주효과: lambda_{lv_name}
+                params[name] = value
+            elif name.startswith('gamma_'):
+                # ✅ LV-Attribute 상호작용: gamma_{lv_name}_{attr_name}
                 params[name] = value
 
         # beta 배열로 변환
@@ -1421,6 +1504,9 @@ class MultinomialLogitChoice(BaseICLVChoice):
                 stats[name] = stat_dict
             elif name.startswith('lambda_'):
                 # ✅ 모든 LV 주효과: lambda_{lv_name}
+                stats[name] = stat_dict
+            elif name.startswith('gamma_'):
+                # ✅ LV-Attribute 상호작용: gamma_{lv_name}_{attr_name}
                 stats[name] = stat_dict
 
         return stats

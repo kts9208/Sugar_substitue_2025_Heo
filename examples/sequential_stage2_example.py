@@ -64,9 +64,20 @@ def main():
         choice_type='multinomial',
         all_lvs_as_main=True,  # 모든 잠재변수를 주효과로 사용
         main_lvs=['health_concern', 'perceived_benefit', 'perceived_price',
-                  'nutrition_knowledge', 'purchase_intention']
+                  'nutrition_knowledge', 'purchase_intention'],
+        # ✅ LV-Attribute 상호작용 추가
+        lv_attribute_interactions=[
+            {'lv': 'purchase_intention', 'attribute': 'price'},  # PI × price
+            {'lv': 'purchase_intention', 'attribute': 'health_label'},  # PI × health_label
+            {'lv': 'nutrition_knowledge', 'attribute': 'health_label'}  # NK × health_label
+        ]
     )
     print("✅ 설정 완료")
+    print("   - LV 주효과: 5개 (HC, PB, PP, NK, PI)")
+    print("   - LV-Attribute 상호작용: 3개")
+    print("     * PI × price")
+    print("     * PI × health_label")
+    print("     * NK × health_label")
 
     # 4. 선택모델 생성
     print("\n[4] 선택모델 생성 중...")
@@ -127,11 +138,29 @@ def main():
     print(f"[BIC] {stage2_results.get('bic', 'N/A')}")
     
     print("\n[선택모델 파라미터]")
+    print("\n  <속성 계수 (beta)>")
     for param_name, param_value in stage2_results['params'].items():
-        if isinstance(param_value, np.ndarray):
-            print(f"  {param_name}: {param_value}")
-        else:
-            print(f"  {param_name}: {param_value:.4f}")
+        if param_name.startswith('beta'):
+            if isinstance(param_value, np.ndarray):
+                print(f"    {param_name}: {param_value}")
+            else:
+                print(f"    {param_name}: {param_value:.4f}")
+
+    print("\n  <잠재변수 주효과 (lambda)>")
+    for param_name, param_value in stage2_results['params'].items():
+        if param_name.startswith('lambda'):
+            if isinstance(param_value, np.ndarray):
+                print(f"    {param_name}: {param_value}")
+            else:
+                print(f"    {param_name}: {param_value:.4f}")
+
+    print("\n  <LV-Attribute 상호작용 (gamma)>")
+    for param_name, param_value in stage2_results['params'].items():
+        if param_name.startswith('gamma'):
+            if isinstance(param_value, np.ndarray):
+                print(f"    {param_name}: {param_value}")
+            else:
+                print(f"    {param_name}: {param_value:.4f}")
     
     if 'parameter_statistics' in stage2_results and stage2_results['parameter_statistics'] is not None:
         print("\n[파라미터 통계]")
