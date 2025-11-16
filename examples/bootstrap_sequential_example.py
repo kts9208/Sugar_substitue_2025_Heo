@@ -46,7 +46,7 @@ def example_stage1_bootstrap():
     # 부트스트래핑 실행
     results = bootstrap_stage1_only(
         data=data,
-        measurement_model=config.measurement,
+        measurement_model=config.measurement_configs,
         structural_model=config.structural,
         n_bootstrap=50,  # 예제용으로 적게 설정
         n_workers=4,
@@ -163,54 +163,95 @@ def example_stage2_bootstrap():
 def example_both_stages_bootstrap():
     """1+2단계 전체 부트스트래핑 예제"""
     print("\n" + "=" * 70)
-    print("예제 3: 1+2단계 전체 부트스트래핑")
+    print("예제 3: 1+2단계 전체 부트스트래핑 (1000회)")
     print("=" * 70)
-    
+
     # 데이터 로드
     data_path = project_root / "data" / "processed" / "iclv" / "integrated_data_cleaned.csv"
     data = pd.read_csv(data_path)
-    print(f"데이터 로드 완료: {len(data)}행")
+    print(f"데이터 로드 완료: {len(data)}행, {data['respondent_id'].nunique()}명")
 
-    # 설정 생성
+    # 설정 생성 (디폴트 계층적 구조)
     config = create_sugar_substitute_multi_lv_config()
+    print(f"\n1단계 설정:")
+    print(f"   - 구조모델: 계층적 구조 (디폴트)")
+    print(f"     * perceived_benefit <- health_concern")
+    print(f"     * purchase_intention <- perceived_benefit")
 
-    # 선택모델 설정
+    # 선택모델 설정: Base Model + PI 주효과
     choice_config = ChoiceConfig(
-        choice_attributes=['health_label', 'price'],
-        choice_type='binary',
-        price_variable='price',
-        all_lvs_as_main=True,
-        main_lvs=['purchase_intention', 'nutrition_knowledge']
+        choice_attributes=['sugar_free', 'health_label', 'price'],
+        choice_type='multinomial',
+        all_lvs_as_main=True,  # True로 설정해야 main_lvs가 작동
+        main_lvs=['purchase_intention'],  # PI 주효과만
+        lv_attribute_interactions=[]  # 상호작용 없음
     )
-    
+
+    print(f"\n2단계 설정:")
+    print(f"   - 모델 유형: Base Model + PI 주효과")
+    print(f"   - 속성변수: sugar_free, health_label, price")
+    print(f"   - LV 주효과: purchase_intention (PI만)")
+    print(f"   - LV-Attribute 상호작용: 없음")
+
     # 부트스트래핑 실행
+    from datetime import datetime
+    start_time = datetime.now()
+    print(f"\n시작 시간: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
     results = bootstrap_both_stages(
         data=data,
-        measurement_model=config.measurement,
+        measurement_model=config.measurement_configs,
         structural_model=config.structural,
         choice_model=choice_config,
-        n_bootstrap=50,  # 예제용으로 적게 설정
-        n_workers=4,
+        n_bootstrap=1000,  # 1000회 부트스트래핑
+        n_workers=6,
         confidence_level=0.95,
         random_seed=42,
         show_progress=True
     )
 
-    # 결과 출력
-    print("\n[신뢰구간]")
-    print(results['confidence_intervals'].head(20))
+    end_time = datetime.now()
+    elapsed = (end_time - start_time).total_seconds()
+    print(f"\n종료 시간: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"총 소요 시간: {elapsed/60:.1f}분 ({elapsed:.0f}초)")
 
-    print("\n[부트스트랩 통계량]")
-    print(results['bootstrap_statistics'].head(20))
+    # 결과 출력
+    print("\n" + "=" * 70)
+    print("부트스트래핑 결과")
+    print("=" * 70)
+
+    print(f"\n성공: {results['n_successful']}/{results['n_successful'] + results['n_failed']}")
+    print(f"실패: {results['n_failed']}/{results['n_successful'] + results['n_failed']}")
+    print(f"성공률: {results['n_successful']/(results['n_successful'] + results['n_failed'])*100:.1f}%")
+
+    print("\n[신뢰구간 (상위 20개)]")
+    print(results['confidence_intervals'].head(20).to_string(index=False))
+
+    print("\n[부트스트랩 통계량 (상위 20개)]")
+    print(results['bootstrap_statistics'].head(20).to_string(index=False))
 
     # 결과 저장
     save_dir = project_root / "results" / "bootstrap"
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    results['confidence_intervals'].to_csv(save_dir / "both_stages_bootstrap_ci.csv", index=False)
-    results['bootstrap_statistics'].to_csv(save_dir / "both_stages_bootstrap_stats.csv", index=False)
+    # 타임스탬프 추가
+    timestamp = start_time.strftime('%Y%m%d_%H%M%S')
 
-    print(f"\n결과 저장: {save_dir}")
+    ci_file = save_dir / f"both_stages_bootstrap_ci_{timestamp}.csv"
+    stats_file = save_dir / f"both_stages_bootstrap_stats_{timestamp}.csv"
+    full_file = save_dir / f"both_stages_bootstrap_full_{timestamp}.pkl"
+
+    results['confidence_intervals'].to_csv(ci_file, index=False)
+    results['bootstrap_statistics'].to_csv(stats_file, index=False)
+
+    # 전체 결과 저장 (pickle)
+    with open(save_dir / f"both_stages_bootstrap_full_{timestamp}.pkl", 'wb') as f:
+        pickle.dump(results, f)
+
+    print(f"\n✅ 결과 저장: {save_dir}")
+    print(f"   - {ci_file.name}")
+    print(f"   - {stats_file.name}")
+    print(f"   - {full_file.name}")
 
 
 if __name__ == "__main__":

@@ -493,37 +493,60 @@ def _run_stage1(data: pd.DataFrame, measurement_model, structural_model) -> Dict
     """
     1단계 추정 (SEM)
 
+    sequential_stage1_example.py와 동일한 방식으로 추정
+
     Args:
         data: 부트스트랩 데이터
-        measurement_model: 측정모델 설정
-        structural_model: 구조모델 설정
+        measurement_model: Dict[str, MeasurementConfig] (config.measurement_configs)
+        structural_model: MultiLatentStructuralConfig (config.structural)
 
     Returns:
         1단계 추정 결과
     """
-    from src.analysis.hybrid_choice_model.iclv_models.sem_estimator import SEMEstimator
+    from src.analysis.hybrid_choice_model.iclv_models.sequential_estimator import SequentialEstimator
+    from src.analysis.hybrid_choice_model.iclv_models.multi_latent_config import MultiLatentConfig, EstimationConfig
+    from src.analysis.hybrid_choice_model.iclv_models.multi_latent_measurement import MultiLatentMeasurement
+    from src.analysis.hybrid_choice_model.iclv_models.multi_latent_structural import MultiLatentStructural
 
-    # SEM 추정
-    sem_estimator = SEMEstimator(measurement_model, structural_model)
-    sem_results = sem_estimator.estimate(data)
+    # sequential_stage1_example.py와 동일하게 객체 생성
+    measurement_obj = MultiLatentMeasurement(measurement_model)
+    structural_obj = MultiLatentStructural(structural_model)
+
+    # Config 재구성 (estimation 설정 추가)
+    config = MultiLatentConfig(
+        measurement_configs=measurement_model,
+        structural=structural_model,
+        choice=None,  # 1단계에서는 선택모델 불필요
+        estimation=EstimationConfig()  # 기본 추정 설정
+    )
+
+    estimator = SequentialEstimator(config)
+
+    # 1단계만 추정
+    sem_results = estimator.estimate_stage1_only(
+        data=data,
+        measurement_model=measurement_obj,
+        structural_model=structural_obj,
+        save_path=None,  # 부트스트랩에서는 저장 안 함
+        log_file=None  # 로그 파일 없음
+    )
 
     # 파라미터 추출
     params = {}
 
-    # 측정모델 파라미터
-    if 'measurement' in sem_results:
-        for lv_name, lv_params in sem_results['measurement'].items():
-            if 'zeta' in lv_params:
-                for i, zeta_val in enumerate(lv_params['zeta']):
-                    params[f'zeta_{lv_name}_{i}'] = zeta_val
-            if 'sigma_sq' in lv_params:
-                for i, sigma_val in enumerate(lv_params['sigma_sq']):
-                    params[f'sigma_sq_{lv_name}_{i}'] = sigma_val
+    # 경로계수 추출
+    if 'paths' in sem_results:
+        paths_df = sem_results['paths']
+        for _, row in paths_df.iterrows():
+            param_name = f"{row['lval']}~{row['rval']}"
+            params[param_name] = row['Estimate']
 
-    # 구조모델 파라미터
-    if 'structural' in sem_results:
-        for param_name, param_value in sem_results['structural'].items():
-            params[f'gamma_{param_name}'] = param_value
+    # 요인적재량 추출
+    if 'loadings' in sem_results:
+        loadings_df = sem_results['loadings']
+        for _, row in loadings_df.iterrows():
+            param_name = f"{row['lval']}=~{row['rval']}"
+            params[param_name] = row['Estimate']
 
     # 요인점수 추출
     factor_scores = sem_results.get('factor_scores', {})
