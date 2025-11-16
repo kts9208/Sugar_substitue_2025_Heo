@@ -18,8 +18,9 @@ sys.path.insert(0, str(project_root))
 import pandas as pd
 import numpy as np
 from src.analysis.hybrid_choice_model.iclv_models.sequential_estimator import SequentialEstimator
-from src.analysis.hybrid_choice_model.iclv_models.choice_model import MultinomialLogitChoice
-from src.analysis.hybrid_choice_model.config import MultiLatentConfig
+from src.analysis.hybrid_choice_model.iclv_models.choice_equations import MultinomialLogitChoice
+from src.analysis.hybrid_choice_model.iclv_models.iclv_config import ChoiceConfig
+from src.analysis.hybrid_choice_model.iclv_models.multi_latent_config import MultiLatentConfig
 
 
 def main():
@@ -29,19 +30,19 @@ def main():
     
     # 1. 데이터 로드
     print("\n[1] 데이터 로드 중...")
-    data_path = project_root / "data" / "processed" / "integrated_data.csv"
-    
+    data_path = project_root / "data" / "processed" / "iclv" / "integrated_data.csv"
+
     if not data_path.exists():
         print(f"❌ 데이터 파일을 찾을 수 없습니다: {data_path}")
         return
-    
+
     data = pd.read_csv(data_path)
-    print(f"✅ 데이터 로드 완료: {len(data)}행")
+    print(f"✅ 데이터 로드 완료: {len(data)}행, {len(data.columns)}열")
     
     # 2. 1단계 결과 확인
     print("\n[2] 1단계 결과 확인 중...")
-    stage1_path = project_root / "results" / "stage1_results.pkl"
-    
+    stage1_path = project_root / "results" / "sequential_stage_wise" / "stage1_results.pkl"
+
     if not stage1_path.exists():
         print(f"❌ 1단계 결과 파일을 찾을 수 없습니다: {stage1_path}")
         print("먼저 1단계를 실행하세요:")
@@ -56,35 +57,50 @@ def main():
     
     # 3. 설정 생성
     print("\n[3] 모델 설정 중...")
-    config = MultiLatentConfig(
-        latent_variables={
-            'purchase_intention': ['PI1', 'PI2', 'PI3'],
-            'perceived_price': ['PP1', 'PP2', 'PP3'],
-            'nutrition_knowledge': ['NK1', 'NK2', 'NK3'],
-            'health_concern': ['HC1', 'HC2', 'HC3'],
-            'perceived_benefit': ['PB1', 'PB2', 'PB3']
-        },
-        structural_paths={
-            'health_concern': [],
-            'perceived_benefit': ['health_concern'],
-            'nutrition_knowledge': [],
-            'perceived_price': ['nutrition_knowledge'],
-            'purchase_intention': ['perceived_benefit', 'perceived_price']
-        },
-        choice_attributes=['price', 'sugar_content', 'brand'],
-        choice_column='choice',
-        individual_id_column='respondent_id'
+
+    # 선택모델 설정
+    choice_config = ChoiceConfig(
+        choice_attributes=['sugar_free', 'health_label', 'price'],
+        choice_type='multinomial',
+        all_lvs_as_main=True,  # 모든 잠재변수를 주효과로 사용
+        main_lvs=['health_concern', 'perceived_benefit', 'perceived_price',
+                  'nutrition_knowledge', 'purchase_intention']
     )
     print("✅ 설정 완료")
-    
+
     # 4. 선택모델 생성
     print("\n[4] 선택모델 생성 중...")
-    choice_model = MultinomialLogitChoice(
-        choice_attributes=config.choice_attributes,
-        latent_variable='purchase_intention',  # 주요 잠재변수
-        choice_column=config.choice_column,
-        individual_id_column=config.individual_id_column
+    choice_model = MultinomialLogitChoice(choice_config)
+
+    # MultiLatentConfig는 SequentialEstimator 생성용 (간단한 더미 설정)
+    from src.analysis.hybrid_choice_model.iclv_models.multi_latent_measurement import MultiLatentMeasurement, MeasurementConfig
+    from src.analysis.hybrid_choice_model.iclv_models.multi_latent_structural import MultiLatentStructural
+
+    # 더미 측정모델 설정
+    measurement_configs = {
+        'health_concern': MeasurementConfig(indicators=['q6', 'q7', 'q8', 'q9', 'q10', 'q11'], n_categories=5),
+        'perceived_benefit': MeasurementConfig(indicators=['q12', 'q13', 'q14', 'q15', 'q16', 'q17'], n_categories=5),
+        'perceived_price': MeasurementConfig(indicators=['q27', 'q28', 'q29'], n_categories=5),
+        'nutrition_knowledge': MeasurementConfig(indicators=['q30', 'q31', 'q32', 'q33', 'q34', 'q35', 'q36', 'q37', 'q38', 'q39', 'q40', 'q41', 'q42', 'q43', 'q44', 'q45', 'q46', 'q47', 'q48', 'q49'], n_categories=5),
+        'purchase_intention': MeasurementConfig(indicators=['q18', 'q19', 'q20'], n_categories=5)
+    }
+    measurement_model = MultiLatentMeasurement(measurement_configs)
+
+    # 더미 구조모델 설정
+    structural_model = MultiLatentStructural(
+        hierarchical_paths=[
+            {'target': 'perceived_benefit', 'predictors': ['health_concern', 'perceived_price', 'nutrition_knowledge']},
+            {'target': 'purchase_intention', 'predictors': ['health_concern', 'perceived_benefit', 'perceived_price', 'nutrition_knowledge']}
+        ]
     )
+
+    config = MultiLatentConfig(
+        measurement_configs=measurement_configs,
+        structural=structural_model,
+        choice=choice_config,
+        estimation={'method': 'sequential'}
+    )
+
     estimator = SequentialEstimator(config)
     print("✅ 선택모델 생성 완료")
     

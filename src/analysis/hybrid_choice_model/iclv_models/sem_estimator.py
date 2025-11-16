@@ -33,6 +33,7 @@ except ImportError:
 
 from .multi_latent_measurement import MultiLatentMeasurement
 from .multi_latent_structural import MultiLatentStructural
+from .correlation_analyzer import IntegratedCorrelationAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -626,6 +627,63 @@ class SEMEstimator:
         summary_lines.append("=" * 60)
 
         return "\n".join(summary_lines)
+
+
+    def analyze_correlations(self,
+                            data: pd.DataFrame,
+                            measurement_model: MultiLatentMeasurement,
+                            structural_model: MultiLatentStructural,
+                            choice_config,
+                            factor_scores: Optional[Dict[str, np.ndarray]] = None,
+                            save_path: Optional[str] = None) -> Dict[str, Any]:
+        """
+        통합 상관관계 분석 실행
+
+        1단계 SEM 변수와 2단계 선택모델 변수를 모두 포함하는 상관관계 분석
+
+        Args:
+            data: 통합 데이터
+            measurement_model: 측정모델 객체
+            structural_model: 구조모델 객체
+            choice_config: 선택모델 설정
+            factor_scores: 요인점수 (선택사항)
+            save_path: 결과 저장 경로
+
+        Returns:
+            상관관계 분석 결과
+
+        Example:
+            >>> from .iclv_config import ChoiceConfig
+            >>> choice_config = ChoiceConfig(
+            ...     choice_attributes=['sugar_free', 'health_label', 'price'],
+            ...     choice_type='binary'
+            ... )
+            >>> results = sem_estimator.analyze_correlations(
+            ...     data, measurement_model, structural_model, choice_config,
+            ...     save_path='results/correlations'
+            ... )
+        """
+        logger.info("=== 통합 상관관계 분석 시작 ===")
+
+        # IntegratedCorrelationAnalyzer 생성
+        analyzer = IntegratedCorrelationAnalyzer()
+
+        # 분석 실행
+        results = analyzer.analyze_all_correlations(
+            data=data,
+            measurement_model=measurement_model,
+            structural_model=structural_model,
+            choice_config=choice_config,
+            factor_scores=factor_scores,
+            save_path=save_path
+        )
+
+        # 요약 출력
+        analyzer.print_summary()
+
+        logger.info("=== 통합 상관관계 분석 완료 ===")
+
+        return results
 
 
 def create_sem_estimator(config: Optional[FactorAnalysisConfig] = None) -> SEMEstimator:

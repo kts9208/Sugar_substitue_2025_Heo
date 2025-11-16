@@ -1,0 +1,10 @@
+{
+  "timestamp": "2025-11-16 18:58:58",
+  "n_latent_variables": 5,
+  "n_attributes": 3,
+  "n_sociodem_variables": 4,
+  "significant_correlations": {},
+  "n_strong_correlations": 1,
+  "n_moderate_correlations": 1,
+  "n_weak_correlations": 112
+}
