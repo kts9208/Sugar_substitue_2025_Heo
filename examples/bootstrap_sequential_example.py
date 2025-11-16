@@ -1,0 +1,244 @@
+"""
+순차추정 부트스트래핑 예제
+
+3가지 부트스트래핑 모드:
+1. Stage 1 Only: SEM만 부트스트래핑
+2. Stage 2 Only: 선택모델만 부트스트래핑 (요인점수 고정)
+3. Both Stages: 1+2단계 전체 부트스트래핑
+
+Author: ICLV Team
+Date: 2025-01-16
+"""
+
+import sys
+from pathlib import Path
+import pandas as pd
+import numpy as np
+import pickle
+
+# 프로젝트 루트 경로 추가
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from src.analysis.hybrid_choice_model.iclv_models.bootstrap_sequential import (
+    bootstrap_stage1_only,
+    bootstrap_stage2_only,
+    bootstrap_both_stages
+)
+from src.analysis.hybrid_choice_model.iclv_models.multi_latent_config import create_sugar_substitute_multi_lv_config
+from src.analysis.hybrid_choice_model.iclv_models.iclv_config import ChoiceConfig
+
+
+def example_stage1_bootstrap():
+    """1단계만 부트스트래핑 예제"""
+    print("=" * 70)
+    print("예제 1: 1단계만 부트스트래핑 (SEM)")
+    print("=" * 70)
+    
+    # 데이터 로드
+    data_path = project_root / "data" / "processed" / "iclv" / "integrated_data_cleaned.csv"
+    data = pd.read_csv(data_path)
+    print(f"데이터 로드 완료: {len(data)}행")
+    
+    # 설정 생성
+    config = create_sugar_substitute_multi_lv_config()
+    
+    # 부트스트래핑 실행
+    results = bootstrap_stage1_only(
+        data=data,
+        measurement_model=config.measurement,
+        structural_model=config.structural,
+        n_bootstrap=50,  # 예제용으로 적게 설정
+        n_workers=4,
+        confidence_level=0.95,
+        random_seed=42,
+        show_progress=True
+    )
+    
+    # 결과 출력
+    print("\n[신뢰구간]")
+    print(results['confidence_intervals'].head(10))
+    
+    print("\n[부트스트랩 통계량]")
+    print(results['bootstrap_statistics'].head(10))
+    
+    # 결과 저장
+    save_dir = project_root / "results" / "bootstrap"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    
+    results['confidence_intervals'].to_csv(save_dir / "stage1_bootstrap_ci.csv", index=False)
+    results['bootstrap_statistics'].to_csv(save_dir / "stage1_bootstrap_stats.csv", index=False)
+    
+    print(f"\n결과 저장: {save_dir}")
+
+
+def example_stage2_bootstrap():
+    """2단계만 부트스트래핑 예제"""
+    print("\n" + "=" * 70)
+    print("예제 2: 2단계만 부트스트래핑 (선택모델, 요인점수 고정)")
+    print("=" * 70)
+
+    # 데이터 로드
+    data_path = project_root / "data" / "processed" / "iclv" / "integrated_data_cleaned.csv"
+    data = pd.read_csv(data_path)
+    print(f"데이터 로드 완료: {len(data)}행")
+
+    # 1단계 결과 로드 (요인점수)
+    results_dir = project_root / "results" / "sequential_stage_wise"
+    stage1_file = results_dir / "stage1_HC-PB_HC-PP_PB-PI_PP-PI_results.pkl"
+
+    with open(stage1_file, 'rb') as f:
+        stage1_results = pickle.load(f)
+
+    factor_scores = stage1_results['factor_scores']
+    print(f"요인점수 로드 완료: {list(factor_scores.keys())}")
+
+    # ✅ 선택모델 설정: Base Model (잠재변수 없음)
+    choice_config = ChoiceConfig(
+        choice_attributes=['health_label', 'price'],
+        choice_type='binary',
+        price_variable='price',
+        all_lvs_as_main=False,  # 잠재변수 주효과 사용 안 함
+        main_lvs=None,  # 잠재변수 없음
+        moderation_enabled=False,
+        lv_attribute_interactions=None  # 상호작용 없음
+    )
+
+    print(f"\n선택모델 설정:")
+    print(f"   - 모델 유형: Base Model (잠재변수 없음)")
+    print(f"   - 선택 속성만 사용: {choice_config.choice_attributes}")
+
+    # 부트스트래핑 실행
+    from datetime import datetime
+    start_time = datetime.now()
+    print(f"\n시작 시간: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    results = bootstrap_stage2_only(
+        choice_data=data,
+        factor_scores=factor_scores,
+        choice_model=choice_config,
+        n_bootstrap=1000,  # 1000회 부트스트래핑
+        n_workers=6,
+        confidence_level=0.95,
+        random_seed=42,
+        show_progress=True
+    )
+
+    end_time = datetime.now()
+    elapsed = (end_time - start_time).total_seconds()
+    print(f"\n종료 시간: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"총 소요 시간: {elapsed/60:.1f}분 ({elapsed:.0f}초)")
+    
+    # 결과 출력
+    print("\n" + "=" * 70)
+    print("부트스트래핑 결과")
+    print("=" * 70)
+
+    print(f"\n성공: {results['n_successful']}/{results['n_successful'] + results['n_failed']}")
+    print(f"실패: {results['n_failed']}/{results['n_successful'] + results['n_failed']}")
+
+    print("\n[신뢰구간]")
+    print(results['confidence_intervals'].to_string(index=False))
+
+    print("\n[부트스트랩 통계량]")
+    print(results['bootstrap_statistics'].to_string(index=False))
+
+    # 결과 저장
+    save_dir = project_root / "results" / "bootstrap"
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    results['confidence_intervals'].to_csv(save_dir / "stage2_base_model_bootstrap_ci.csv", index=False)
+    results['bootstrap_statistics'].to_csv(save_dir / "stage2_base_model_bootstrap_stats.csv", index=False)
+
+    # 전체 결과 저장 (pickle)
+    with open(save_dir / "stage2_base_model_bootstrap_full.pkl", 'wb') as f:
+        pickle.dump(results, f)
+
+    print(f"\n✅ 결과 저장: {save_dir}")
+    print(f"   - stage2_base_model_bootstrap_ci.csv")
+    print(f"   - stage2_base_model_bootstrap_stats.csv")
+    print(f"   - stage2_base_model_bootstrap_full.pkl")
+
+
+def example_both_stages_bootstrap():
+    """1+2단계 전체 부트스트래핑 예제"""
+    print("\n" + "=" * 70)
+    print("예제 3: 1+2단계 전체 부트스트래핑")
+    print("=" * 70)
+    
+    # 데이터 로드
+    data_path = project_root / "data" / "processed" / "iclv" / "integrated_data_cleaned.csv"
+    data = pd.read_csv(data_path)
+    print(f"데이터 로드 완료: {len(data)}행")
+
+    # 설정 생성
+    config = create_sugar_substitute_multi_lv_config()
+
+    # 선택모델 설정
+    choice_config = ChoiceConfig(
+        choice_attributes=['health_label', 'price'],
+        choice_type='binary',
+        price_variable='price',
+        all_lvs_as_main=True,
+        main_lvs=['purchase_intention', 'nutrition_knowledge']
+    )
+    
+    # 부트스트래핑 실행
+    results = bootstrap_both_stages(
+        data=data,
+        measurement_model=config.measurement,
+        structural_model=config.structural,
+        choice_model=choice_config,
+        n_bootstrap=50,  # 예제용으로 적게 설정
+        n_workers=4,
+        confidence_level=0.95,
+        random_seed=42,
+        show_progress=True
+    )
+
+    # 결과 출력
+    print("\n[신뢰구간]")
+    print(results['confidence_intervals'].head(20))
+
+    print("\n[부트스트랩 통계량]")
+    print(results['bootstrap_statistics'].head(20))
+
+    # 결과 저장
+    save_dir = project_root / "results" / "bootstrap"
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    results['confidence_intervals'].to_csv(save_dir / "both_stages_bootstrap_ci.csv", index=False)
+    results['bootstrap_statistics'].to_csv(save_dir / "both_stages_bootstrap_stats.csv", index=False)
+
+    print(f"\n결과 저장: {save_dir}")
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="순차추정 부트스트래핑 예제")
+    parser.add_argument(
+        '--mode',
+        type=str,
+        choices=['stage1', 'stage2', 'both', 'all'],
+        default='all',
+        help='부트스트래핑 모드 (stage1: 1단계만, stage2: 2단계만, both: 전체, all: 모든 예제 실행)'
+    )
+
+    args = parser.parse_args()
+
+    if args.mode == 'stage1':
+        example_stage1_bootstrap()
+    elif args.mode == 'stage2':
+        example_stage2_bootstrap()
+    elif args.mode == 'both':
+        example_both_stages_bootstrap()
+    else:  # all
+        example_stage1_bootstrap()
+        example_stage2_bootstrap()
+        example_both_stages_bootstrap()
+
+    print("\n" + "=" * 70)
+    print("모든 부트스트래핑 완료!")
+    print("=" * 70)
+
