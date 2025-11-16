@@ -42,10 +42,13 @@ def main():
     
     # 2. 설정 생성
     print("\n[2] 모델 설정 중...")
-    config = create_sugar_substitute_multi_lv_config(use_hierarchical=True)
+    # use_full_paths=True: 모든 잠재변수 간 경로 추정
+    config = create_sugar_substitute_multi_lv_config(use_full_paths=True)
     print("✅ 설정 완료")
     print(f"   - 잠재변수: {list(config.measurement_configs.keys())}")
-    print(f"   - 구조모델: 계층적 구조 (건강관심도 → 건강유익성 → 구매의도)")
+    print(f"   - 구조모델: 모든 경로 추정 (완전 연결)")
+    print(f"     * perceived_benefit <- health_concern, perceived_price, nutrition_knowledge")
+    print(f"     * purchase_intention <- health_concern, perceived_benefit, perceived_price, nutrition_knowledge")
 
     # 3. 모델 생성
     print("\n[3] 모델 생성 중...")

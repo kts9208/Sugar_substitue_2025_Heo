@@ -27,24 +27,24 @@ def create_design_matrix():
     # ========================================
     # 선택 세트 1 (q21)
     # ========================================
-    # 제품 A: 무설탕, 무설탕, 건강 강조 표시 있음, ₩2,500
+    # 제품 A: 무설탕, 건강 강조 표시 있음, ₩2,500
     design_data.append({
         'choice_set': 1,
         'alternative': 1,
         'alternative_name': '제품 A',
         'product_type': '무설탕',
-        'sugar_content': '무설탕',
+        'sugar_content': '무설탕',  # product_type과 동일
         'health_label': 1,  # 1 = 있음
         'price': 2500
     })
 
-    # 제품 B: 일반당, 일반당, 없음, ₩2,000
+    # 제품 B: 일반당, 없음, ₩2,000
     design_data.append({
         'choice_set': 1,
         'alternative': 2,
         'alternative_name': '제품 B',
         'product_type': '알반당',
-        'sugar_content': '알반당',
+        'sugar_content': '알반당',  # product_type과 동일
         'health_label': 0,  # 0 = 없음
         'price': 2000
     })
@@ -63,24 +63,24 @@ def create_design_matrix():
     # ========================================
     # 선택 세트 2 (q22)
     # ========================================
-    # 제품 A: 알반당, 알반당, 없음, ₩3,000
+    # 제품 A: 알반당, 없음, ₩3,000
     design_data.append({
         'choice_set': 2,
         'alternative': 1,
         'alternative_name': '제품 A',
         'product_type': '알반당',
-        'sugar_content': '알반당',
+        'sugar_content': '알반당',  # product_type과 동일
         'health_label': 0,
         'price': 3000
     })
-    
-    # 제품 B: 무설탕, 무설탕, 건강 강조 표시 있음, ₩2,500
+
+    # 제품 B: 무설탕, 건강 강조 표시 있음, ₩2,500
     design_data.append({
         'choice_set': 2,
         'alternative': 2,
         'alternative_name': '제품 B',
         'product_type': '무설탕',
-        'sugar_content': '무설탕',
+        'sugar_content': '무설탕',  # product_type과 동일
         'health_label': 1,
         'price': 2500
     })
@@ -99,24 +99,24 @@ def create_design_matrix():
     # ========================================
     # 선택 세트 3 (q23)
     # ========================================
-    # 제품 A: 알반당, 무설탕, 없음, ₩2,000
+    # 제품 A: 무설탕, 없음, ₩2,000
     design_data.append({
         'choice_set': 3,
         'alternative': 1,
         'alternative_name': '제품 A',
-        'product_type': '알반당',
-        'sugar_content': '무설탕',
+        'product_type': '무설탕',
+        'sugar_content': '무설탕',  # product_type과 동일
         'health_label': 0,
         'price': 2000
     })
-    
-    # 제품 B: 무설탕, 무설탕, 건강 강조 표시 있음, ₩3,000
+
+    # 제품 B: 무설탕, 건강 강조 표시 있음, ₩3,000
     design_data.append({
         'choice_set': 3,
         'alternative': 2,
         'alternative_name': '제품 B',
         'product_type': '무설탕',
-        'sugar_content': '무설탕',
+        'sugar_content': '무설탕',  # product_type과 동일
         'health_label': 1,
         'price': 3000
     })
@@ -135,24 +135,24 @@ def create_design_matrix():
     # ========================================
     # 선택 세트 4 (q24)
     # ========================================
-    # 제품 A: 알반당, 알반당, 건강 강조 표시 있음, ₩2,000
+    # 제품 A: 알반당, 건강 강조 표시 있음, ₩2,000
     design_data.append({
         'choice_set': 4,
         'alternative': 1,
         'alternative_name': '제품 A',
         'product_type': '알반당',
-        'sugar_content': '알반당',
+        'sugar_content': '알반당',  # product_type과 동일
         'health_label': 1,
         'price': 2000
     })
-    
-    # 제품 B: 무설탕, 알반당, 없음, ₩2,500
+
+    # 제품 B: 알반당, 없음, ₩2,500
     design_data.append({
         'choice_set': 4,
         'alternative': 2,
         'alternative_name': '제품 B',
-        'product_type': '무설탕',
-        'sugar_content': '알반당',
+        'product_type': '알반당',
+        'sugar_content': '알반당',  # product_type과 동일
         'health_label': 0,
         'price': 2500
     })
@@ -171,24 +171,24 @@ def create_design_matrix():
     # ========================================
     # 선택 세트 5 (q25)
     # ========================================
-    # 제품 A: 알반당, 무설탕, 없음, ₩2,500
+    # 제품 A: 무설탕, 없음, ₩2,500
     design_data.append({
         'choice_set': 5,
         'alternative': 1,
         'alternative_name': '제품 A',
-        'product_type': '알반당',
-        'sugar_content': '무설탕',
+        'product_type': '무설탕',
+        'sugar_content': '무설탕',  # product_type과 동일
         'health_label': 0,
         'price': 2500
     })
-    
-    # 제품 B: 무설탕, 알반당, 건강 강조 표시 있음, ₩3,000
+
+    # 제품 B: 알반당, 건강 강조 표시 있음, ₩3,000
     design_data.append({
         'choice_set': 5,
         'alternative': 2,
         'alternative_name': '제품 B',
-        'product_type': '무설탕',
-        'sugar_content': '알반당',
+        'product_type': '알반당',
+        'sugar_content': '알반당',  # product_type과 동일
         'health_label': 1,
         'price': 3000
     })
@@ -207,24 +207,24 @@ def create_design_matrix():
     # ========================================
     # 선택 세트 6 (q26)
     # ========================================
-    # 제품 A: 알반당, 알반당, 건강 강조 표시 있음, ₩3,000
+    # 제품 A: 알반당, 건강 강조 표시 있음, ₩3,000
     design_data.append({
         'choice_set': 6,
         'alternative': 1,
         'alternative_name': '제품 A',
         'product_type': '알반당',
-        'sugar_content': '알반당',
+        'sugar_content': '알반당',  # product_type과 동일
         'health_label': 1,
         'price': 3000
     })
-    
-    # 제품 B: 무설탕, 무설탕, 없음, ₩2,000
+
+    # 제품 B: 무설탕, 없음, ₩2,000
     design_data.append({
         'choice_set': 6,
         'alternative': 2,
         'alternative_name': '제품 B',
         'product_type': '무설탕',
-        'sugar_content': '무설탕',
+        'sugar_content': '무설탕',  # product_type과 동일
         'health_label': 0,
         'price': 2000
     })

@@ -239,6 +239,8 @@ def create_sugar_substitute_multi_lv_config(
     use_hierarchical: bool = True,  # ✅ 디폴트: 계층적 구조
     all_lvs_as_main: bool = True,   # ✅ 디폴트: 모든 LV 주효과
     use_moderation: bool = False,   # 조절효과 (하위 호환)
+    use_full_paths: bool = False,   # ✅ 신규: 모든 잠재변수 간 경로 추정
+    custom_paths: Optional[List[Dict[str, Any]]] = None,  # ✅ 사용자 정의 경로
     **kwargs
 ) -> MultiLatentConfig:
     """
@@ -263,6 +265,12 @@ def create_sugar_substitute_multi_lv_config(
         use_hierarchical: 계층적 구조 사용 여부 (디폴트: True)
         all_lvs_as_main: 모든 LV 주효과 사용 여부 (디폴트: True)
         use_moderation: 조절효과 사용 여부 (디폴트: False, 하위 호환)
+        use_full_paths: 모든 잠재변수 간 경로 추정 여부 (디폴트: False)
+            - True: perceived_benefit과 purchase_intention에 대한 모든 경로 추정
+            - False: use_hierarchical 설정에 따름
+        custom_paths: 사용자 정의 경로 (디폴트: None)
+            - 예: [{'target': 'perceived_benefit', 'predictors': ['health_concern']},
+                   {'target': 'purchase_intention', 'predictors': ['perceived_benefit', 'perceived_price', 'nutrition_knowledge']}]
         **kwargs: 추가 설정
 
     Returns:
@@ -304,7 +312,59 @@ def create_sugar_substitute_multi_lv_config(
     }
 
     # 2. 구조모델 설정
-    if use_hierarchical:
+    if custom_paths is not None:
+        # ✅ 사용자 정의 경로
+        structural_config = MultiLatentStructuralConfig(
+            endogenous_lv='purchase_intention',
+            exogenous_lvs=['health_concern', 'perceived_price', 'nutrition_knowledge'],
+            covariates=[],
+            hierarchical_paths=custom_paths,
+            error_variance=1.0,
+            fix_error_variance=True
+        )
+    elif use_full_paths:
+        # ✅ 신규: 모든 잠재변수 간 경로 추정
+        # 주의: SEM에서 순환 참조 없이 20개 방향성 경로를 한 번에 추정하는 것은 불가능
+        # 대신 각 변수를 종속변수로 하는 여러 모델을 추정해야 함
+        # 여기서는 최대한 많은 경로를 포함하는 계층 구조 사용 (9개 경로)
+
+        # 계층 구조:
+        # Level 1: health_concern (완전 외생)
+        # Level 2: perceived_price, nutrition_knowledge ← health_concern (2개 경로)
+        # Level 3: perceived_benefit ← Level 1, 2 (3개 경로)
+        # Level 4: purchase_intention ← Level 1, 2, 3 (4개 경로)
+        # 총 9개 경로
+
+        structural_config = MultiLatentStructuralConfig(
+            endogenous_lv='purchase_intention',
+            exogenous_lvs=['health_concern'],  # 완전 외생변수
+            covariates=[],
+            hierarchical_paths=[
+                # Level 2: perceived_price ← health_concern (1개)
+                {
+                    'target': 'perceived_price',
+                    'predictors': ['health_concern']
+                },
+                # Level 2: nutrition_knowledge ← health_concern (1개)
+                {
+                    'target': 'nutrition_knowledge',
+                    'predictors': ['health_concern']
+                },
+                # Level 3: perceived_benefit ← health_concern, perceived_price, nutrition_knowledge (3개)
+                {
+                    'target': 'perceived_benefit',
+                    'predictors': ['health_concern', 'perceived_price', 'nutrition_knowledge']
+                },
+                # Level 4: purchase_intention ← 모든 변수 (4개)
+                {
+                    'target': 'purchase_intention',
+                    'predictors': ['health_concern', 'perceived_price', 'nutrition_knowledge', 'perceived_benefit']
+                }
+            ],
+            error_variance=1.0,
+            fix_error_variance=True
+        )
+    elif use_hierarchical:
         # ✅ 디폴트: 계층적 구조
         structural_config = MultiLatentStructuralConfig(
             endogenous_lv='purchase_intention',

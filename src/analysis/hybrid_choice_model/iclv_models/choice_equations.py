@@ -88,9 +88,14 @@ class BaseICLVChoice(ABC):
         """
         효용 계산 (공통 로직)
 
-        ✅ 모든 LV 주효과 지원 (디폴트)
+        ✅ 대안별 ASC와 잠재변수 계수 지원
 
-        모든 LV 주효과 모델:
+        대안별 모델 (Multinomial Logit):
+            V_A = ASC_A + θ_A_PI * PI + θ_A_NK * NK + β*X_A
+            V_B = ASC_B + θ_B_PI * PI + θ_B_NK * NK + β*X_B
+            V_C = 0 (opt-out, reference alternative)
+
+        모든 LV 주효과 모델 (Binary/기타):
             V = intercept + β*X + Σ(λ_i * LV_i)
 
         조절효과 모델:
@@ -109,7 +114,6 @@ class BaseICLVChoice(ABC):
         Returns:
             효용 벡터 (n_obs,)
         """
-        intercept = params['intercept']
         beta = params['beta']
 
         # 선택 속성 추출
@@ -124,6 +128,7 @@ class BaseICLVChoice(ABC):
         if self.all_lvs_as_main and isinstance(lv, dict):
             # ✅ 모든 LV 주효과 모델 (디폴트)
             # V = intercept + β*X + Σ(λ_i * LV_i)
+            # 또는 대안별 모델: V_alt = ASC_alt + Σ(θ_alt_i * LV_i) + β*X_alt
 
             # 각 LV를 배열로 변환
             lv_arrays = {}
@@ -137,23 +142,93 @@ class BaseICLVChoice(ABC):
                 else:
                     lv_arrays[lv_name] = lv_value
 
+            # 대안별 파라미터 사용 여부 확인 (Multinomial Logit)
+            use_alternative_specific = 'asc_sugar' in params or 'ASC_sugar' in params or 'asc_A' in params or 'ASC_A' in params
+
             # 효용 계산
             for i in range(len(data)):
                 if has_nan[i]:
                     V[i] = 0.0  # opt-out: 효용 = 0
                 else:
-                    # 기본 효용
-                    V[i] = intercept + X[i] @ beta
+                    if use_alternative_specific:
+                        # ✅ sugar_content 기준으로 대안 구분
+                        if 'sugar_content' in data.columns:
+                            sugar_content = data['sugar_content'].iloc[i]
 
-                    # 모든 LV 주효과 추가
-                    for lv_name in self.main_lvs:
-                        param_name = f'lambda_{lv_name}'
-                        if param_name in params:
-                            lambda_lv = params[param_name]
-                            V[i] += lambda_lv * lv_arrays[lv_name][i]
+                            if pd.isna(sugar_content):
+                                # opt-out (구매안함)
+                                V[i] = 0.0
+                            elif sugar_content == '알반당':  # ✅ 데이터에는 '알반당'으로 저장됨
+                                # 일반당 대안
+                                asc = params.get('asc_sugar', params.get('ASC_sugar', 0.0))
+                                V[i] = asc + X[i] @ beta
+
+                                # 잠재변수 효과 추가
+                                for lv_name in self.main_lvs:
+                                    param_name = f'theta_sugar_{lv_name}'
+                                    if param_name in params:
+                                        theta = params[param_name]
+                                        V[i] += theta * lv_arrays[lv_name][i // self.n_alternatives]
+
+                            elif sugar_content == '무설탕':
+                                # 무설탕 대안
+                                asc = params.get('asc_sugar_free', params.get('ASC_sugar_free', 0.0))
+                                V[i] = asc + X[i] @ beta
+
+                                # 잠재변수 효과 추가
+                                for lv_name in self.main_lvs:
+                                    param_name = f'theta_sugar_free_{lv_name}'
+                                    if param_name in params:
+                                        theta = params[param_name]
+                                        V[i] += theta * lv_arrays[lv_name][i // self.n_alternatives]
+                            else:
+                                # 알 수 없는 값
+                                V[i] = 0.0
+
+                        else:
+                            # sugar_content 컬럼이 없으면 기존 방식 (alternative 기준)
+                            alt_idx = i % self.n_alternatives
+
+                            if alt_idx == 0:  # 대안 A
+                                asc = params.get('asc_A', params.get('ASC_A', 0.0))
+                                V[i] = asc + X[i] @ beta
+
+                                # 잠재변수 효과 추가
+                                for lv_name in self.main_lvs:
+                                    param_name = f'theta_A_{lv_name}'
+                                    if param_name in params:
+                                        theta = params[param_name]
+                                        V[i] += theta * lv_arrays[lv_name][i // self.n_alternatives]
+
+                            elif alt_idx == 1:  # 대안 B
+                                asc = params.get('asc_B', params.get('ASC_B', 0.0))
+                                V[i] = asc + X[i] @ beta
+
+                                # 잠재변수 효과 추가
+                                for lv_name in self.main_lvs:
+                                    param_name = f'theta_B_{lv_name}'
+                                    if param_name in params:
+                                        theta = params[param_name]
+                                        V[i] += theta * lv_arrays[lv_name][i // self.n_alternatives]
+
+                            else:  # 대안 C (opt-out)
+                                V[i] = 0.0
+
+                    else:
+                        # 기존 방식: 모든 대안에 동일한 intercept와 lambda
+                        intercept = params.get('intercept', 0.0)
+                        V[i] = intercept + X[i] @ beta
+
+                        # 모든 LV 주효과 추가
+                        for lv_name in self.main_lvs:
+                            param_name = f'lambda_{lv_name}'
+                            if param_name in params:
+                                lambda_lv = params[param_name]
+                                V[i] += lambda_lv * lv_arrays[lv_name][i]
 
         elif self.moderation_enabled and isinstance(lv, dict):
             # 조절효과 모델 (하위 호환)
+            intercept = params.get('intercept', 0.0)
             lambda_main = params.get('lambda_main', params.get('lambda', 1.0))
 
             # 주 LV 추출
@@ -190,6 +265,7 @@ class BaseICLVChoice(ABC):
 
         else:
             # 기본 모델 (단일 LV, 하위 호환)
+            intercept = params.get('intercept', 0.0)
             lambda_lv = params.get('lambda', params.get('lambda_main', 1.0))
 
             # 잠재변수 처리 (스칼라 또는 배열)
@@ -840,41 +916,47 @@ class MultinomialLogitChoice(BaseICLVChoice):
         # 각 개인의 모든 선택 상황에 동일한 요인점수 사용
 
         n_rows = len(data)
-        n_individuals = len(next(iter(factor_scores.values())))
 
-        self.logger.info(f"요인점수 확장:")
-        self.logger.info(f"  전체 데이터 행 수: {n_rows}")
-        self.logger.info(f"  개인 수: {n_individuals}")
-
-        # ✅ 확장 전 요인점수 로깅
-        self._log_factor_scores(factor_scores, stage="선택모델_확장_전")
-
-        # respondent_id 기준으로 요인점수 매핑 (부트스트랩 안전)
-        if 'respondent_id' in data.columns:
-            # 개인 ID 추출
-            unique_ids = data['respondent_id'].unique()
-
-            # 요인점수를 ID 순서대로 매핑
+        # ✅ 요인점수가 비어있는 경우 처리 (잠재변수 효과 없음)
+        if not factor_scores:
+            self.logger.info("요인점수가 비어있음 (잠재변수 효과 없이 선택모델만 추정)")
             lv_expanded = {}
-            for lv_name, scores in factor_scores.items():
-                # 각 행의 respondent_id에 해당하는 요인점수 할당
-                id_to_score = {unique_ids[i]: scores[i] for i in range(len(unique_ids))}
-                expanded = np.array([id_to_score[rid] for rid in data['respondent_id']])
-                lv_expanded[lv_name] = expanded
-                self.logger.info(f"  {lv_name}: {scores.shape} → {expanded.shape}")
         else:
-            # respondent_id가 없는 경우 (하위 호환)
-            rows_per_individual = n_rows // n_individuals
-            self.logger.info(f"  개인당 행 수: {rows_per_individual}")
+            n_individuals = len(next(iter(factor_scores.values())))
 
-            lv_expanded = {}
-            for lv_name, scores in factor_scores.items():
-                expanded = np.repeat(scores, rows_per_individual)
-                lv_expanded[lv_name] = expanded
-                self.logger.info(f"  {lv_name}: {scores.shape} → {expanded.shape}")
+            self.logger.info(f"요인점수 확장:")
+            self.logger.info(f"  전체 데이터 행 수: {n_rows}")
+            self.logger.info(f"  개인 수: {n_individuals}")
 
-        # ✅ 확장 후 요인점수 로깅
-        self._log_factor_scores(lv_expanded, stage="선택모델_확장_후")
+            # ✅ 확장 전 요인점수 로깅
+            self._log_factor_scores(factor_scores, stage="선택모델_확장_전")
+
+            # respondent_id 기준으로 요인점수 매핑 (부트스트랩 안전)
+            if 'respondent_id' in data.columns:
+                # 개인 ID 추출
+                unique_ids = data['respondent_id'].unique()
+
+                # 요인점수를 ID 순서대로 매핑
+                lv_expanded = {}
+                for lv_name, scores in factor_scores.items():
+                    # 각 행의 respondent_id에 해당하는 요인점수 할당
+                    id_to_score = {unique_ids[i]: scores[i] for i in range(len(unique_ids))}
+                    expanded = np.array([id_to_score[rid] for rid in data['respondent_id']])
+                    lv_expanded[lv_name] = expanded
+                    self.logger.info(f"  {lv_name}: {scores.shape} → {expanded.shape}")
+            else:
+                # respondent_id가 없는 경우 (하위 호환)
+                rows_per_individual = n_rows // n_individuals
+                self.logger.info(f"  개인당 행 수: {rows_per_individual}")
+
+                lv_expanded = {}
+                for lv_name, scores in factor_scores.items():
+                    expanded = np.repeat(scores, rows_per_individual)
+                    lv_expanded[lv_name] = expanded
+                    self.logger.info(f"  {lv_name}: {scores.shape} → {expanded.shape}")
+
+            # ✅ 확장 후 요인점수 로깅
+            self._log_factor_scores(lv_expanded, stage="선택모델_확장_후")
 
         # 3. 초기 파라미터 생성
         initial_params = self.get_initial_params(data)
@@ -1019,6 +1101,7 @@ class MultinomialLogitChoice(BaseICLVChoice):
         """
         초기 파라미터 생성
 
+        ✅ 대안별 ASC와 잠재변수 계수 지원
         ✅ 모든 LV 주효과 지원
         ✅ 조절효과 지원
 
@@ -1026,6 +1109,17 @@ class MultinomialLogitChoice(BaseICLVChoice):
             data: 선택 데이터
 
         Returns:
+            대안별 모델 (Multinomial Logit):
+                {
+                    'asc_A': float,
+                    'asc_B': float,
+                    'beta': np.ndarray,
+                    'theta_A_purchase_intention': float,
+                    'theta_A_nutrition_knowledge': float,
+                    'theta_B_purchase_intention': float,
+                    'theta_B_nutrition_knowledge': float
+                }
+
             모든 LV 주효과 모델:
                 {
                     'intercept': float,
@@ -1056,7 +1150,6 @@ class MultinomialLogitChoice(BaseICLVChoice):
 
         # 기본 초기값
         params = {
-            'intercept': 0.0,
             'beta': np.zeros(n_attributes)
         }
 
@@ -1065,12 +1158,40 @@ class MultinomialLogitChoice(BaseICLVChoice):
             price_idx = self.choice_attributes.index(self.price_variable)
             params['beta'][price_idx] = -1.0
 
-        # ✅ 모든 LV 주효과 모델
-        if self.all_lvs_as_main and self.main_lvs is not None:
+        # ✅ 대안별 모델 (Multinomial Logit with alternative-specific constants)
+        # n_alternatives가 3이면 대안별 모델 사용
+        if hasattr(self, 'n_alternatives') and self.n_alternatives == 3:
+            # ✅ sugar_content 기준으로 ASC 초기화
+            if 'sugar_content' in data.columns:
+                # ASC (opt-out은 reference이므로 0)
+                params['asc_sugar'] = 0.0  # 일반당
+                params['asc_sugar_free'] = 0.0  # 무설탕
+
+                # 대안별 잠재변수 계수
+                if self.all_lvs_as_main and self.main_lvs is not None:
+                    for lv_name in self.main_lvs:
+                        params[f'theta_sugar_{lv_name}'] = 0.5
+                        params[f'theta_sugar_free_{lv_name}'] = 0.5
+            else:
+                # sugar_content 컬럼이 없으면 기존 방식 (alternative 기준)
+                params['asc_A'] = 0.0
+                params['asc_B'] = 0.0
+
+                # 대안별 잠재변수 계수
+                if self.all_lvs_as_main and self.main_lvs is not None:
+                    for lv_name in self.main_lvs:
+                        params[f'theta_A_{lv_name}'] = 0.5
+                        params[f'theta_B_{lv_name}'] = 0.5
+
+        # ✅ 모든 LV 주효과 모델 (Binary/기타)
+        elif self.all_lvs_as_main and self.main_lvs is not None:
+            params['intercept'] = 0.0
             for lv_name in self.main_lvs:
                 params[f'lambda_{lv_name}'] = 1.0
+
+        # ✅ 조절효과 모델
         elif self.moderation_enabled:
-            # ✅ 조절효과 모델
+            params['intercept'] = 0.0
             params['lambda_main'] = 1.0
 
             # 조절효과 초기값
@@ -1083,8 +1204,10 @@ class MultinomialLogitChoice(BaseICLVChoice):
                     params[param_name] = 0.2
                 else:
                     params[param_name] = 0.0
+
+        # ✅ 기본 모델 (하위 호환)
         else:
-            # 기본 모델 (하위 호환)
+            params['intercept'] = 0.0
             params['lambda'] = 1.0
 
         self.logger.info(f"초기 파라미터: {params}")
@@ -1095,6 +1218,7 @@ class MultinomialLogitChoice(BaseICLVChoice):
         """
         파라미터 딕셔너리를 배열로 변환 (최적화용)
 
+        ✅ 대안별 ASC와 theta 지원
         ✅ 모든 LV 주효과 지원
 
         Args:
@@ -1106,17 +1230,58 @@ class MultinomialLogitChoice(BaseICLVChoice):
         param_names = []
         param_values = []
 
-        # intercept
-        param_names.append('intercept')
-        param_values.append(params['intercept'])
+        # ✅ 대안별 모델: ASC (sugar_content 기준 또는 alternative 기준)
+        if 'asc_sugar' in params or 'ASC_sugar' in params:
+            # sugar_content 기준
+            param_names.append('asc_sugar')
+            param_values.append(params.get('asc_sugar', params.get('ASC_sugar', 0.0)))
+            param_names.append('asc_sugar_free')
+            param_values.append(params.get('asc_sugar_free', params.get('ASC_sugar_free', 0.0)))
+        elif 'asc_A' in params or 'ASC_A' in params:
+            # alternative 기준 (하위 호환)
+            param_names.append('asc_A')
+            param_values.append(params.get('asc_A', params.get('ASC_A', 0.0)))
+            param_names.append('asc_B')
+            param_values.append(params.get('asc_B', params.get('ASC_B', 0.0)))
+
+        # intercept (대안별 모델이 아닌 경우)
+        elif 'intercept' in params:
+            param_names.append('intercept')
+            param_values.append(params['intercept'])
 
         # beta
         for i, attr in enumerate(self.choice_attributes):
             param_names.append(f'beta_{attr}')
             param_values.append(params['beta'][i])
 
-        # ✅ 모든 LV 주효과 lambda 파라미터
-        if self.all_lvs_as_main and self.main_lvs is not None:
+        # ✅ 대안별 잠재변수 계수: theta_sugar_*, theta_sugar_free_* 또는 theta_A_*, theta_B_*
+        if 'asc_sugar' in params or 'ASC_sugar' in params:
+            # sugar_content 기준
+            if self.all_lvs_as_main and self.main_lvs is not None:
+                for lv_name in self.main_lvs:
+                    param_name_sugar = f'theta_sugar_{lv_name}'
+                    param_name_sugar_free = f'theta_sugar_free_{lv_name}'
+                    if param_name_sugar in params:
+                        param_names.append(param_name_sugar)
+                        param_values.append(params[param_name_sugar])
+                    if param_name_sugar_free in params:
+                        param_names.append(param_name_sugar_free)
+                        param_values.append(params[param_name_sugar_free])
+        elif 'asc_A' in params or 'ASC_A' in params:
+            # alternative 기준 (하위 호환)
+            if self.all_lvs_as_main and self.main_lvs is not None:
+                for lv_name in self.main_lvs:
+                    param_name_A = f'theta_A_{lv_name}'
+                    param_name_B = f'theta_B_{lv_name}'
+                    if param_name_A in params:
+                        param_names.append(param_name_A)
+                        param_values.append(params[param_name_A])
+                    if param_name_B in params:
+                        param_names.append(param_name_B)
+                        param_values.append(params[param_name_B])
+
+        # ✅ 모든 LV 주효과 lambda 파라미터 (대안별 모델이 아닌 경우)
+        elif self.all_lvs_as_main and self.main_lvs is not None:
             for lv_name in self.main_lvs:
                 param_name = f'lambda_{lv_name}'
                 if param_name in params:
@@ -1145,6 +1310,7 @@ class MultinomialLogitChoice(BaseICLVChoice):
         """
         배열을 파라미터 딕셔너리로 변환
 
+        ✅ 대안별 ASC와 theta 지원
         ✅ 모든 LV 주효과 지원
 
         Args:
@@ -1162,8 +1328,16 @@ class MultinomialLogitChoice(BaseICLVChoice):
         for name, value in zip(param_names, param_array):
             if name == 'intercept':
                 params['intercept'] = value
+            elif name in ['asc_sugar', 'ASC_sugar', 'asc_sugar_free', 'ASC_sugar_free',
+                         'asc_A', 'ASC_A', 'asc_B', 'ASC_B']:
+                # ✅ 대안별 ASC (sugar_content 기준 또는 alternative 기준)
+                params[name] = value
             elif name.startswith('beta_'):
                 beta_values.append(value)
+            elif name.startswith('theta_sugar_') or name.startswith('theta_sugar_free_') or \
+                 name.startswith('theta_A_') or name.startswith('theta_B_'):
+                # ✅ 대안별 잠재변수 계수
+                params[name] = value
             elif name == 'lambda_main':
                 params['lambda_main'] = value
             elif name == 'lambda':
@@ -1188,6 +1362,8 @@ class MultinomialLogitChoice(BaseICLVChoice):
         """
         파라미터별 통계량을 구조화된 딕셔너리로 변환
 
+        ✅ 대안별 ASC와 theta 지원
+
         Args:
             param_names: 파라미터 이름 리스트
             estimates: 추정값 배열
@@ -1198,15 +1374,17 @@ class MultinomialLogitChoice(BaseICLVChoice):
         Returns:
             구조화된 통계량 딕셔너리
             {
-                'intercept': {'estimate': ..., 'se': ..., 't': ..., 'p': ...},
+                'asc_A': {'estimate': ..., 'se': ..., 't': ..., 'p': ...},
+                'asc_B': {'estimate': ..., 'se': ..., 't': ..., 'p': ...},
                 'beta': {
                     'sugar_free': {'estimate': ..., 'se': ..., 't': ..., 'p': ...},
                     'health_label': {...},
                     'price': {...}
                 },
-                'lambda_main': {...},
-                'lambda_mod_perceived_price': {...},
-                'lambda_mod_nutrition_knowledge': {...}
+                'theta_A_purchase_intention': {...},
+                'theta_A_nutrition_knowledge': {...},
+                'theta_B_purchase_intention': {...},
+                'theta_B_nutrition_knowledge': {...}
             }
         """
         stats = {}
@@ -1221,12 +1399,20 @@ class MultinomialLogitChoice(BaseICLVChoice):
 
             if name == 'intercept':
                 stats['intercept'] = stat_dict
+            elif name in ['asc_sugar', 'ASC_sugar', 'asc_sugar_free', 'ASC_sugar_free',
+                         'asc_A', 'ASC_A', 'asc_B', 'ASC_B']:
+                # ✅ 대안별 ASC (sugar_content 기준 또는 alternative 기준)
+                stats[name] = stat_dict
             elif name.startswith('beta_'):
                 # beta 파라미터는 속성별로 그룹화
                 if 'beta' not in stats:
                     stats['beta'] = {}
                 attr_name = name.replace('beta_', '')
                 stats['beta'][attr_name] = stat_dict
+            elif name.startswith('theta_sugar_') or name.startswith('theta_sugar_free_') or \
+                 name.startswith('theta_A_') or name.startswith('theta_B_'):
+                # ✅ 대안별 잠재변수 계수
+                stats[name] = stat_dict
             elif name == 'lambda_main':
                 stats['lambda_main'] = stat_dict
             elif name == 'lambda':

@@ -15,7 +15,7 @@ ICLV 모델의 순차 추정 엔진입니다.
 
 import numpy as np
 import pandas as pd
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Union, List
 from scipy import optimize
 import logging
 import pickle
@@ -25,6 +25,7 @@ from .base_estimator import BaseEstimator
 from .initializer import SequentialInitializer
 from .likelihood_calculator import SequentialLikelihoodCalculator
 from .sem_estimator import SEMEstimator
+from .modification_indices import ModificationIndices
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,371 @@ class SequentialEstimator(BaseEstimator):
     # ========================================================================
     # 단계별 실행 메서드 (Stage-wise Execution)
     # ========================================================================
+
+    def estimate_cfa_only(
+        self,
+        data: pd.DataFrame,
+        measurement_model,
+        save_path: Optional[str] = None
+    ) -> Dict:
+        """
+        CFA만 실행하여 잠재변수 간 상관관계 추출
+
+        구조모델 없이 측정모델만 추정하여 잠재변수 간 상관관계를 확인합니다.
+        이를 통해 20개 잠재변수 간 관계(상관관계)를 모두 확인할 수 있습니다.
+
+        Args:
+            data: 분석 데이터
+            measurement_model: 측정모델 객체 (MultiLatentMeasurement)
+            save_path: 결과 저장 경로 (None이면 저장 안 함)
+
+        Returns:
+            {
+                'cfa_results': Dict,  # CFA 전체 결과
+                'factor_scores': Dict[str, np.ndarray],  # 요인점수
+                'loadings': pd.DataFrame,  # 요인적재량
+                'correlations': pd.DataFrame,  # 잠재변수 간 상관관계
+                'fit_indices': Dict[str, float],  # 적합도 지수
+                'log_likelihood': float
+            }
+        """
+        self.logger.info("\n" + "="*70)
+        self.logger.info("CFA 전용 추정 시작")
+        self.logger.info("="*70)
+
+        try:
+            # SEMEstimator로 CFA 추정
+            from .sem_estimator import SEMEstimator
+            sem_estimator = SEMEstimator()
+
+            self.logger.info("\n[CFA 추정] 측정모델만 추정 (구조모델 없음)...")
+            cfa_results = sem_estimator.fit_cfa_only(data, measurement_model)
+
+            self.logger.info(f"CFA 추정 완료: LL = {cfa_results['log_likelihood']:.2f}")
+
+            # 요인점수 추출
+            self.factor_scores = cfa_results['factor_scores']
+            self.logger.info(f"요인점수 추출 완료: {list(self.factor_scores.keys())}")
+
+            # 요인점수 표준화
+            self.logger.info("\n요인점수 Z-score 표준화 적용...")
+            self.factor_scores = self._standardize_factor_scores(self.factor_scores)
+            self.logger.info("요인점수 표준화 완료")
+
+            # 결과 정리
+            results = {
+                'cfa_results': cfa_results,
+                'factor_scores': self.factor_scores,
+                'loadings': cfa_results['loadings'],
+                'correlations': cfa_results['correlations'],
+                'fit_indices': cfa_results['fit_indices'],
+                'log_likelihood': cfa_results['log_likelihood']
+            }
+
+            # 결과 저장
+            if save_path:
+                self.logger.info(f"\n결과 저장 중: {save_path}")
+                self.save_cfa_results(results, save_path)
+
+            # 결과 출력
+            self._print_cfa_summary(results)
+
+            return results
+
+        except Exception as e:
+            self.logger.error(f"CFA 추정 중 오류 발생: {e}", exc_info=True)
+            raise
+
+    def save_cfa_results(self, results: Dict, save_path: str):
+        """
+        CFA 결과 저장 (pickle + CSV)
+
+        Args:
+            results: CFA 결과
+            save_path: 저장 경로
+        """
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # 1. Pickle 저장 (전체 결과)
+        save_data = {
+            'factor_scores': results['factor_scores'],
+            'loadings': results['loadings'],
+            'correlations': results['correlations'],
+            'fit_indices': results['fit_indices'],
+            'log_likelihood': results['log_likelihood']
+        }
+
+        with open(save_path, 'wb') as f:
+            pickle.dump(save_data, f)
+        self.logger.info(f"Pickle 저장 완료: {save_path}")
+
+        # 2. CSV 저장
+        base_path = save_path.with_suffix('')
+
+        # 2-1. 요인적재량
+        if 'loadings' in results and results['loadings'] is not None:
+            loadings_csv = f"{base_path}_loadings.csv"
+            results['loadings'].to_csv(loadings_csv, index=False, encoding='utf-8-sig')
+            self.logger.info(f"요인적재량 저장: {loadings_csv}")
+
+        # 2-2. 상관관계 (pairwise)
+        if 'correlations' in results and results['correlations'] is not None:
+            correlations_csv = f"{base_path}_correlations.csv"
+            results['correlations'].to_csv(correlations_csv, index=False, encoding='utf-8-sig')
+            self.logger.info(f"잠재변수 간 상관관계 저장: {correlations_csv}")
+
+            # 2-2-1. 상관관계 행렬 생성 및 저장
+            corr_matrix = self._build_correlation_matrix(results['correlations'])
+            if corr_matrix is not None:
+                corr_matrix_csv = f"{base_path}_correlation_matrix.csv"
+                corr_matrix.to_csv(corr_matrix_csv, encoding='utf-8-sig')
+                self.logger.info(f"상관관계 행렬 저장: {corr_matrix_csv}")
+
+                # 2-2-2. p-value 행렬 생성 및 저장
+                pvalue_matrix = self._build_pvalue_matrix(results['correlations'])
+                if pvalue_matrix is not None:
+                    pvalue_matrix_csv = f"{base_path}_pvalue_matrix.csv"
+                    pvalue_matrix.to_csv(pvalue_matrix_csv, encoding='utf-8-sig')
+                    self.logger.info(f"p-value 행렬 저장: {pvalue_matrix_csv}")
+
+        # 2-3. 적합도 지수
+        if 'fit_indices' in results and results['fit_indices'] is not None:
+            fit_csv = f"{base_path}_fit_indices.csv"
+            fit_df = pd.DataFrame([results['fit_indices']])
+            fit_df.to_csv(fit_csv, index=False, encoding='utf-8-sig')
+            self.logger.info(f"적합도 지수 저장: {fit_csv}")
+
+        # 2-4. 요인점수
+        if 'factor_scores' in results and results['factor_scores'] is not None:
+            scores_csv = f"{base_path}_factor_scores.csv"
+            scores_df = pd.DataFrame(results['factor_scores'])
+            scores_df.to_csv(scores_csv, index=False, encoding='utf-8-sig')
+            self.logger.info(f"요인점수 저장: {scores_csv}")
+
+    def _build_correlation_matrix(self, correlations_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        pairwise 상관관계에서 상관관계 행렬 생성
+
+        Args:
+            correlations_df: pairwise 상관관계 DataFrame
+
+        Returns:
+            상관관계 행렬 (5×5)
+        """
+        if correlations_df is None or len(correlations_df) == 0:
+            return None
+
+        # 잠재변수 목록 추출
+        lv_names = sorted(set(correlations_df['lval'].tolist() + correlations_df['rval'].tolist()))
+
+        # 행렬 초기화
+        corr_matrix = pd.DataFrame(index=lv_names, columns=lv_names, dtype=float)
+
+        # 대각선 요소 (자기 자신과의 상관 = 1.0)
+        for lv in lv_names:
+            corr_matrix.loc[lv, lv] = 1.0
+
+        # 비대각선 요소 (pairwise 상관관계)
+        for _, row in correlations_df.iterrows():
+            lval, rval = row['lval'], row['rval']
+            corr_value = row['Est. Std']  # 표준화된 추정값 (상관계수)
+
+            # 대칭 행렬
+            corr_matrix.loc[lval, rval] = corr_value
+            corr_matrix.loc[rval, lval] = corr_value
+
+        return corr_matrix
+
+    def _build_pvalue_matrix(self, correlations_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        pairwise 상관관계에서 p-value 행렬 생성
+
+        Args:
+            correlations_df: pairwise 상관관계 DataFrame
+
+        Returns:
+            p-value 행렬 (5×5)
+        """
+        if correlations_df is None or len(correlations_df) == 0:
+            return None
+
+        # 잠재변수 목록 추출
+        lv_names = sorted(set(correlations_df['lval'].tolist() + correlations_df['rval'].tolist()))
+
+        # 행렬 초기화
+        pvalue_matrix = pd.DataFrame(index=lv_names, columns=lv_names, dtype=float)
+
+        # 대각선 요소 (자기 자신과의 p-value = 0.0)
+        for lv in lv_names:
+            pvalue_matrix.loc[lv, lv] = 0.0
+
+        # 비대각선 요소 (pairwise p-value)
+        for _, row in correlations_df.iterrows():
+            lval, rval = row['lval'], row['rval']
+            pvalue = row['p-value']
+
+            # 대칭 행렬
+            pvalue_matrix.loc[lval, rval] = pvalue
+            pvalue_matrix.loc[rval, lval] = pvalue
+
+        return pvalue_matrix
+
+    def _print_cfa_summary(self, results: Dict):
+        """CFA 결과 요약 출력"""
+        self.logger.info("\n" + "="*70)
+        self.logger.info("CFA 결과 요약")
+        self.logger.info("="*70)
+
+        # 로그우도
+        self.logger.info(f"\n[로그우도] {results['log_likelihood']:.2f}")
+
+        # 적합도 지수
+        fit = results['fit_indices']
+        self.logger.info("\n[적합도 지수]")
+        for key, value in fit.items():
+            self.logger.info(f"  {key}: {value:.4f}")
+
+        # 상관관계
+        corr = results['correlations']
+        if corr is not None and len(corr) > 0:
+            self.logger.info(f"\n[잠재변수 간 상관관계] {len(corr)}개")
+            self.logger.info(corr.to_string(index=False))
+
+            # 유의한 상관관계 개수
+            n_sig = (corr['p-value'] < 0.05).sum()
+            self.logger.info(f"\n유의한 상관관계 (p<0.05): {n_sig}/{len(corr)}개")
+
+    def estimate_all_paths(
+        self,
+        data: pd.DataFrame,
+        measurement_model,
+        latent_variables: List[str] = None,
+        save_path: str = None
+    ) -> Dict:
+        """
+        모든 잠재변수 간 경로를 추정 (20개)
+
+        각 잠재변수를 종속변수로 하는 5개 모델을 순차적으로 추정하여
+        5×4 = 20개의 방향성 경로를 모두 확인합니다.
+
+        Args:
+            data: 분석 데이터
+            measurement_model: 측정모델
+            latent_variables: 잠재변수 리스트 (None이면 자동 감지)
+            save_path: 결과 저장 경로 (None이면 저장 안 함)
+
+        Returns:
+            {
+                'all_paths': DataFrame,  # 20개 경로 전체
+                'models': Dict,  # 각 모델별 상세 결과
+                'summary': DataFrame  # 요약 통계
+            }
+        """
+        if latent_variables is None:
+            latent_variables = list(self.config.measurement_configs.keys())
+
+        self.logger.info(f"\n{'='*70}")
+        self.logger.info(f"모든 경로 추정 시작: {len(latent_variables)}개 잠재변수")
+        self.logger.info(f"총 {len(latent_variables) * (len(latent_variables) - 1)}개 경로 추정")
+        self.logger.info(f"{'='*70}")
+
+        all_paths_list = []
+        models_results = {}
+
+        # 각 잠재변수를 종속변수로 하는 모델 추정
+        for i, target_lv in enumerate(latent_variables, 1):
+            self.logger.info(f"\n[모델 {i}/{len(latent_variables)}] 종속변수: {target_lv}")
+
+            # 예측변수: 종속변수를 제외한 나머지
+            predictor_lvs = [lv for lv in latent_variables if lv != target_lv]
+
+            # 구조모델 설정 생성
+            from .multi_latent_config import MultiLatentStructuralConfig
+            structural_config = MultiLatentStructuralConfig(
+                endogenous_lv=target_lv,
+                exogenous_lvs=predictor_lvs,
+                covariates=[],
+                error_variance=1.0,
+                fix_error_variance=True
+            )
+
+            # 구조모델 생성
+            from .multi_latent_structural import MultiLatentStructural
+            structural_model = MultiLatentStructural(structural_config)
+
+            # SEM 추정
+            sem_results = self._estimate_sem_model(
+                data, measurement_model, structural_model
+            )
+
+            # 경로계수 추출
+            if 'paths' in sem_results and sem_results['paths'] is not None:
+                paths_df = sem_results['paths']
+                # 종속변수 정보 추가
+                paths_df['target_lv'] = target_lv
+                all_paths_list.append(paths_df)
+
+                self.logger.info(f"  추정된 경로: {len(paths_df)}개")
+                for _, row in paths_df.iterrows():
+                    sig = "***" if row['p-value'] < 0.001 else "**" if row['p-value'] < 0.01 else "*" if row['p-value'] < 0.05 else ""
+                    self.logger.info(f"    {row['rval']} → {target_lv}: {row['Estimate']:.4f} (p={row['p-value']:.4f}) {sig}")
+
+            # 모델 결과 저장
+            models_results[target_lv] = {
+                'paths': sem_results.get('paths'),
+                'fit_indices': sem_results.get('fit_indices'),
+                'log_likelihood': sem_results.get('log_likelihood')
+            }
+
+        # 모든 경로 통합
+        if all_paths_list:
+            all_paths_df = pd.concat(all_paths_list, ignore_index=True)
+            # 열 순서 조정
+            cols = ['target_lv', 'rval', 'Estimate', 'Est. Std', 'Std. Err', 'z-value', 'p-value']
+            all_paths_df = all_paths_df[cols]
+            all_paths_df.columns = ['target', 'predictor', 'Estimate', 'Est. Std', 'Std. Err', 'z-value', 'p-value']
+        else:
+            all_paths_df = pd.DataFrame()
+
+        # 요약 통계
+        if not all_paths_df.empty:
+            summary_df = all_paths_df.groupby('target').agg({
+                'Estimate': ['count', 'mean', 'std'],
+                'p-value': lambda x: (x < 0.05).sum()
+            }).reset_index()
+            summary_df.columns = ['target', 'n_paths', 'mean_estimate', 'std_estimate', 'n_significant']
+        else:
+            summary_df = pd.DataFrame()
+
+        results = {
+            'all_paths': all_paths_df,
+            'models': models_results,
+            'summary': summary_df
+        }
+
+        # 결과 저장
+        if save_path:
+            save_path = Path(save_path)
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # CSV 저장
+            base_path = save_path.with_suffix('')
+            all_paths_csv = f"{base_path}_all_20_paths.csv"
+            all_paths_df.to_csv(all_paths_csv, index=False, encoding='utf-8-sig')
+            self.logger.info(f"\n모든 경로 저장: {all_paths_csv}")
+
+            summary_csv = f"{base_path}_summary.csv"
+            summary_df.to_csv(summary_csv, index=False, encoding='utf-8-sig')
+            self.logger.info(f"요약 통계 저장: {summary_csv}")
+
+        self.logger.info(f"\n{'='*70}")
+        self.logger.info(f"모든 경로 추정 완료!")
+        self.logger.info(f"  총 경로: {len(all_paths_df)}개")
+        self.logger.info(f"  유의한 경로 (p<0.05): {(all_paths_df['p-value'] < 0.05).sum()}개")
+        self.logger.info(f"{'='*70}")
+
+        return results
 
     def estimate_stage1_only(self,
                             data: pd.DataFrame,
@@ -169,17 +535,52 @@ class SequentialEstimator(BaseEstimator):
                 'full_results': sem_results
             }
 
-            # 반환 결과 구성
-            stage1_results = {
-                'sem_results': sem_results,
-                'factor_scores': self.factor_scores,
-                'paths': sem_results['paths'],
-                'loadings': sem_results['loadings'],
-                'fit_indices': sem_results['fit_indices'],
-                'log_likelihood': sem_results['log_likelihood'],
-                'measurement_results': self.measurement_results,
-                'structural_results': self.structural_results
-            }
+            # 수정지수 계산 (옵션)
+            calculate_mi = kwargs.get('calculate_modification_indices', False)
+            if calculate_mi:
+                self.logger.info("\n[수정지수 계산] 경로 추가 제안...")
+                try:
+                    mi_results = self._calculate_modification_indices(
+                        sem_results, measurement_model, structural_model, data
+                    )
+                    stage1_results_with_mi = {
+                        'sem_results': sem_results,
+                        'factor_scores': self.factor_scores,
+                        'paths': sem_results['paths'],
+                        'loadings': sem_results['loadings'],
+                        'fit_indices': sem_results['fit_indices'],
+                        'log_likelihood': sem_results['log_likelihood'],
+                        'measurement_results': self.measurement_results,
+                        'structural_results': self.structural_results,
+                        'modification_indices': mi_results  # 추가
+                    }
+                    stage1_results = stage1_results_with_mi
+                    self.logger.info(f"수정지수 계산 완료: {len(mi_results.get('suggestions', []))}개 제안")
+                except Exception as e:
+                    self.logger.warning(f"수정지수 계산 실패: {e}")
+                    # 반환 결과 구성 (MI 없이)
+                    stage1_results = {
+                        'sem_results': sem_results,
+                        'factor_scores': self.factor_scores,
+                        'paths': sem_results['paths'],
+                        'loadings': sem_results['loadings'],
+                        'fit_indices': sem_results['fit_indices'],
+                        'log_likelihood': sem_results['log_likelihood'],
+                        'measurement_results': self.measurement_results,
+                        'structural_results': self.structural_results
+                    }
+            else:
+                # 반환 결과 구성 (MI 없이)
+                stage1_results = {
+                    'sem_results': sem_results,
+                    'factor_scores': self.factor_scores,
+                    'paths': sem_results['paths'],
+                    'loadings': sem_results['loadings'],
+                    'fit_indices': sem_results['fit_indices'],
+                    'log_likelihood': sem_results['log_likelihood'],
+                    'measurement_results': self.measurement_results,
+                    'structural_results': self.structural_results
+                }
 
             # 파일 저장 (옵션)
             if save_path:
@@ -437,14 +838,14 @@ class SequentialEstimator(BaseEstimator):
         """
         self.logger.info("SEMEstimator를 사용한 통합 추정 시작")
 
-        # SEMEstimator 생성
-        sem_estimator = SEMEstimator()
+        # SEMEstimator 생성 (인스턴스 변수로 저장)
+        self.sem_estimator = SEMEstimator()
 
         # SEM 추정 실행
-        results = sem_estimator.fit(data, measurement_model, structural_model)
+        results = self.sem_estimator.fit(data, measurement_model, structural_model)
 
         # 요약 출력
-        summary = sem_estimator.get_model_summary(measurement_model, structural_model)
+        summary = self.sem_estimator.get_model_summary(measurement_model, structural_model)
         self.logger.info(f"\n{summary}")
 
         return results
@@ -1023,6 +1424,48 @@ class SequentialEstimator(BaseEstimator):
         logger.info(f"  - 변수: {list(factor_scores.keys())}")
 
         return str(path)
+
+    def _calculate_modification_indices(
+        self,
+        sem_results: Dict,
+        measurement_model,
+        structural_model,
+        data: pd.DataFrame
+    ) -> Dict:
+        """
+        수정지수 계산 및 경로 추가 제안
+
+        Args:
+            sem_results: SEM 추정 결과
+            measurement_model: 측정모델
+            structural_model: 구조모델
+            data: 데이터프레임
+
+        Returns:
+            수정지수 결과 딕셔너리
+        """
+        # 잠재변수 목록
+        latent_vars = list(measurement_model.configs.keys())
+
+        # 기존 경로 추출
+        paths_df = sem_results['paths']
+        existing_paths = [(row['rval'], row['lval']) for _, row in paths_df.iterrows()]
+
+        # 수정지수 계산기 생성
+        mi_calculator = ModificationIndices(
+            model=self.sem_estimator.model,
+            data=data
+        )
+
+        # 경로 제안
+        suggestions = mi_calculator.suggest_paths(
+            latent_vars=latent_vars,
+            existing_paths=existing_paths,
+            max_suggestions=5,
+            min_mi=3.84
+        )
+
+        return suggestions
 
     @staticmethod
     def load_factor_scores(path: str) -> Dict[str, np.ndarray]:

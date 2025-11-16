@@ -77,6 +77,124 @@ class SEMEstimator:
         
         logger.info("SEMEstimator 초기화 완료")
     
+    def fit_cfa_only(self, data: pd.DataFrame,
+                    measurement_model: MultiLatentMeasurement) -> Dict[str, Any]:
+        """
+        CFA만 실행하여 잠재변수 간 상관관계 추출
+
+        구조모델 없이 측정모델만 추정하여 잠재변수 간 상관관계를 확인합니다.
+        이후 유의한 상관관계를 바탕으로 구조모델을 설정할 수 있습니다.
+
+        Args:
+            data: 분석 데이터
+            measurement_model: 다중 잠재변수 측정모델
+
+        Returns:
+            {
+                'model': semopy Model 객체,
+                'factor_scores': Dict[str, np.ndarray],  # 요인점수
+                'params': pd.DataFrame,  # 모든 파라미터
+                'loadings': pd.DataFrame,  # 요인적재량
+                'correlations': pd.DataFrame,  # 잠재변수 간 상관관계 (~~)
+                'fit_indices': Dict[str, float],  # 적합도 지수
+                'log_likelihood': float
+            }
+        """
+        logger.info("CFA 전용 추정 시작 (구조모델 없음)")
+
+        # 0. 개인별 unique 데이터 추출
+        individual_col = 'respondent_id'
+        if individual_col not in data.columns:
+            individual_col = 'id' if 'id' in data.columns else data.columns[0]
+
+        all_indicators = []
+        for config in measurement_model.configs.values():
+            all_indicators.extend(config.indicators)
+
+        unique_data = data.groupby(individual_col)[all_indicators].first().reset_index()
+        logger.info(f"원본 데이터: {len(data)}행 → 개인별 unique 데이터: {len(unique_data)}행")
+
+        # 1. CFA 모델 스펙 생성 (측정모델만)
+        model_spec = self._create_cfa_spec(measurement_model)
+        logger.info(f"CFA 모델 스펙 생성 완료:\n{model_spec}")
+
+        # 2. SemopyAnalyzer로 CFA 추정
+        results = self.analyzer.fit_model(unique_data, model_spec)
+
+        # 3. 모델 객체 저장
+        self.model = self.analyzer.model
+        self.fitted = True
+
+        # 4. 요인점수 추출
+        factor_scores = self._extract_factor_scores(unique_data, measurement_model)
+
+        # 5. 파라미터 추출
+        params = self.model.inspect(std_est=True)
+
+        # 잠재변수 목록
+        latent_vars = list(measurement_model.configs.keys())
+
+        # 요인적재량
+        loadings = params[
+            (params['op'] == '~') &
+            (params['rval'].isin(latent_vars)) &
+            (~params['lval'].isin(latent_vars))
+        ].copy()
+
+        # 잠재변수 간 상관관계 (공분산)
+        correlations = params[
+            (params['op'] == '~~') &
+            (params['lval'].isin(latent_vars)) &
+            (params['rval'].isin(latent_vars)) &
+            (params['lval'] != params['rval'])  # 자기 자신 제외
+        ].copy()
+
+        logger.info(f"잠재변수 간 상관관계: {len(correlations)}개")
+
+        # 6. 적합도 지수
+        fit_indices = results.get('fit_indices', {})
+
+        # 7. 로그우도
+        log_likelihood = self._calculate_log_likelihood()
+
+        return {
+            'model': self.model,
+            'factor_scores': factor_scores,
+            'params': params,
+            'loadings': loadings,
+            'correlations': correlations,
+            'fit_indices': fit_indices,
+            'log_likelihood': log_likelihood
+        }
+
+    def _create_cfa_spec(self, measurement_model: MultiLatentMeasurement) -> str:
+        """
+        CFA 전용 모델 스펙 생성 (측정모델만)
+
+        Args:
+            measurement_model: 다중 잠재변수 측정모델
+
+        Returns:
+            semopy 모델 스펙 문자열
+
+        Example:
+            ```
+            # Measurement Model (CFA)
+            health_concern =~ q6 + q7 + q8 + q9 + q10 + q11
+            perceived_benefit =~ q12 + q13 + q14 + q15 + q16 + q17
+            purchase_intention =~ q18 + q19 + q20 + q21 + q22 + q23
+            ```
+        """
+        spec_lines = []
+        spec_lines.append("# Measurement Model (CFA)")
+
+        for lv_name, config in measurement_model.configs.items():
+            indicators = " + ".join(config.indicators)
+            spec_lines.append(f"{lv_name} =~ {indicators}")
+
+        model_spec = "\n".join(spec_lines)
+        return model_spec
+
     def fit(self, data: pd.DataFrame,
             measurement_model: MultiLatentMeasurement,
             structural_model: MultiLatentStructural) -> Dict[str, Any]:
