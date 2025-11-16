@@ -15,9 +15,11 @@ ICLV 모델의 순차 추정 엔진입니다.
 
 import numpy as np
 import pandas as pd
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
 from scipy import optimize
 import logging
+import pickle
+from pathlib import Path
 
 from .base_estimator import BaseEstimator
 from .initializer import SequentialInitializer
@@ -66,6 +68,222 @@ class SequentialEstimator(BaseEstimator):
         self.choice_results = None
         self.factor_scores = None
     
+    # ========================================================================
+    # 단계별 실행 메서드 (Stage-wise Execution)
+    # ========================================================================
+
+    def estimate_stage1_only(self,
+                            data: pd.DataFrame,
+                            measurement_model,
+                            structural_model,
+                            save_path: Optional[str] = None,
+                            log_file: Optional[str] = None,
+                            **kwargs) -> Dict:
+        """
+        1단계만 실행: 측정모델 + 구조모델 통합 추정 (SEM)
+
+        잠재변수 간 관계를 확인하고 요인점수를 추출합니다.
+        결과를 파일로 저장하여 나중에 2단계에서 재사용할 수 있습니다.
+
+        Args:
+            data: 통합 데이터
+            measurement_model: 측정모델 객체 (MultiLatentMeasurement)
+            structural_model: 구조모델 객체 (MultiLatentStructural)
+            save_path: 결과 저장 경로 (None이면 저장 안 함)
+            log_file: 로그 파일 경로
+            **kwargs: 추가 인자
+
+        Returns:
+            {
+                'sem_results': Dict,  # SEM 전체 결과
+                'factor_scores': Dict[str, np.ndarray],  # 요인점수
+                'paths': pd.DataFrame,  # 잠재변수 간 경로계수
+                'loadings': pd.DataFrame,  # 요인적재량
+                'fit_indices': Dict[str, float],  # 적합도 지수
+                'log_likelihood': float,
+                'save_path': str  # 저장 경로 (저장한 경우)
+            }
+
+        Example:
+            >>> # 1단계 실행 및 저장
+            >>> results = estimator.estimate_stage1_only(
+            ...     data, measurement_model, structural_model,
+            ...     save_path='results/stage1_results.pkl'
+            ... )
+            >>> print(results['paths'])  # 잠재변수 간 관계 확인
+            >>>
+            >>> # 나중에 2단계 실행
+            >>> results2 = estimator.estimate_stage2_only(
+            ...     data, choice_model,
+            ...     factor_scores='results/stage1_results.pkl'
+            ... )
+        """
+        self.logger.info("="*70)
+        self.logger.info("1단계 추정 시작 (측정모델 + 구조모델)")
+        self.logger.info("="*70)
+
+        # 데이터 검증
+        self._validate_data(data)
+        self.data = data
+
+        # 로그 설정
+        if log_file:
+            self._setup_iteration_logger(log_file)
+
+        try:
+            # SEM 추정
+            self.logger.info("\n[SEM 추정] 측정모델 + 구조모델 통합...")
+            sem_results = self._estimate_sem_model(
+                data, measurement_model, structural_model
+            )
+            self.logger.info(
+                f"SEM 추정 완료: LL = {sem_results['log_likelihood']:.2f}"
+            )
+
+            # 요인점수 추출
+            self.factor_scores = sem_results['factor_scores']
+            self.logger.info(f"요인점수 추출 완료: {list(self.factor_scores.keys())}")
+
+            # 요인점수 로깅 (표준화 전)
+            self._log_factor_scores(self.factor_scores, stage="SEM 추출 직후 (표준화 전)")
+
+            # 요인점수 Z-score 표준화
+            self.logger.info("\n요인점수 Z-score 표준화 적용...")
+            self.factor_scores = self._standardize_factor_scores(self.factor_scores)
+            self.logger.info("요인점수 표준화 완료")
+
+            # 표준화 후 로깅
+            self._log_factor_scores(self.factor_scores, stage="SEM 추출 직후 (표준화 후)")
+
+            # 결과 저장
+            self.measurement_results = {
+                'params': sem_results['loadings'],
+                'log_likelihood': sem_results['log_likelihood'],
+                'success': True,
+                'full_results': sem_results
+            }
+            self.structural_results = {
+                'params': sem_results['paths'],
+                'log_likelihood': sem_results['log_likelihood'],
+                'success': True,
+                'full_results': sem_results
+            }
+
+            # 반환 결과 구성
+            stage1_results = {
+                'sem_results': sem_results,
+                'factor_scores': self.factor_scores,
+                'paths': sem_results['paths'],
+                'loadings': sem_results['loadings'],
+                'fit_indices': sem_results['fit_indices'],
+                'log_likelihood': sem_results['log_likelihood'],
+                'measurement_results': self.measurement_results,
+                'structural_results': self.structural_results
+            }
+
+            # 파일 저장 (옵션)
+            if save_path:
+                saved_path = self.save_stage1_results(stage1_results, save_path)
+                stage1_results['save_path'] = saved_path
+                self.logger.info(f"\n✅ 1단계 결과 저장 완료: {saved_path}")
+
+            self.logger.info("\n" + "="*70)
+            self.logger.info("1단계 추정 완료!")
+            self.logger.info("="*70)
+
+            return stage1_results
+
+        finally:
+            if log_file:
+                self._close_iteration_logger()
+
+    def estimate_stage2_only(self,
+                            data: pd.DataFrame,
+                            choice_model,
+                            factor_scores: Union[Dict[str, np.ndarray], str],
+                            log_file: Optional[str] = None,
+                            **kwargs) -> Dict:
+        """
+        2단계만 실행: 선택모델 추정
+
+        1단계에서 추출한 요인점수를 사용하여 선택모델을 추정합니다.
+        요인점수는 딕셔너리 또는 파일 경로로 제공할 수 있습니다.
+
+        Args:
+            data: 통합 데이터
+            choice_model: 선택모델 객체 (MultinomialLogitChoice)
+            factor_scores: 요인점수 딕셔너리 또는 1단계 결과 파일 경로
+            log_file: 로그 파일 경로
+            **kwargs: 추가 인자
+
+        Returns:
+            {
+                'params': Dict,  # 선택모델 파라미터
+                'log_likelihood': float,
+                'aic': float,
+                'bic': float,
+                'parameter_statistics': pd.DataFrame,
+                'success': bool
+            }
+
+        Example:
+            >>> # 방법 1: 메모리에서 직접 전달
+            >>> results1 = estimator.estimate_stage1_only(...)
+            >>> results2 = estimator.estimate_stage2_only(
+            ...     data, choice_model, results1['factor_scores']
+            ... )
+            >>>
+            >>> # 방법 2: 파일에서 로드
+            >>> results2 = estimator.estimate_stage2_only(
+            ...     data, choice_model,
+            ...     factor_scores='results/stage1_results.pkl'
+            ... )
+        """
+        self.logger.info("="*70)
+        self.logger.info("2단계 추정 시작 (선택모델)")
+        self.logger.info("="*70)
+
+        # 데이터 검증
+        self._validate_data(data)
+        self.data = data
+
+        # 로그 설정
+        if log_file:
+            self._setup_iteration_logger(log_file)
+
+        try:
+            # 요인점수 로드 (파일 경로인 경우)
+            if isinstance(factor_scores, str):
+                self.logger.info(f"\n요인점수 로드 중: {factor_scores}")
+                loaded_results = self.load_stage1_results(factor_scores)
+                self.factor_scores = loaded_results['factor_scores']
+                self.logger.info(f"요인점수 로드 완료: {list(self.factor_scores.keys())}")
+            else:
+                self.factor_scores = factor_scores
+                self.logger.info(f"요인점수 전달 완료: {list(self.factor_scores.keys())}")
+
+            # 요인점수 로깅
+            self._log_factor_scores(self.factor_scores, stage="선택모델 전달 직전")
+
+            # 선택모델 추정
+            self.logger.info("\n[선택모델 추정] 시작...")
+            self.choice_results = self._estimate_choice(
+                data, choice_model, self.factor_scores
+            )
+            self.logger.info(
+                f"선택모델 추정 완료: LL = {self.choice_results['log_likelihood']:.2f}"
+            )
+
+            self.logger.info("\n" + "="*70)
+            self.logger.info("2단계 추정 완료!")
+            self.logger.info("="*70)
+
+            return self.choice_results
+
+        finally:
+            if log_file:
+                self._close_iteration_logger()
+
     def estimate(self, data: pd.DataFrame,
                 measurement_model,
                 structural_model,
@@ -73,8 +291,8 @@ class SequentialEstimator(BaseEstimator):
                 log_file: Optional[str] = None,
                 **kwargs) -> Dict:
         """
-        ICLV 모델 순차 추정
-        
+        ICLV 모델 순차 추정 (전체: 1단계 + 2단계)
+
         Args:
             data: 통합 데이터
             measurement_model: 측정모델 객체
@@ -82,18 +300,18 @@ class SequentialEstimator(BaseEstimator):
             choice_model: 선택모델 객체
             log_file: 로그 파일 경로
             **kwargs: 추가 인자
-        
+
         Returns:
             추정 결과 딕셔너리
         """
         self.logger.info("="*70)
-        self.logger.info("ICLV 모델 순차 추정 시작")
+        self.logger.info("ICLV 모델 순차 추정 시작 (전체)")
         self.logger.info("="*70)
-        
+
         # 데이터 검증
         self._validate_data(data)
         self.data = data
-        
+
         # 로그 설정
         if log_file:
             self._setup_iteration_logger(log_file)
@@ -618,4 +836,225 @@ class SequentialEstimator(BaseEstimator):
         # 디스크 공간 절약을 위해 파일 저장 비활성화
 
         self.logger.info("=" * 70)
+
+    # ========================================================================
+    # 결과 저장/로드 메서드 (Save/Load Methods)
+    # ========================================================================
+
+    @staticmethod
+    def save_stage1_results(results: Dict, path: str) -> str:
+        """
+        1단계 결과를 파일로 저장
+
+        요인점수와 SEM 결과를 pickle 형식으로 저장하고,
+        경로계수, 요인적재량, 적합도 지수를 CSV로도 저장합니다.
+
+        Args:
+            results: estimate_stage1_only()의 반환값
+            path: 저장 경로 (.pkl 확장자 권장)
+
+        Returns:
+            실제 저장된 파일 경로
+
+        Example:
+            >>> results = estimator.estimate_stage1_only(...)
+            >>> saved_path = SequentialEstimator.save_stage1_results(
+            ...     results, 'results/stage1_results.pkl'
+            ... )
+        """
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        # 저장할 데이터 구성 (pickle 가능한 데이터만)
+        save_data = {
+            'factor_scores': results['factor_scores'],
+            'paths': results['paths'],
+            'loadings': results['loadings'],
+            'fit_indices': results['fit_indices'],
+            'log_likelihood': results['log_likelihood'],
+            'version': '1.0'  # 버전 정보
+        }
+
+        # measurement_results와 structural_results에서 pickle 가능한 부분만 추출
+        if 'measurement_results' in results and results['measurement_results']:
+            save_data['measurement_results'] = {
+                'params': results['measurement_results'].get('params'),
+                'log_likelihood': results['measurement_results'].get('log_likelihood'),
+                'success': results['measurement_results'].get('success')
+            }
+
+        if 'structural_results' in results and results['structural_results']:
+            save_data['structural_results'] = {
+                'params': results['structural_results'].get('params'),
+                'log_likelihood': results['structural_results'].get('log_likelihood'),
+                'success': results['structural_results'].get('success')
+            }
+
+        # 1. pickle로 저장 (요인점수 포함)
+        with open(path, 'wb') as f:
+            pickle.dump(save_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        logger.info(f"1단계 결과 저장 완료 (pickle): {path}")
+        logger.info(f"  - 요인점수: {list(save_data['factor_scores'].keys())}")
+        logger.info(f"  - 파일 크기: {path.stat().st_size / 1024:.2f} KB")
+
+        # 2. CSV 파일로도 저장
+        base_path = path.with_suffix('')  # 확장자 제거
+
+        # 2-1. 경로계수 저장
+        if 'paths' in results and results['paths'] is not None:
+            paths_csv = f"{base_path}_paths.csv"
+            results['paths'].to_csv(paths_csv, index=False, encoding='utf-8-sig')
+            logger.info(f"경로계수 저장: {paths_csv}")
+
+        # 2-2. 요인적재량 저장
+        if 'loadings' in results and results['loadings'] is not None:
+            loadings_csv = f"{base_path}_loadings.csv"
+            results['loadings'].to_csv(loadings_csv, index=False, encoding='utf-8-sig')
+            logger.info(f"요인적재량 저장: {loadings_csv}")
+
+        # 2-3. 적합도 지수 저장
+        if 'fit_indices' in results and results['fit_indices']:
+            fit_csv = f"{base_path}_fit_indices.csv"
+            fit_df = pd.DataFrame([results['fit_indices']])
+            fit_df.to_csv(fit_csv, index=False, encoding='utf-8-sig')
+            logger.info(f"적합도 지수 저장: {fit_csv}")
+
+        # 2-4. 요인점수 통계 저장
+        if 'factor_scores' in results and results['factor_scores']:
+            factor_stats_csv = f"{base_path}_factor_scores_stats.csv"
+            stats_list = []
+            for lv_name, scores in results['factor_scores'].items():
+                stats_list.append({
+                    'latent_variable': lv_name,
+                    'mean': np.mean(scores),
+                    'std': np.std(scores),
+                    'min': np.min(scores),
+                    'max': np.max(scores),
+                    'n_observations': len(scores)
+                })
+            stats_df = pd.DataFrame(stats_list)
+            stats_df.to_csv(factor_stats_csv, index=False, encoding='utf-8-sig')
+            logger.info(f"요인점수 통계 저장: {factor_stats_csv}")
+
+        # 2-5. 요인점수 전체 저장 (개인별)
+        if 'factor_scores' in results and results['factor_scores']:
+            factor_scores_csv = f"{base_path}_factor_scores.csv"
+            # 딕셔너리를 DataFrame으로 변환
+            factor_scores_df = pd.DataFrame(results['factor_scores'])
+            factor_scores_df.to_csv(factor_scores_csv, index=True, index_label='observation_id', encoding='utf-8-sig')
+            logger.info(f"요인점수 전체 저장: {factor_scores_csv}")
+
+        return str(path)
+
+    @staticmethod
+    def load_stage1_results(path: str) -> Dict:
+        """
+        1단계 결과를 파일에서 로드
+
+        Args:
+            path: 저장된 파일 경로
+
+        Returns:
+            {
+                'factor_scores': Dict[str, np.ndarray],
+                'paths': pd.DataFrame,
+                'loadings': pd.DataFrame,
+                'fit_indices': Dict,
+                'log_likelihood': float,
+                'measurement_results': Dict,
+                'structural_results': Dict
+            }
+
+        Example:
+            >>> results = SequentialEstimator.load_stage1_results(
+            ...     'results/stage1_results.pkl'
+            ... )
+            >>> factor_scores = results['factor_scores']
+        """
+        path = Path(path)
+
+        if not path.exists():
+            raise FileNotFoundError(f"파일을 찾을 수 없습니다: {path}")
+
+        # pickle로 로드
+        with open(path, 'rb') as f:
+            results = pickle.load(f)
+
+        logger.info(f"1단계 결과 로드 완료: {path}")
+        logger.info(f"  - 요인점수: {list(results['factor_scores'].keys())}")
+        logger.info(f"  - 버전: {results.get('version', 'unknown')}")
+
+        return results
+
+    @staticmethod
+    def save_factor_scores(factor_scores: Dict[str, np.ndarray], path: str) -> str:
+        """
+        요인점수만 별도로 저장 (경량 버전)
+
+        Args:
+            factor_scores: 요인점수 딕셔너리
+            path: 저장 경로 (.npy 또는 .pkl)
+
+        Returns:
+            실제 저장된 파일 경로
+
+        Example:
+            >>> SequentialEstimator.save_factor_scores(
+            ...     factor_scores, 'results/factor_scores.pkl'
+            ... )
+        """
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        if path.suffix == '.npy':
+            # numpy 형식 (단일 배열로 변환 필요)
+            # 다중 잠재변수는 pickle 사용 권장
+            raise ValueError(
+                ".npy 형식은 단일 배열만 지원합니다. "
+                ".pkl 확장자를 사용하세요."
+            )
+        else:
+            # pickle 형식
+            with open(path, 'wb') as f:
+                pickle.dump(factor_scores, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        logger.info(f"요인점수 저장 완료: {path}")
+        logger.info(f"  - 변수: {list(factor_scores.keys())}")
+
+        return str(path)
+
+    @staticmethod
+    def load_factor_scores(path: str) -> Dict[str, np.ndarray]:
+        """
+        요인점수만 별도로 로드
+
+        Args:
+            path: 저장된 파일 경로
+
+        Returns:
+            요인점수 딕셔너리
+
+        Example:
+            >>> factor_scores = SequentialEstimator.load_factor_scores(
+            ...     'results/factor_scores.pkl'
+            ... )
+        """
+        path = Path(path)
+
+        if not path.exists():
+            raise FileNotFoundError(f"파일을 찾을 수 없습니다: {path}")
+
+        if path.suffix == '.npy':
+            # numpy 형식
+            factor_scores = np.load(path, allow_pickle=True).item()
+        else:
+            # pickle 형식
+            with open(path, 'rb') as f:
+                factor_scores = pickle.load(f)
+
+        logger.info(f"요인점수 로드 완료: {path}")
+        logger.info(f"  - 변수: {list(factor_scores.keys())}")
+
+        return factor_scores
 
