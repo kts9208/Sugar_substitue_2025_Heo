@@ -58,52 +58,71 @@ def main():
     # 3. 설정 생성
     print("\n[3] 모델 설정 중...")
 
-    # 선택모델 설정
+    # 선택모델 설정: Base Model + PI 주효과만
     choice_config = ChoiceConfig(
         choice_attributes=['sugar_free', 'health_label', 'price'],
         choice_type='multinomial',
-        all_lvs_as_main=True,  # 모든 잠재변수를 주효과로 사용
-        main_lvs=['health_concern', 'perceived_benefit', 'perceived_price',
-                  'nutrition_knowledge', 'purchase_intention'],
-        # ✅ LV-Attribute 상호작용 추가
-        lv_attribute_interactions=[
-            {'lv': 'purchase_intention', 'attribute': 'price'},  # PI × price
-            {'lv': 'purchase_intention', 'attribute': 'health_label'},  # PI × health_label
-            {'lv': 'nutrition_knowledge', 'attribute': 'health_label'}  # NK × health_label
-        ]
+        all_lvs_as_main=True,  # ✅ True로 설정해야 main_lvs가 작동함
+        main_lvs=['purchase_intention'],  # ✅ PI 주효과만 포함
+        lv_attribute_interactions=[]  # ✅ 상호작용 없음
     )
     print("✅ 설정 완료")
-    print("   - LV 주효과: 5개 (HC, PB, PP, NK, PI)")
-    print("   - LV-Attribute 상호작용: 3개")
-    print("     * PI × price")
-    print("     * PI × health_label")
-    print("     * NK × health_label")
+    print("   - 모델 유형: Base Model + PI 주효과")
+    print("   - 속성변수: sugar_free, health_label, price")
+    print("   - LV 주효과: 1개 (PI만)")
+    print("   - LV-Attribute 상호작용: 없음")
 
     # 4. 선택모델 생성
     print("\n[4] 선택모델 생성 중...")
     choice_model = MultinomialLogitChoice(choice_config)
 
     # MultiLatentConfig는 SequentialEstimator 생성용 (간단한 더미 설정)
-    from src.analysis.hybrid_choice_model.iclv_models.multi_latent_measurement import MultiLatentMeasurement, MeasurementConfig
+    from src.analysis.hybrid_choice_model.iclv_models.multi_latent_measurement import MultiLatentMeasurement
+    from src.analysis.hybrid_choice_model.iclv_models.iclv_config import MeasurementConfig  # ✅ 올바른 import
     from src.analysis.hybrid_choice_model.iclv_models.multi_latent_structural import MultiLatentStructural
+    from src.analysis.hybrid_choice_model.iclv_models.multi_latent_config import MultiLatentStructuralConfig
 
     # 더미 측정모델 설정
     measurement_configs = {
-        'health_concern': MeasurementConfig(indicators=['q6', 'q7', 'q8', 'q9', 'q10', 'q11'], n_categories=5),
-        'perceived_benefit': MeasurementConfig(indicators=['q12', 'q13', 'q14', 'q15', 'q16', 'q17'], n_categories=5),
-        'perceived_price': MeasurementConfig(indicators=['q27', 'q28', 'q29'], n_categories=5),
-        'nutrition_knowledge': MeasurementConfig(indicators=['q30', 'q31', 'q32', 'q33', 'q34', 'q35', 'q36', 'q37', 'q38', 'q39', 'q40', 'q41', 'q42', 'q43', 'q44', 'q45', 'q46', 'q47', 'q48', 'q49'], n_categories=5),
-        'purchase_intention': MeasurementConfig(indicators=['q18', 'q19', 'q20'], n_categories=5)
+        'health_concern': MeasurementConfig(
+            latent_variable='health_concern',
+            indicators=['q6', 'q7', 'q8', 'q9', 'q10', 'q11'],
+            n_categories=5
+        ),
+        'perceived_benefit': MeasurementConfig(
+            latent_variable='perceived_benefit',
+            indicators=['q12', 'q13', 'q14', 'q15', 'q16', 'q17'],
+            n_categories=5
+        ),
+        'perceived_price': MeasurementConfig(
+            latent_variable='perceived_price',
+            indicators=['q27', 'q28', 'q29'],
+            n_categories=5
+        ),
+        'nutrition_knowledge': MeasurementConfig(
+            latent_variable='nutrition_knowledge',
+            indicators=['q30', 'q31', 'q32', 'q33', 'q34', 'q35', 'q36', 'q37', 'q38', 'q39', 'q40', 'q41', 'q42', 'q43', 'q44', 'q45', 'q46', 'q47', 'q48', 'q49'],
+            n_categories=5
+        ),
+        'purchase_intention': MeasurementConfig(
+            latent_variable='purchase_intention',
+            indicators=['q18', 'q19', 'q20'],
+            n_categories=5
+        )
     }
     measurement_model = MultiLatentMeasurement(measurement_configs)
 
     # 더미 구조모델 설정
-    structural_model = MultiLatentStructural(
+    structural_config = MultiLatentStructuralConfig(
+        endogenous_lv='purchase_intention',
+        exogenous_lvs=['health_concern', 'perceived_price', 'nutrition_knowledge'],
+        covariates=[],
         hierarchical_paths=[
             {'target': 'perceived_benefit', 'predictors': ['health_concern', 'perceived_price', 'nutrition_knowledge']},
             {'target': 'purchase_intention', 'predictors': ['health_concern', 'perceived_benefit', 'perceived_price', 'nutrition_knowledge']}
         ]
     )
+    structural_model = MultiLatentStructural(structural_config)
 
     config = MultiLatentConfig(
         measurement_configs=measurement_configs,
@@ -136,8 +155,20 @@ def main():
     print(f"\n[로그우도] {stage2_results['log_likelihood']:.2f}")
     print(f"[AIC] {stage2_results.get('aic', 'N/A')}")
     print(f"[BIC] {stage2_results.get('bic', 'N/A')}")
-    
+
+    # ✅ 디버깅: 모든 파라미터 키 출력
+    print("\n[DEBUG] 추정된 모든 파라미터 키:")
+    print(f"  {list(stage2_results['params'].keys())}")
+
     print("\n[선택모델 파라미터]")
+    print("\n  <ASC (대안별 상수)>")
+    for param_name, param_value in stage2_results['params'].items():
+        if param_name.startswith('asc'):
+            if isinstance(param_value, np.ndarray):
+                print(f"    {param_name}: {param_value}")
+            else:
+                print(f"    {param_name}: {param_value:.4f}")
+
     print("\n  <속성 계수 (beta)>")
     for param_name, param_value in stage2_results['params'].items():
         if param_name.startswith('beta'):
@@ -146,9 +177,9 @@ def main():
             else:
                 print(f"    {param_name}: {param_value:.4f}")
 
-    print("\n  <잠재변수 주효과 (lambda)>")
+    print("\n  <잠재변수 주효과 (theta/lambda)>")
     for param_name, param_value in stage2_results['params'].items():
-        if param_name.startswith('lambda'):
+        if param_name.startswith('lambda') or param_name.startswith('theta'):
             if isinstance(param_value, np.ndarray):
                 print(f"    {param_name}: {param_value}")
             else:
