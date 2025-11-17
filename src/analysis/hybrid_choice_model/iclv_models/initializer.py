@@ -163,38 +163,74 @@ class SimultaneousInitializer(BaseInitializer):
         return params
 
     def _initialize_choice(self, choice_model) -> List[float]:
-        """선택모델 초기값"""
+        """
+        선택모델 초기값
+
+        ✅ 순차추정과 동일한 파라미터 구조:
+        - ASC (Alternative Specific Constants): asc_sugar=0.5, asc_sugar_free=0.5
+        - Beta (속성 계수): beta_health_label=0.0, beta_price=-1.0
+        - Theta (대안별 LV 계수): theta_sugar_*=0.5, theta_sugar_free_*=0.5
+        - Gamma (대안별 상호작용): gamma_sugar_*=0.1, gamma_sugar_free_*=0.1
+        """
         params = []
 
-        # intercept
-        params.append(0.0)
+        # ✅ 대안별 모델 (Multinomial Logit with ASC)
+        if hasattr(choice_model, 'n_alternatives') and choice_model.n_alternatives == 3:
+            # ASC (Alternative Specific Constants)
+            params.append(0.5)  # asc_sugar
+            params.append(0.5)  # asc_sugar_free
 
-        # beta (선택 속성 계수)
-        n_attrs = len(choice_model.choice_attributes)
-        params.extend([0.0] * n_attrs)
+            # Beta (속성 계수) - sugar_free 제외
+            for attr in choice_model.choice_attributes:
+                if attr != 'sugar_free':
+                    if 'price' in attr.lower():
+                        params.append(-1.0)  # 가격은 음수
+                    else:
+                        params.append(0.0)   # 기타 속성
 
-        # ✅ 모든 LV 주효과 모델인 경우
-        if hasattr(choice_model, 'all_lvs_as_main') and choice_model.all_lvs_as_main:
-            # lambda_i (각 LV별 주효과)
-            if hasattr(choice_model, 'main_lvs') and choice_model.main_lvs:
-                params.extend([1.0] * len(choice_model.main_lvs))
+            # Theta (대안별 잠재변수 계수)
+            if hasattr(choice_model, 'all_lvs_as_main') and choice_model.all_lvs_as_main:
+                if hasattr(choice_model, 'main_lvs') and choice_model.main_lvs:
+                    for _ in choice_model.main_lvs:
+                        params.append(0.5)  # theta_sugar_*
+                        params.append(0.5)  # theta_sugar_free_*
 
-            # ✅ LV-Attribute 상호작용 초기값
+            # Gamma (대안별 LV-Attribute 상호작용)
             if hasattr(choice_model, 'lv_attribute_interactions') and choice_model.lv_attribute_interactions:
-                # gamma (상호작용 계수): 0.0으로 초기화 (주효과보다 작게)
-                params.extend([0.0] * len(choice_model.lv_attribute_interactions))
+                for _ in choice_model.lv_attribute_interactions:
+                    params.append(0.1)  # gamma_sugar_*
+                    params.append(0.1)  # gamma_sugar_free_*
 
-        # 조절효과 모델인 경우 (하위 호환성)
-        elif hasattr(choice_model, 'moderation_enabled') and choice_model.moderation_enabled:
-            # lambda_main (주효과)
-            params.append(1.0)
-
-            # lambda_mod (조절효과)
-            if hasattr(choice_model, 'moderator_lvs'):
-                params.extend([0.5] * len(choice_model.moderator_lvs))
+        # ✅ Binary/기타 모델 (하위 호환)
         else:
-            # lambda (기본 모델)
-            params.append(1.0)
+            # intercept
+            params.append(0.0)
+
+            # beta (선택 속성 계수)
+            n_attrs = len(choice_model.choice_attributes)
+            params.extend([0.0] * n_attrs)
+
+            # 모든 LV 주효과 모델인 경우
+            if hasattr(choice_model, 'all_lvs_as_main') and choice_model.all_lvs_as_main:
+                # lambda_i (각 LV별 주효과)
+                if hasattr(choice_model, 'main_lvs') and choice_model.main_lvs:
+                    params.extend([1.0] * len(choice_model.main_lvs))
+
+                # LV-Attribute 상호작용 초기값
+                if hasattr(choice_model, 'lv_attribute_interactions') and choice_model.lv_attribute_interactions:
+                    params.extend([0.0] * len(choice_model.lv_attribute_interactions))
+
+            # 조절효과 모델인 경우 (하위 호환성)
+            elif hasattr(choice_model, 'moderation_enabled') and choice_model.moderation_enabled:
+                # lambda_main (주효과)
+                params.append(1.0)
+
+                # lambda_mod (조절효과)
+                if hasattr(choice_model, 'moderator_lvs'):
+                    params.extend([0.5] * len(choice_model.moderator_lvs))
+            else:
+                # lambda (기본 모델)
+                params.append(1.0)
 
         return params
 
@@ -247,33 +283,61 @@ class SimultaneousInitializer(BaseInitializer):
                     names.append(f'gamma_{var}')
 
         # 3. 선택모델 파라미터 이름
-        names.append('beta_intercept')
+        # ✅ 대안별 모델 (Multinomial Logit with ASC)
+        if hasattr(choice_model, 'n_alternatives') and choice_model.n_alternatives == 3:
+            # ASC
+            names.append('asc_sugar')
+            names.append('asc_sugar_free')
 
-        for attr in choice_model.choice_attributes:
-            names.append(f'beta_{attr}')
+            # Beta (sugar_free 제외)
+            for attr in choice_model.choice_attributes:
+                if attr != 'sugar_free':
+                    names.append(f'beta_{attr}')
 
-        # ✅ 모든 LV 주효과 모델인 경우
-        if hasattr(choice_model, 'all_lvs_as_main') and choice_model.all_lvs_as_main:
-            # lambda_i (각 LV별 주효과)
-            if hasattr(choice_model, 'main_lvs') and choice_model.main_lvs:
-                for lv_name in choice_model.main_lvs:
-                    names.append(f'lambda_{lv_name}')
+            # Theta (대안별 LV 계수)
+            if hasattr(choice_model, 'all_lvs_as_main') and choice_model.all_lvs_as_main:
+                if hasattr(choice_model, 'main_lvs') and choice_model.main_lvs:
+                    for lv_name in choice_model.main_lvs:
+                        names.append(f'theta_sugar_{lv_name}')
+                        names.append(f'theta_sugar_free_{lv_name}')
 
-            # ✅ LV-Attribute 상호작용 파라미터 이름
+            # Gamma (대안별 상호작용)
             if hasattr(choice_model, 'lv_attribute_interactions') and choice_model.lv_attribute_interactions:
                 for interaction in choice_model.lv_attribute_interactions:
                     lv_name = interaction['lv']
                     attr_name = interaction['attribute']
-                    names.append(f'gamma_{lv_name}_{attr_name}')
+                    names.append(f'gamma_sugar_{lv_name}_{attr_name}')
+                    names.append(f'gamma_sugar_free_{lv_name}_{attr_name}')
 
-        # 조절효과 모델인 경우 (하위 호환성)
-        elif hasattr(choice_model, 'moderation_enabled') and choice_model.moderation_enabled:
-            names.append('lambda_main')
-            if hasattr(choice_model, 'moderator_lvs'):
-                for mod_lv in choice_model.moderator_lvs:
-                    names.append(f'lambda_mod_{mod_lv}')
+        # ✅ Binary/기타 모델 (하위 호환)
         else:
-            names.append('lambda')
+            names.append('beta_intercept')
+
+            for attr in choice_model.choice_attributes:
+                names.append(f'beta_{attr}')
+
+            # 모든 LV 주효과 모델인 경우
+            if hasattr(choice_model, 'all_lvs_as_main') and choice_model.all_lvs_as_main:
+                # lambda_i (각 LV별 주효과)
+                if hasattr(choice_model, 'main_lvs') and choice_model.main_lvs:
+                    for lv_name in choice_model.main_lvs:
+                        names.append(f'lambda_{lv_name}')
+
+                # LV-Attribute 상호작용 파라미터 이름
+                if hasattr(choice_model, 'lv_attribute_interactions') and choice_model.lv_attribute_interactions:
+                    for interaction in choice_model.lv_attribute_interactions:
+                        lv_name = interaction['lv']
+                        attr_name = interaction['attribute']
+                        names.append(f'gamma_{lv_name}_{attr_name}')
+
+            # 조절효과 모델인 경우 (하위 호환성)
+            elif hasattr(choice_model, 'moderation_enabled') and choice_model.moderation_enabled:
+                names.append('lambda_main')
+                if hasattr(choice_model, 'moderator_lvs'):
+                    for mod_lv in choice_model.moderator_lvs:
+                        names.append(f'lambda_mod_{mod_lv}')
+            else:
+                names.append('lambda')
 
         return names
 

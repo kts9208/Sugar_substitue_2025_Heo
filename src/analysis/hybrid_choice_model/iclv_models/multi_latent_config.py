@@ -418,25 +418,28 @@ def create_sugar_substitute_multi_lv_config(
         )
 
     # 3. 선택모델 설정
-    # 3. 선택모델 설정 (유연한 리스트 기반)
+    # ✅ 순차추정과 동일한 설정: Multinomial Logit (3 alternatives)
     if choice_config_overrides:
         # ✅ 사용자 정의 설정 사용
         print(f"[DEBUG] choice_config_overrides 사용: {choice_config_overrides}")
 
         choice_config = ChoiceConfig(
             choice_attributes=['sugar_free', 'health_label', 'price'],
-            choice_type='binary',
+            choice_type='multinomial',  # ✅ binary → multinomial
+            n_alternatives=3,           # ✅ 3개 대안 (일반당, 무설탕, opt-out)
             price_variable='price',
             **choice_config_overrides
         )
 
         print(f"[DEBUG] 생성된 ChoiceConfig.main_lvs: {choice_config.main_lvs}")
         print(f"[DEBUG] 생성된 ChoiceConfig.lv_attribute_interactions: {choice_config.lv_attribute_interactions}")
+        print(f"[DEBUG] 생성된 ChoiceConfig.n_alternatives: {choice_config.n_alternatives}")
     else:
         # ✅ 디폴트: 모든 LV 주효과
         choice_config = ChoiceConfig(
             choice_attributes=['sugar_free', 'health_label', 'price'],
-            choice_type='binary',
+            choice_type='multinomial',  # ✅ binary → multinomial
+            n_alternatives=3,           # ✅ 3개 대안 (일반당, 무설탕, opt-out)
             price_variable='price',
             main_lvs=[
                 'health_concern',
@@ -450,14 +453,17 @@ def create_sugar_substitute_multi_lv_config(
 
     # 4. 추정 설정
     estimation_config = EstimationConfig(
-        optimizer='BFGS',
-        use_analytic_gradient=True,
+        optimizer=kwargs.get('optimizer', 'BFGS'),
+        use_analytic_gradient=kwargs.get('use_analytic_gradient', True),
         n_draws=n_draws,
         draw_type='halton',
         max_iterations=max_iterations,
         convergence_tolerance=1e-6,
         use_parallel=kwargs.get('use_parallel', False),
-        n_cores=kwargs.get('n_cores', None)
+        n_cores=kwargs.get('n_cores', None),
+        use_parameter_scaling=kwargs.get('use_parameter_scaling', True),  # ✅ 추가
+        calculate_se=kwargs.get('calculate_se', True),
+        gradient_log_level=kwargs.get('gradient_log_level', 'SUMMARY')
     )
 
     # 5. 전체 설정

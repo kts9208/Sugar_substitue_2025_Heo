@@ -1628,41 +1628,17 @@ class SimultaneousEstimator:
         """
         Parameter bounds for L-BFGS-B
 
+        ✅ ParameterManager에 위임 (단일 진실 공급원)
+        ✅ Optimizer 종류와 무관하게 동일한 로직 사용
+        ✅ 파라미터 구조 변경 시 ParameterManager만 수정
+
         Returns:
             bounds: [(lower, upper), ...] list
         """
-        bounds = []
-
-        # Measurement model parameters
-        # - Factor loadings (zeta): [0.1, 10]
-        n_indicators = len(self.config.measurement.indicators)
-        bounds.extend([(0.1, 10.0)] * n_indicators)
-
-        # - Thresholds (tau): [-10, 10]
-        n_thresholds = self.config.measurement.n_categories - 1
-        for _ in range(n_indicators):
-            bounds.extend([(-10.0, 10.0)] * n_thresholds)
-
-        # Structural model parameters (gamma): unbounded
-        n_sociodem = len(self.config.structural.sociodemographics)
-        bounds.extend([(None, None)] * n_sociodem)
-
-        # Choice model parameters
-        # - Intercept: unbounded
-        bounds.append((None, None))
-
-        # - Attribute coefficients (beta): unbounded
-        n_attributes = len(self.config.choice.choice_attributes)
-        bounds.extend([(None, None)] * n_attributes)
-
-        # - Latent variable coefficient (lambda): unbounded
-        bounds.append((None, None))
-
-        # - Sociodemographic coefficients: unbounded
-        if self.config.structural.include_in_choice:
-            bounds.extend([(None, None)] * n_sociodem)
-
-        return bounds
+        # ✅ ParameterManager에 완전히 위임
+        return self.param_manager.get_parameter_bounds(
+            measurement_model, structural_model, choice_model
+        )
 
     # ❌ 제거됨: _get_parameter_names
     # ✅ ParameterManager.get_parameter_names()를 사용하도록 변경
@@ -1805,7 +1781,17 @@ class SimultaneousEstimator:
                 }
 
                 # 선택모델 초기값 자동 생성
-                choice_initial = choice_model.get_initial_params()
+                # MultinomialLogitChoice는 data 인자 필요
+                if hasattr(choice_model, 'get_initial_params'):
+                    import inspect
+                    sig = inspect.signature(choice_model.get_initial_params)
+                    if 'data' in sig.parameters:
+                        choice_initial = choice_model.get_initial_params(data=self.data)
+                    else:
+                        choice_initial = choice_model.get_initial_params()
+                else:
+                    choice_initial = {}
+
                 partial_dict['choice'] = choice_initial
 
                 # 딕셔너리 → 배열 변환
@@ -1834,49 +1820,10 @@ class SimultaneousEstimator:
             self.logger.info(f"자동 초기 파라미터 생성 완료: {len(initial_values)}개")
 
         return initial_values
-    
 
-    
-    def _get_parameter_bounds(self, measurement_model,
-                              structural_model, choice_model) -> list:
-        """
-        Parameter bounds for L-BFGS-B
-        
-        Returns:
-            bounds: [(lower, upper), ...] list
-        """
-        bounds = []
-        
-        # Measurement model parameters
-        # - Factor loadings (zeta): [0.1, 10]
-        n_indicators = len(self.config.measurement.indicators)
-        bounds.extend([(0.1, 10.0)] * n_indicators)
-        
-        # - Thresholds (tau): [-10, 10]
-        n_thresholds = self.config.measurement.n_categories - 1
-        for _ in range(n_indicators):
-            bounds.extend([(-10.0, 10.0)] * n_thresholds)
-        
-        # Structural model parameters (gamma): unbounded
-        n_sociodem = len(self.config.structural.sociodemographics)
-        bounds.extend([(None, None)] * n_sociodem)
-        
-        # Choice model parameters
-        # - Intercept: unbounded
-        bounds.append((None, None))
-        
-        # - Attribute coefficients (beta): unbounded
-        n_attributes = len(self.config.choice.choice_attributes)
-        bounds.extend([(None, None)] * n_attributes)
-        
-        # - Latent variable coefficient (lambda): unbounded
-        bounds.append((None, None))
-        
-        # - Sociodemographic coefficients: unbounded
-        if self.config.structural.include_in_choice:
-            bounds.extend([(None, None)] * n_sociodem)
-        
-        return bounds
+
+
+    # ❌ 중복 함수 제거됨 - 위의 _get_parameter_bounds() 사용
     def _unpack_parameters(self, params: np.ndarray,
                           measurement_model,
                           structural_model,

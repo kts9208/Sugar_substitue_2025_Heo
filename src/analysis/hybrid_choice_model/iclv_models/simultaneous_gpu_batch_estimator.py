@@ -259,15 +259,26 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
         # 선택모델 파라미터
         self.iteration_logger.info("\n[선택모델 파라미터]")
         choice_params = param_dict['choice']
-        self.iteration_logger.info(f"  intercept: {choice_params['intercept']:.6f}")
+
+        # ✅ 대안별 모델 (ASC) 또는 Binary 모델 (intercept)
+        if 'asc_sugar' in choice_params:
+            # Multinomial Logit with ASC
+            self.iteration_logger.info(f"  asc_sugar: {choice_params['asc_sugar']:.6f}")
+            self.iteration_logger.info(f"  asc_sugar_free: {choice_params['asc_sugar_free']:.6f}")
+        elif 'intercept' in choice_params:
+            # Binary Logit with intercept
+            self.iteration_logger.info(f"  intercept: {choice_params['intercept']:.6f}")
+
         self.iteration_logger.info(f"  beta: {choice_params['beta']}")
 
-        # ✅ 유연한 리스트 기반: 모든 lambda_* 파라미터 출력
+        # ✅ 대안별 LV 계수 (theta_*) 또는 일반 LV 계수 (lambda_*)
         for key in sorted(choice_params.keys()):
-            if key.startswith('lambda_'):
+            if key.startswith('theta_'):
+                self.iteration_logger.info(f"  {key}: {choice_params[key]:.6f}")
+            elif key.startswith('lambda_'):
                 self.iteration_logger.info(f"  {key}: {choice_params[key]:.6f}")
 
-        # ✅ 유연한 리스트 기반: 모든 gamma_* 파라미터 출력 (LV-Attribute 상호작용)
+        # ✅ LV-Attribute 상호작용 (gamma_*)
         for key in sorted(choice_params.keys()):
             if key.startswith('gamma_') and not '_to_' in key:
                 self.iteration_logger.info(f"  {key}: {choice_params[key]:.6f}")
@@ -279,18 +290,14 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
                              structural_model,
                              choice_model) -> float:
         """
-        결합 로그우도 계산 (메모리 모니터링 추가)
+        결합 로그우도 계산 (완전 GPU 병렬화)
 
-        부모 클래스의 _joint_log_likelihood를 오버라이드하여
-        Halton draws 가져오기 전후 메모리 로그를 추가합니다.
+        🚀 모든 개인 × 모든 draws를 한 번에 GPU로 계산
         """
-        # 현재 iteration 번호 저장 (개인별 우도 계산 로그에 사용)
+        # 현재 iteration 번호 저장
         if not hasattr(self, '_current_iteration'):
             self._current_iteration = 0
         self._current_iteration += 1
-
-        # 각 iteration 시작 시 개인별 카운터 리셋
-        self._individual_likelihood_count = 0
 
         # 파라미터 분해
         param_dict = self._unpack_parameters(
@@ -301,29 +308,45 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
         if self._current_iteration <= 3 or self._current_iteration % 10 == 0:
             self._log_parameters(param_dict, self._current_iteration)
 
-        # 메모리 체크 (Halton draws 가져오기 전) - 비활성화
-        # if hasattr(self, 'memory_monitor') and hasattr(self, '_likelihood_call_count'):
-        #     self.memory_monitor.log_memory_stats(f"Halton draws 가져오기 전 (Iter {self._current_iteration})")
-
         draws = self.halton_generator.get_draws()
-
-        # 메모리 체크 (Halton draws 가져온 후) - 비활성화
-        # if hasattr(self, 'memory_monitor') and hasattr(self, '_likelihood_call_count'):
-        #     self.memory_monitor.log_memory_stats(f"Halton draws 가져온 후 (Iter {self._current_iteration})")
-
         individual_ids = self.data[self.config.individual_id_column].unique()
 
-        # 순차처리 (GPU 배치는 _compute_individual_likelihood에서 처리)
-        total_ll = 0.0
-        for i, ind_id in enumerate(individual_ids):
-            ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
-            ind_draws = draws[i, :]
+        # ✅ 완전 GPU 병렬화: 모든 개인을 한 번에 처리
+        if self.use_gpu and self.use_full_parallel:
+            # 모든 개인 데이터 준비
+            all_ind_data = []
+            for ind_id in individual_ids:
+                ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
+                all_ind_data.append(ind_data)
 
-            person_ll = self._compute_individual_likelihood(
-                ind_id, ind_data, ind_draws, param_dict,
-                measurement_model, structural_model, choice_model
+            # gpu_gradient_batch의 완전 병렬화 함수 사용
+            from . import gpu_gradient_batch
+
+            # 로깅 레벨 설정
+            log_level = 'DETAILED' if self._current_iteration == 1 else 'MINIMAL'
+
+            total_ll = gpu_gradient_batch.compute_all_individuals_likelihood_full_batch_gpu(
+                self.gpu_measurement_model,
+                all_ind_data,
+                draws,
+                param_dict,
+                structural_model,
+                choice_model,
+                iteration_logger=self.iteration_logger if hasattr(self, 'iteration_logger') else None,
+                log_level=log_level
             )
-            total_ll += person_ll
+        else:
+            # 기존 방식: 개인별 순차 처리
+            total_ll = 0.0
+            for i, ind_id in enumerate(individual_ids):
+                ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
+                ind_draws = draws[i, :]
+
+                person_ll = self._compute_individual_likelihood(
+                    ind_id, ind_data, ind_draws, param_dict,
+                    measurement_model, structural_model, choice_model
+                )
+                total_ll += person_ll
 
         return total_ll
 
@@ -644,108 +667,17 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
 
         return draw_lls
 
+    # ❌ 제거됨: _compute_all_individuals_likelihood_full_batch_gpu
+    # ✅ gpu_gradient_batch.compute_all_individuals_likelihood_full_batch_gpu 사용
+    # (중복 제거, 기존 인프라 활용)
+
     # ❌ 제거됨: _get_initial_parameters
     # ✅ 부모 클래스(SimultaneousEstimatorFixed)의 메서드 사용
     # (ParameterManager 기반, 중복 로직 제거)
 
-    def _get_parameter_bounds(self, measurement_model,
-                              structural_model, choice_model) -> list:
-        """
-        파라미터 bounds 설정 (다중 잠재변수 지원)
-        """
-        bounds = []
-
-        # 다중 잠재변수 측정모델 파라미터
-        if hasattr(self.config, 'measurement_configs'):
-            # 다중 잠재변수
-            for lv_name, config in self.config.measurement_configs.items():
-                # measurement_method 확인
-                method = getattr(config, 'measurement_method', 'continuous_linear')
-
-                if method == 'continuous_linear':
-                    # ContinuousLinearMeasurement
-                    n_indicators = len(config.indicators)
-
-                    # 요인적재량 (zeta): [-10, 10]
-                    if config.fix_first_loading:
-                        # 첫 번째는 고정 (파라미터 벡터에 포함하지 않음)
-                        bounds.extend([(-10.0, 10.0)] * (n_indicators - 1))
-                    else:
-                        bounds.extend([(-10.0, 10.0)] * n_indicators)
-
-                    # 오차분산 (sigma_sq): [0.01, 100]
-                    if not config.fix_error_variance:
-                        bounds.extend([(0.01, 100.0)] * n_indicators)
-
-                elif method == 'ordered_probit':
-                    # OrderedProbitMeasurement
-                    n_indicators = len(config.indicators)
-                    n_thresholds = config.n_categories - 1
-
-                    # 요인적재량 (zeta): [0.1, 10]
-                    bounds.extend([(0.1, 10.0)] * n_indicators)
-
-                    # 임계값 (tau): [-10, 10]
-                    for _ in range(n_indicators):
-                        bounds.extend([(-10.0, 10.0)] * n_thresholds)
-
-                else:
-                    raise ValueError(f"지원하지 않는 측정 방법: {method}")
-        else:
-            # 단일 잠재변수
-            n_indicators = len(self.config.measurement.indicators)
-            bounds.extend([(0.1, 10.0)] * n_indicators)
-
-            n_thresholds = self.config.measurement.n_categories - 1
-            for _ in range(n_indicators):
-                bounds.extend([(-10.0, 10.0)] * n_thresholds)
-
-        # 구조모델 파라미터
-        if hasattr(self.config.structural, 'is_hierarchical') and self.config.structural.is_hierarchical:
-            # ✅ 계층적 구조
-            for path in self.config.structural.hierarchical_paths:
-                predictors = path['predictors']
-
-                for pred in predictors:
-                    # gamma: unbounded
-                    bounds.append((None, None))
-        elif hasattr(self.config.structural, 'n_exo'):
-            # 병렬 구조 (하위 호환)
-            n_exo = self.config.structural.n_exo
-            n_cov = self.config.structural.n_cov
-
-            # gamma_lv: unbounded
-            bounds.extend([(None, None)] * n_exo)
-
-            # gamma_x: unbounded
-            bounds.extend([(None, None)] * n_cov)
-        else:
-            # 단일 잠재변수 구조모델
-            n_sociodem = len(self.config.structural.sociodemographics)
-            bounds.extend([(None, None)] * n_sociodem)
-
-        # 선택모델 파라미터
-        # - 절편: unbounded
-        bounds.append((None, None))
-
-        # - 속성 계수 (beta): unbounded
-        n_attributes = len(self.config.choice.choice_attributes)
-        bounds.extend([(None, None)] * n_attributes)
-
-        # - 잠재변수 계수
-        if hasattr(self.config.choice, 'moderation_enabled') and self.config.choice.moderation_enabled:
-            # ✅ 조절효과 모델
-            # lambda_main: unbounded
-            bounds.append((None, None))
-
-            # lambda_mod: unbounded
-            for mod_lv in self.config.choice.moderator_lvs:
-                bounds.append((None, None))
-        else:
-            # 기본 모델 (하위 호환)
-            bounds.append((None, None))
-
-        return bounds
+    # ❌ 제거됨: _get_parameter_bounds
+    # ✅ 부모 클래스(SimultaneousEstimatorFixed)의 메서드 사용
+    # (ParameterManager 기반, optimizer와 무관하게 동일한 로직 사용)
 
     # ❌ 제거됨: _unpack_parameters (197 lines)
     # ✅ 부모 클래스(SimultaneousEstimatorFixed)의 메서드 사용

@@ -1341,7 +1341,9 @@ class MultinomialLogitChoice(BaseICLVChoice):
                 params['asc_sugar_free'] = 0.5  # 무설탕 (초기값 0.5)
 
                 # 대안별 잠재변수 계수
-                if self.all_lvs_as_main and self.main_lvs is not None:
+                # all_lvs_as_main 속성이 있으면 체크, 없으면 main_lvs만 체크
+                use_main_lvs = getattr(self, 'all_lvs_as_main', False) or (self.main_lvs is not None and len(self.main_lvs) > 0)
+                if use_main_lvs and self.main_lvs is not None:
                     for lv_name in self.main_lvs:
                         params[f'theta_sugar_{lv_name}'] = 0.5
                         params[f'theta_sugar_free_{lv_name}'] = 0.5

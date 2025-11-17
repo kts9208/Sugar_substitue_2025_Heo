@@ -94,7 +94,7 @@ LV_ATTRIBUTE_INTERACTIONS = [('purchase_intention', 'health_label'), ('nutrition
 # None이면 자동 초기화 사용
 # ⚠️ 중요: 초기값 파일을 사용하는 경우, 위의 선택모델 설정(MAIN_LVS, LV_ATTRIBUTE_INTERACTIONS)이
 #          순차추정 2단계(sequential_stage2_with_extended_model.py)와 동일해야 합니다!
-INITIAL_PARAMS_FILE = 'stage1_HC-PB_PB-PI_results.pkl'  # 1단계 결과 파일 (또는 None)
+INITIAL_PARAMS_FILE = None  # ✅ 일단 자동 초기화로 테스트 (파일 형식 문제로 인해)
 
 # 4. GPU 메모리 설정
 CPU_MEMORY_THRESHOLD_MB = 2000  # CPU 메모리 임계값 (MB)
@@ -167,10 +167,11 @@ def main():
         choice_config_overrides=choice_config_dict,
         n_draws=N_DRAWS,
         max_iterations=MAX_ITERATIONS,
-        optimizer='BHHH',
+        optimizer='L-BFGS-B',  # ✅ BHHH → L-BFGS-B로 변경
         use_analytic_gradient=True,
         calculate_se=True,
-        gradient_log_level='DETAILED'
+        gradient_log_level='DETAILED',
+        use_parameter_scaling=False  # ✅ 스케일링 비활성화
     )
 
     print(f"    Config 생성 완료")
@@ -178,7 +179,8 @@ def main():
     print(f"    - 측정 방법: 연속형 선형 (Continuous Linear)")
     print(f"    - Halton draws: {N_DRAWS}")
     print(f"    - 최대 반복: {MAX_ITERATIONS}")
-    print(f"    - 최적화: BHHH (Analytic Gradient)")
+    print(f"    - 최적화: L-BFGS-B (Analytic Gradient)")
+    print(f"    - 파라미터 스케일링: 비활성화")
     print(f"    - GPU 배치 처리: 활성화")
     
     # 5. 모델 생성
@@ -226,7 +228,7 @@ def main():
 
     if INITIAL_PARAMS_FILE:
         # 순차추정 결과 파일에서 초기값 로드
-        initial_params_path = project_root / 'results' / INITIAL_PARAMS_FILE
+        initial_params_path = project_root / 'results' / 'sequential_stage_wise' / INITIAL_PARAMS_FILE
 
         if initial_params_path.exists():
             print(f"    초기값 파일: {INITIAL_PARAMS_FILE}")
@@ -245,7 +247,13 @@ def main():
                     meas_params = stage1_results['measurement_results'].get('params', {})
                     struct_params = stage1_results['structural_results'].get('params', {})
 
-                    if meas_params and struct_params:
+                    # DataFrame이나 dict가 비어있지 않은지 확인
+                    meas_valid = (isinstance(meas_params, dict) and len(meas_params) > 0) or \
+                                 (hasattr(meas_params, 'empty') and not meas_params.empty)
+                    struct_valid = (isinstance(struct_params, dict) and len(struct_params) > 0) or \
+                                   (hasattr(struct_params, 'empty') and not struct_params.empty)
+
+                    if meas_valid and struct_valid:
                         # 파라미터 딕셔너리 구성
                         param_dict = {
                             'measurement': meas_params,
@@ -254,7 +262,21 @@ def main():
                         }
 
                         print(f"    측정모델 파라미터: {len(meas_params)} LVs")
-                        print(f"    구조모델 파라미터: {list(struct_params.keys())}")
+                        if isinstance(meas_params, dict):
+                            for lv_name, lv_params in meas_params.items():
+                                if isinstance(lv_params, dict):
+                                    print(f"      - {lv_name}: zeta={len(lv_params.get('zeta', []))}, sigma_sq={len(lv_params.get('sigma_sq', []))}")
+
+                        print(f"    구조모델 파라미터:")
+                        if isinstance(struct_params, dict):
+                            for key, value in struct_params.items():
+                                if isinstance(value, (int, float)):
+                                    print(f"      - {key}: {value:.6f}")
+                                else:
+                                    print(f"      - {key}: {value}")
+                        else:
+                            print(f"      (DataFrame 형식: {len(struct_params)} rows)")
+
                         print(f"    선택모델 파라미터: 자동 초기화 사용")
 
                         # ParameterManager를 사용하여 배열로 변환

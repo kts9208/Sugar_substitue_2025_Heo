@@ -122,27 +122,59 @@ class ParameterManager:
         return names
     
     def _get_choice_param_names(self, choice_model) -> List[str]:
-        """선택모델 파라미터 이름 생성 (유연한 리스트 기반)"""
+        """
+        선택모델 파라미터 이름 생성 (대안별 모델 지원)
+
+        ✅ 순차추정과 동일한 파라미터 구조:
+        - ASC (Alternative Specific Constants): asc_sugar, asc_sugar_free
+        - Beta (속성 계수): beta_health_label, beta_price (sugar_free 제외)
+        - Theta (대안별 LV 계수): theta_sugar_*, theta_sugar_free_*
+        - Gamma (대안별 상호작용): gamma_sugar_*_*, gamma_sugar_free_*_*
+        """
         names = []
 
-        # ✅ beta_intercept
-        names.append('beta_intercept')
+        # ✅ 대안별 모델 (Multinomial Logit with ASC)
+        if hasattr(choice_model, 'n_alternatives') and choice_model.n_alternatives == 3:
+            # ASC (Alternative Specific Constants)
+            # opt-out은 reference이므로 파라미터 없음
+            names.append('asc_sugar')       # 일반당 상수
+            names.append('asc_sugar_free')  # 무설탕 상수
 
-        # beta (속성 계수)
-        for attr in choice_model.config.choice_attributes:
-            names.append(f'beta_{attr}')
+            # Beta (속성 계수) - sugar_free 제외
+            for attr in choice_model.config.choice_attributes:
+                if attr != 'sugar_free':  # sugar_free는 ASC에 포함됨
+                    names.append(f'beta_{attr}')
 
-        # ✅ lambda (잠재변수 계수) - 유연한 리스트 순회
-        # main_lvs가 빈 리스트면 아무것도 추가 안 됨 (Base Model)
-        for lv_name in choice_model.main_lvs:
-            names.append(f'lambda_{lv_name}')
+            # Theta (대안별 잠재변수 계수)
+            for lv_name in choice_model.main_lvs:
+                names.append(f'theta_sugar_{lv_name}')
+                names.append(f'theta_sugar_free_{lv_name}')
 
-        # ✅ LV-Attribute 상호작용 파라미터 - 유연한 리스트 순회
-        # lv_attribute_interactions가 빈 리스트면 아무것도 추가 안 됨
-        for interaction in choice_model.lv_attribute_interactions:
-            lv_name = interaction['lv']
-            attr_name = interaction['attribute']
-            names.append(f'gamma_{lv_name}_{attr_name}')
+            # Gamma (대안별 LV-Attribute 상호작용)
+            for interaction in choice_model.lv_attribute_interactions:
+                lv_name = interaction['lv']
+                attr_name = interaction['attribute']
+                names.append(f'gamma_sugar_{lv_name}_{attr_name}')
+                names.append(f'gamma_sugar_free_{lv_name}_{attr_name}')
+
+        # ✅ Binary/기타 모델 (하위 호환)
+        else:
+            # beta_intercept
+            names.append('beta_intercept')
+
+            # beta (속성 계수)
+            for attr in choice_model.config.choice_attributes:
+                names.append(f'beta_{attr}')
+
+            # lambda (잠재변수 계수)
+            for lv_name in choice_model.main_lvs:
+                names.append(f'lambda_{lv_name}')
+
+            # gamma (LV-Attribute 상호작용)
+            for interaction in choice_model.lv_attribute_interactions:
+                lv_name = interaction['lv']
+                attr_name = interaction['attribute']
+                names.append(f'gamma_{lv_name}_{attr_name}')
 
         return names
 
@@ -234,22 +266,42 @@ class ParameterManager:
                 # gamma_health_concern_to_perceived_benefit (구조모델)
                 param_dict['structural'][name] = value
 
+            # ✅ 대안별 모델 파라미터
+            elif name.startswith('asc_'):
+                # asc_sugar, asc_sugar_free
+                param_dict['choice'][name] = value
+
+            elif name.startswith('theta_'):
+                # theta_sugar_purchase_intention, theta_sugar_free_nutrition_knowledge
+                param_dict['choice'][name] = value
+
+            elif name.startswith('gamma_sugar_') or name.startswith('gamma_sugar_free_'):
+                # gamma_sugar_purchase_intention_health_label
+                # gamma_sugar_free_nutrition_knowledge_price
+                param_dict['choice'][name] = value
+
+            # ✅ Binary/기타 모델 파라미터 (하위 호환)
             elif name.startswith('gamma_') and not '_to_' in name:
                 # gamma_purchase_intention_health_label (LV-Attribute 상호작용)
                 param_dict['choice'][name] = value
 
             elif name == 'beta_intercept':
-                # ✅ beta_intercept (initializer.py와 동일)
+                # beta_intercept
                 param_dict['choice']['intercept'] = value
 
             elif name.startswith('beta_'):
-                # beta_sugar_free → attr_name='sugar_free'
+                # beta_health_label, beta_price
                 attr_name = name.replace('beta_', '')
-                attr_idx = choice_model.config.choice_attributes.index(attr_name)
-                param_dict['choice']['beta'][attr_idx] = value
+                # ✅ 대안별 모델에서는 sugar_free가 없으므로 인덱스 조정 필요
+                if attr_name in choice_model.config.choice_attributes:
+                    attr_idx = choice_model.config.choice_attributes.index(attr_name)
+                    param_dict['choice']['beta'][attr_idx] = value
+                else:
+                    # 속성이 리스트에 없으면 딕셔너리에 직접 저장
+                    param_dict['choice'][name] = value
 
             elif name.startswith('lambda_'):
-                # lambda_health_concern, lambda_main, lambda_mod_perceived_price 등
+                # lambda_purchase_intention, lambda_nutrition_knowledge
                 param_dict['choice'][name] = value
 
         return param_dict
@@ -346,12 +398,27 @@ class ParameterManager:
                 # 구조모델 파라미터
                 param_array.append(param_dict['structural'][name])
 
+            # ✅ 대안별 모델 파라미터
+            elif name.startswith('asc_'):
+                # asc_sugar, asc_sugar_free
+                param_array.append(param_dict['choice'][name])
+
+            elif name.startswith('theta_'):
+                # theta_sugar_purchase_intention, theta_sugar_free_nutrition_knowledge
+                param_array.append(param_dict['choice'][name])
+
+            elif name.startswith('gamma_sugar_') or name.startswith('gamma_sugar_free_'):
+                # gamma_sugar_purchase_intention_health_label
+                # gamma_sugar_free_nutrition_knowledge_price
+                param_array.append(param_dict['choice'][name])
+
+            # ✅ Binary/기타 모델 파라미터 (하위 호환)
             elif name.startswith('gamma_') and not '_to_' in name:
                 # LV-Attribute 상호작용 파라미터
                 param_array.append(param_dict['choice'][name])
 
             elif name == 'beta_intercept':
-                # ✅ beta_intercept (initializer.py와 동일)
+                # beta_intercept
                 param_array.append(param_dict['choice']['intercept'])
 
             elif name.startswith('beta_'):
@@ -360,8 +427,11 @@ class ParameterManager:
                 beta_count = sum(1 for n in param_names[:param_names.index(name)]
                                 if n.startswith('beta_') and n != 'beta_intercept')
                 beta_array = param_dict['choice']['beta']
-                if isinstance(beta_array, np.ndarray):
+                if isinstance(beta_array, np.ndarray) and beta_count < len(beta_array):
                     param_array.append(beta_array[beta_count])
+                elif name in param_dict['choice']:
+                    # 딕셔너리에 직접 저장된 경우
+                    param_array.append(param_dict['choice'][name])
                 else:
                     param_array.append(beta_array)
 
@@ -412,6 +482,20 @@ class ParameterManager:
                 # 구조모델 계수: 0.5
                 initial_values.append(0.5)
 
+            # ✅ 대안별 모델 파라미터
+            elif name.startswith('asc_'):
+                # ASC (Alternative Specific Constants): 0.5
+                initial_values.append(0.5)
+
+            elif name.startswith('theta_'):
+                # Theta (대안별 LV 계수): 0.5
+                initial_values.append(0.5)
+
+            elif name.startswith('gamma_sugar_') or name.startswith('gamma_sugar_free_'):
+                # Gamma (대안별 상호작용): 0.1
+                initial_values.append(0.1)
+
+            # ✅ Binary/기타 모델 파라미터 (하위 호환)
             elif name.startswith('gamma_') and not '_to_' in name:
                 # LV-Attribute 상호작용: 0.5
                 initial_values.append(0.5)
@@ -435,4 +519,97 @@ class ParameterManager:
                 initial_values.append(1.0)
 
         return np.array(initial_values)
+
+    def get_parameter_bounds(self, measurement_model, structural_model,
+                            choice_model) -> List[tuple]:
+        """
+        전체 파라미터 bounds 리스트 생성 (L-BFGS-B용)
+
+        ✅ 파라미터 이름 순서와 동일한 순서로 bounds 생성
+        ✅ 파라미터 구조 변경 시 이 메서드만 수정하면 됨
+        ✅ Optimizer 종류와 무관하게 동일한 로직 사용
+
+        Args:
+            measurement_model: 측정모델 객체
+            structural_model: 구조모델 객체
+            choice_model: 선택모델 객체
+
+        Returns:
+            bounds 리스트: [(lower, upper), ...]
+            예: [(0.1, 10.0), (0.01, 100.0), ..., (None, None), ...]
+        """
+        param_names = self.get_parameter_names(
+            measurement_model, structural_model, choice_model
+        )
+
+        bounds = []
+        for name in param_names:
+            bounds.append(self._get_bound_for_param(name))
+
+        self.logger.info(f"파라미터 bounds 생성 완료: {len(bounds)}개")
+
+        return bounds
+
+    def _get_bound_for_param(self, param_name: str) -> tuple:
+        """
+        파라미터 이름 기반으로 적절한 bound 반환
+
+        Args:
+            param_name: 파라미터 이름
+
+        Returns:
+            (lower, upper) 튜플
+            - None은 unbounded를 의미
+        """
+        # 측정모델 파라미터
+        if param_name.startswith('zeta_'):
+            # Factor loadings: [0.1, 10.0]
+            # 너무 작으면 identification 문제, 너무 크면 수치 불안정
+            return (0.1, 10.0)
+
+        elif param_name.startswith('sigma_sq_'):
+            # Measurement error variance: [0.01, 100.0]
+            # 양수여야 하고, 너무 크면 모델 적합도 문제
+            return (0.01, 100.0)
+
+        elif param_name.startswith('tau_'):
+            # Thresholds (순서형): [-10.0, 10.0]
+            # 너무 크면 확률이 0 또는 1에 가까워져 수치 문제
+            return (-10.0, 10.0)
+
+        # 구조모델 파라미터
+        elif param_name.startswith('gamma_') and '_to_' in param_name:
+            # 구조방정식 계수: unbounded
+            # 경로계수는 이론적으로 제약 없음
+            return (None, None)
+
+        # 선택모델 파라미터
+        elif param_name.startswith('asc_'):
+            # Alternative-specific constants: unbounded
+            return (None, None)
+
+        elif param_name == 'intercept':
+            # Binary logit intercept: unbounded
+            return (None, None)
+
+        elif param_name.startswith('beta_'):
+            # Attribute coefficients: unbounded
+            return (None, None)
+
+        elif param_name.startswith('theta_'):
+            # LV main effects (multinomial): unbounded
+            return (None, None)
+
+        elif param_name.startswith('lambda_'):
+            # LV coefficients (binary): unbounded
+            return (None, None)
+
+        elif param_name.startswith('gamma_') and '_to_' not in param_name:
+            # LV-Attribute interactions: unbounded
+            return (None, None)
+
+        else:
+            # 기타 파라미터: unbounded (안전한 기본값)
+            self.logger.warning(f"알 수 없는 파라미터 타입: {param_name}, unbounded로 설정")
+            return (None, None)
 

@@ -1025,6 +1025,158 @@ def compute_all_individuals_gradients_batch_gpu(
 
     return all_individual_gradients
 
+def compute_all_individuals_likelihood_full_batch_gpu(
+    gpu_measurement_model,
+    all_ind_data: List[pd.DataFrame],
+    all_ind_draws: np.ndarray,
+    params_dict: Dict,
+    structural_model,
+    choice_model,
+    iteration_logger=None,
+    log_level: str = 'MINIMAL'
+) -> float:
+    """
+    모든 개인의 우도를 완전 GPU batch로 동시 계산
+
+    🚀 완전 GPU Batch: N명 × R draws를 동시 처리
+
+    Args:
+        gpu_measurement_model: GPU 측정모델
+        all_ind_data: 모든 개인의 데이터 리스트 [DataFrame_1, ..., DataFrame_N]
+        all_ind_draws: 모든 개인의 draws (N, n_draws, n_dims)
+        params_dict: 파라미터 딕셔너리
+        structural_model: 구조모델
+        choice_model: 선택모델
+        iteration_logger: 로거
+        log_level: 로깅 레벨
+
+    Returns:
+        전체 로그우도 (스칼라)
+    """
+    if not CUPY_AVAILABLE:
+        raise RuntimeError("CuPy not available")
+
+    import time
+    from scipy.special import logsumexp
+
+    n_individuals = len(all_ind_data)
+    n_draws = all_ind_draws.shape[1]
+
+    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+        iteration_logger.info(
+            f"\n{'='*80}\n"
+            f"🚀 완전 GPU Batch 우도 계산\n"
+            f"{'='*80}\n"
+            f"  개인 수: {n_individuals}명\n"
+            f"  Draws per individual: {n_draws}개\n"
+            f"  총 계산: {n_individuals} × {n_draws} = {n_individuals * n_draws}개 동시 처리\n"
+            f"{'='*80}"
+        )
+
+    total_start = time.time()
+
+    # Step 1: 모든 개인 × 모든 draws의 LV 계산 (기존 gradient 함수와 동일)
+    lv_start = time.time()
+    all_lvs_list = []  # (N, R) 리스트
+
+    for ind_idx, (ind_data, ind_draws) in enumerate(zip(all_ind_data, all_ind_draws)):
+        ind_lvs_list = []
+
+        for draw_idx in range(n_draws):
+            draw = ind_draws[draw_idx]
+
+            # 구조모델: LV 예측
+            if hasattr(structural_model, 'is_hierarchical') and structural_model.is_hierarchical:
+                # 계층적 구조
+                n_first_order = len(structural_model.exogenous_lvs)
+                exo_draws = draw[:n_first_order]
+
+                # 2차+ LV 오차항
+                higher_order_draws = {}
+                higher_order_lvs = structural_model.get_higher_order_lvs()
+                for i, lv_name in enumerate(higher_order_lvs):
+                    higher_order_draws[lv_name] = draw[n_first_order + i]
+
+                lv = structural_model.predict(
+                    ind_data, exo_draws, params_dict['structural'],
+                    higher_order_draws=higher_order_draws
+                )
+            elif hasattr(structural_model, 'endogenous_lv'):
+                # 병렬 구조
+                n_exo = structural_model.n_exo
+                exo_draws = draw[:n_exo]
+                endo_draw = draw[n_exo]
+                lv = structural_model.predict(ind_data, exo_draws, params_dict['structural'], endo_draw)
+            else:
+                # 단일 잠재변수
+                lv = structural_model.predict(ind_data, params_dict['structural'], draw)
+
+            ind_lvs_list.append(lv)
+
+        all_lvs_list.append(ind_lvs_list)
+
+    lv_time = time.time() - lv_start
+
+    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+        iteration_logger.info(f"  LV 계산 완료 ({lv_time:.3f}초)")
+
+    # Step 2: 개인별 우도 계산 (각 개인의 R draws를 GPU 배치로 처리)
+    likelihood_start = time.time()
+    total_ll = 0.0
+
+    for ind_idx, (ind_data, ind_lvs_list, ind_draws) in enumerate(zip(all_ind_data, all_lvs_list, all_ind_draws)):
+        # 기존 gpu_batch_utils 함수 활용
+        from . import gpu_batch_utils
+
+        # 측정모델 우도 (GPU 배치)
+        ll_measurement = gpu_batch_utils.compute_measurement_batch_gpu(
+            gpu_measurement_model,
+            ind_data,
+            ind_lvs_list,
+            params_dict['measurement']
+        )
+
+        # 선택모델 우도 (GPU 배치)
+        ll_choice = gpu_batch_utils.compute_choice_batch_gpu(
+            ind_data,
+            ind_lvs_list,
+            params_dict['choice'],
+            choice_model
+        )
+
+        # 구조모델 우도 (GPU 배치)
+        ll_structural = gpu_batch_utils.compute_structural_batch_gpu(
+            ind_data,
+            ind_lvs_list,
+            params_dict['structural'],
+            ind_draws,
+            structural_model
+        )
+
+        # 결합 우도 (R,)
+        draw_lls = ll_measurement + ll_choice + ll_structural
+
+        # 유한성 체크
+        draw_lls = np.where(np.isfinite(draw_lls), draw_lls, -1e10)
+
+        # 개인 우도: log(1/R * sum(exp(draw_lls)))
+        person_ll = logsumexp(draw_lls) - np.log(n_draws)
+        total_ll += person_ll
+
+    likelihood_time = time.time() - likelihood_start
+    total_time = time.time() - total_start
+
+    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+        iteration_logger.info(
+            f"  우도 계산 완료 ({likelihood_time:.3f}초)\n"
+            f"  총 시간: {total_time:.3f}초\n"
+            f"  최종 LL: {total_ll:.4f}\n"
+            f"{'='*80}"
+        )
+
+    return total_ll
+
+
 def compute_all_individuals_gradients_full_batch_gpu(
     gpu_measurement_model,
     all_ind_data: List[pd.DataFrame],
@@ -1477,49 +1629,136 @@ def compute_choice_full_batch_gpu(
     """
     n_individuals, n_draws, n_lvs = all_lvs_gpu.shape
 
+    # ✅ 모델 타입 확인: ASC 기반 multinomial logit vs binary probit
+    use_alternative_specific = 'asc_sugar' in params or 'asc_A' in params
+
     # 파라미터 추출
-    intercept = params['intercept']
     beta = params['beta']
     n_attributes = len(beta)
 
-    # ✅ 모든 LV 주효과 vs 조절효과 vs 기본 모델 확인
-    lambda_lv_keys = [key for key in params.keys() if key.startswith('lambda_') and key not in ['lambda_main']]
+    if use_alternative_specific:
+        # ✅ Multinomial Logit with ASC
+        asc_sugar = params.get('asc_sugar', params.get('asc_A', 0.0))
+        asc_sugar_free = params.get('asc_sugar_free', params.get('asc_B', 0.0))
 
-    all_lvs_as_main = len(lambda_lv_keys) > 1
-    moderation_enabled = 'lambda_main' in params
-
-    # 🔍 디버깅: params 키 확인
-    if iteration_logger:
-        iteration_logger.info(f"[GPU Choice Gradient] params 키: {list(params.keys())}")
-        iteration_logger.info(f"[GPU Choice Gradient] lambda_lv_keys: {lambda_lv_keys}")
-        iteration_logger.info(f"[GPU Choice Gradient] all_lvs_as_main: {all_lvs_as_main}")
-
-    if all_lvs_as_main:
-        # 모든 LV 주효과 모델
-        lambda_lvs = {}
-        for key in lambda_lv_keys:
-            lv_name = key.replace('lambda_', '')
-            lambda_lvs[lv_name] = params[key]
-    elif moderation_enabled:
-        # 조절효과 모델
-        lambda_main = params['lambda_main']
-        lambda_mod = {}
+        # 대안별 LV 계수 (theta_*)
+        # ✅ 더 긴 prefix를 먼저 체크 (theta_sugar_free_ 먼저, theta_sugar_ 나중에)
+        theta_params = {}  # {(alt, lv_name): theta_value}
         for key in params:
-            if key.startswith('lambda_mod_'):
-                mod_lv_name = key.replace('lambda_mod_', '')
-                lambda_mod[mod_lv_name] = params[key]
-        main_lv = choice_model.config.main_lv
+            if key.startswith('theta_sugar_free_'):
+                lv_name = key.replace('theta_sugar_free_', '')
+                theta_params[('sugar_free', lv_name)] = params[key]
+            elif key.startswith('theta_sugar_'):
+                lv_name = key.replace('theta_sugar_', '')
+                theta_params[('sugar', lv_name)] = params[key]
+            elif key.startswith('theta_B_'):
+                lv_name = key.replace('theta_B_', '')
+                theta_params[('B', lv_name)] = params[key]
+            elif key.startswith('theta_A_'):
+                lv_name = key.replace('theta_A_', '')
+                theta_params[('A', lv_name)] = params[key]
+
+        # 대안별 LV-Attribute 상호작용 (gamma_*)
+        # ✅ choice_attributes를 사용하여 정확히 파싱
+        choice_attributes = choice_model.config.choice_attributes
+        gamma_interactions = {}  # {(alt, lv_name, attr_name): gamma_value}
+
+        for key in params:
+            if not key.startswith('gamma_') or '_to_' in key:
+                continue
+
+            # gamma_sugar_free_purchase_intention_health_label 형식
+            # → alt='sugar_free', lv='purchase_intention', attr='health_label'
+
+            if key.startswith('gamma_sugar_free_'):
+                remainder = key.replace('gamma_sugar_free_', '')
+                alt_name = 'sugar_free'
+            elif key.startswith('gamma_sugar_'):
+                remainder = key.replace('gamma_sugar_', '')
+                alt_name = 'sugar'
+            elif key.startswith('gamma_B_'):
+                remainder = key.replace('gamma_B_', '')
+                alt_name = 'B'
+            elif key.startswith('gamma_A_'):
+                remainder = key.replace('gamma_A_', '')
+                alt_name = 'A'
+            else:
+                continue
+
+            # 속성 이름 찾기 (choice_attributes에서)
+            attr_name = None
+            for attr in choice_attributes:
+                if remainder.endswith('_' + attr):
+                    attr_name = attr
+                    lv_name = remainder[:-(len(attr) + 1)]  # '_attr' 제거
+                    break
+
+            if attr_name and lv_name:
+                gamma_interactions[(alt_name, lv_name, attr_name)] = params[key]
+
+        all_lvs_as_main = False
+        moderation_enabled = False
+
     else:
-        # 기본 모델
-        lambda_lv = params['lambda']
-        # main_lv 찾기
-        if hasattr(choice_model.config, 'main_lv'):
+        # ✅ Binary Probit with intercept
+        intercept = params['intercept']
+
+        # ✅ 모든 LV 주효과 vs 조절효과 vs 기본 모델 확인
+        lambda_lv_keys = [key for key in params.keys() if key.startswith('lambda_') and key not in ['lambda_main']]
+
+        all_lvs_as_main = len(lambda_lv_keys) > 1
+        moderation_enabled = 'lambda_main' in params
+
+        # 🔍 디버깅: params 키 확인
+        if iteration_logger:
+            iteration_logger.info(f"[GPU Choice Gradient] params 키: {list(params.keys())}")
+            iteration_logger.info(f"[GPU Choice Gradient] lambda_lv_keys: {lambda_lv_keys}")
+            iteration_logger.info(f"[GPU Choice Gradient] all_lvs_as_main: {all_lvs_as_main}")
+
+        if all_lvs_as_main:
+            # 모든 LV 주효과 모델
+            lambda_lvs = {}
+            for key in lambda_lv_keys:
+                lv_name = key.replace('lambda_', '')
+                lambda_lvs[lv_name] = params[key]
+        elif moderation_enabled:
+            # 조절효과 모델
+            lambda_main = params['lambda_main']
+            lambda_mod = {}
+            for key in params:
+                if key.startswith('lambda_mod_'):
+                    mod_lv_name = key.replace('lambda_mod_', '')
+                    lambda_mod[mod_lv_name] = params[key]
             main_lv = choice_model.config.main_lv
         else:
-            main_lv = 'purchase_intention'  # 기본값
+            # 기본 모델
+            lambda_lv = params['lambda']
+            # main_lv 찾기
+            if hasattr(choice_model.config, 'main_lv'):
+                main_lv = choice_model.config.main_lv
+            else:
+                main_lv = 'purchase_intention'  # 기본값
 
     choice_attributes = choice_model.config.choice_attributes
 
+    if use_alternative_specific:
+        # ✅ Multinomial Logit Gradient 계산
+        return _compute_multinomial_logit_gradient_gpu(
+            all_ind_data=all_ind_data,
+            all_lvs_gpu=all_lvs_gpu,
+            params=params,
+            all_weights_gpu=all_weights_gpu,
+            choice_model=choice_model,
+            lv_names=lv_names,
+            asc_sugar=asc_sugar,
+            asc_sugar_free=asc_sugar_free,
+            beta=beta,
+            theta_params=theta_params,
+            gamma_interactions=gamma_interactions,
+            iteration_logger=iteration_logger
+        )
+
+    # ✅ Binary Probit Gradient 계산 (기존 로직)
     # 모든 개인의 선택 데이터 추출
     n_situations = len(all_ind_data[0])
     all_choices = np.zeros((n_individuals, n_situations))
@@ -1662,6 +1901,255 @@ def compute_choice_full_batch_gpu(
 
         # lambda: (326,)
         gradients['lambda'] = cp.asnumpy(cp.sum(weighted_mills * main_lv_batch, axis=(1, 2)))
+
+    return gradients
+
+
+def _compute_multinomial_logit_gradient_gpu(
+    all_ind_data: List[pd.DataFrame],
+    all_lvs_gpu,  # CuPy array (N, R, n_lvs)
+    params: Dict,
+    all_weights_gpu,  # CuPy array (N, R)
+    choice_model,
+    lv_names: List[str],
+    asc_sugar: float,
+    asc_sugar_free: float,
+    beta: np.ndarray,
+    theta_params: Dict,  # {(alt, lv_name): theta_value}
+    gamma_interactions: Dict,  # {(alt, lv_name, attr_name): gamma_value}
+    iteration_logger=None
+) -> Dict:
+    """
+    Multinomial Logit Gradient - 완전 GPU Batch
+
+    Multinomial Logit Gradient 공식:
+    ∂LL/∂θ = Σ_n Σ_r w_r * (y_ni - P_ni) * x_ni
+
+    여기서:
+    - y_ni: 대안 i가 선택되었으면 1, 아니면 0
+    - P_ni: 대안 i의 선택 확률
+    - x_ni: 대안 i의 속성 (또는 LV)
+    - w_r: importance weight
+
+    Returns:
+        {'asc_sugar': (N,), 'asc_sugar_free': (N,), 'beta': (N, n_attr), ...}
+    """
+    n_individuals, n_draws, n_lvs = all_lvs_gpu.shape
+    choice_attributes = choice_model.config.choice_attributes
+    n_attributes = len(beta)
+
+    # 데이터 추출: sugar_content 기준
+    # 각 개인의 데이터는 choice set 단위로 구성 (3개 행 = 1 choice set)
+    # 예: 18개 행 = 6 choice sets
+    n_rows_per_ind = len(all_ind_data[0])
+    n_choice_sets = n_rows_per_ind // 3  # 3개 대안
+
+    # 모든 개인의 선택 데이터 추출
+    # sugar_contents: (N, n_choice_sets, 3) - 각 choice set의 3개 대안의 sugar_content
+    # choices: (N, n_choice_sets) - 선택된 대안 인덱스 (0=일반당, 1=무설탕, 2=opt-out)
+    # attributes: (N, n_choice_sets, 3, n_attr) - 각 대안의 속성
+
+    sugar_contents_list = []
+    choices_list = []
+    attributes_list = []
+
+    for ind_idx, ind_data in enumerate(all_ind_data):
+        ind_sugar_contents = []
+        ind_choices = []
+        ind_attributes = []
+
+        for cs_idx in range(n_choice_sets):
+            # 3개 행 추출
+            start_row = cs_idx * 3
+            choice_set = ind_data.iloc[start_row:start_row+3]
+
+            # sugar_content 추출
+            sc_values = []
+            attrs = []
+            chosen_alt = -1
+
+            for alt_idx, (_, row) in enumerate(choice_set.iterrows()):
+                sc = row.get('sugar_content', np.nan)
+                if pd.isna(sc):
+                    sc_values.append('opt_out')
+                else:
+                    sc_values.append(sc)
+
+                # 속성 추출
+                attr_vec = np.zeros(n_attributes)
+                for attr_idx, attr in enumerate(choice_attributes):
+                    if attr in row.index and not pd.isna(row[attr]):
+                        attr_vec[attr_idx] = row[attr]
+                attrs.append(attr_vec)
+
+                # 선택 확인
+                if row.get('choice', 0) == 1 or row.get('chosen', 0) == 1:
+                    chosen_alt = alt_idx
+
+            ind_sugar_contents.append(sc_values)
+            ind_choices.append(chosen_alt)
+            ind_attributes.append(attrs)
+
+        sugar_contents_list.append(ind_sugar_contents)
+        choices_list.append(ind_choices)
+        attributes_list.append(ind_attributes)
+
+    # NumPy 배열로 변환
+    choices = np.array(choices_list)  # (N, n_choice_sets)
+    attributes = np.array(attributes_list)  # (N, n_choice_sets, 3, n_attr)
+
+    # GPU로 전송
+    choices_gpu = cp.asarray(choices)  # (N, n_choice_sets)
+    attributes_gpu = cp.asarray(attributes)  # (N, n_choice_sets, 3, n_attr)
+    beta_gpu = cp.asarray(beta)  # (n_attr,)
+
+    # 효용 계산: (N, R, n_choice_sets, 3)
+    # V[n, r, cs, alt] = ASC[alt] + beta' * X[n, cs, alt] + theta[alt, lv] * LV[n, r, lv] + ...
+
+    V_batch = cp.zeros((n_individuals, n_draws, n_choice_sets, 3))
+
+    # 각 choice set, 각 대안에 대해 효용 계산
+    for cs_idx in range(n_choice_sets):
+        for ind_idx in range(n_individuals):
+            sc_values = sugar_contents_list[ind_idx][cs_idx]
+
+            for alt_idx in range(3):
+                sc = sc_values[alt_idx]
+
+                # ASC
+                if sc == '일반당':
+                    asc = asc_sugar
+                    alt_name = 'sugar'
+                elif sc == '무설탕':
+                    asc = asc_sugar_free
+                    alt_name = 'sugar_free'
+                else:  # opt-out
+                    asc = 0.0
+                    alt_name = 'opt_out'
+
+                # 속성 효과: beta' * X
+                attr_vec = attributes_gpu[ind_idx, cs_idx, alt_idx, :]  # (n_attr,)
+                attr_effect = cp.sum(beta_gpu * attr_vec)
+
+                # 기본 효용
+                V_batch[ind_idx, :, cs_idx, alt_idx] = asc + attr_effect
+
+                # 잠재변수 주효과: theta * LV
+                if alt_name != 'opt_out':
+                    for lv_name in lv_names:
+                        theta_key = (alt_name, lv_name)
+                        if theta_key in theta_params:
+                            theta = theta_params[theta_key]
+                            lv_idx = lv_names.index(lv_name)
+                            lv_values = all_lvs_gpu[ind_idx, :, lv_idx]  # (R,)
+                            V_batch[ind_idx, :, cs_idx, alt_idx] += theta * lv_values
+
+                # 상호작용: gamma * LV * Attribute
+                if alt_name != 'opt_out':
+                    for (gamma_alt, gamma_lv, gamma_attr), gamma_val in gamma_interactions.items():
+                        if gamma_alt == alt_name:
+                            lv_idx = lv_names.index(gamma_lv)
+                            attr_idx = choice_attributes.index(gamma_attr)
+                            lv_values = all_lvs_gpu[ind_idx, :, lv_idx]  # (R,)
+                            attr_value = attributes_gpu[ind_idx, cs_idx, alt_idx, attr_idx]
+                            V_batch[ind_idx, :, cs_idx, alt_idx] += gamma_val * lv_values * attr_value
+
+    # 확률 계산: Softmax
+    # P[n, r, cs, alt] = exp(V[n, r, cs, alt]) / Σ_j exp(V[n, r, cs, j])
+    exp_V = cp.exp(V_batch)  # (N, R, n_choice_sets, 3)
+    sum_exp_V = cp.sum(exp_V, axis=3, keepdims=True)  # (N, R, n_choice_sets, 1)
+    P_batch = exp_V / sum_exp_V  # (N, R, n_choice_sets, 3)
+    P_batch = cp.clip(P_batch, 1e-10, 1 - 1e-10)
+
+    # 선택 지시자: y[n, cs, alt]
+    y_batch = cp.zeros((n_individuals, n_choice_sets, 3))
+    for ind_idx in range(n_individuals):
+        for cs_idx in range(n_choice_sets):
+            chosen_alt = choices[ind_idx, cs_idx]
+            if 0 <= chosen_alt < 3:
+                y_batch[ind_idx, cs_idx, chosen_alt] = 1.0
+
+    y_batch_gpu = cp.asarray(y_batch)  # (N, n_choice_sets, 3)
+
+    # Gradient 계산: (y - P) * x
+    # diff: (N, R, n_choice_sets, 3)
+    diff = y_batch_gpu[:, None, :, :] - P_batch  # (N, 1, n_choice_sets, 3) - (N, R, n_choice_sets, 3)
+
+    # Weighted diff: (N, R, n_choice_sets, 3)
+    weighted_diff = all_weights_gpu[:, :, None, None] * diff  # (N, R, 1, 1) * (N, R, n_choice_sets, 3)
+
+    gradients = {}
+
+    # ASC gradients
+    # asc_sugar: sum over (일반당 대안)
+    # asc_sugar_free: sum over (무설탕 대안)
+    grad_asc_sugar = cp.zeros(n_individuals)
+    grad_asc_sugar_free = cp.zeros(n_individuals)
+
+    for ind_idx in range(n_individuals):
+        for cs_idx in range(n_choice_sets):
+            sc_values = sugar_contents_list[ind_idx][cs_idx]
+            for alt_idx in range(3):
+                sc = sc_values[alt_idx]
+                if sc == '일반당':
+                    grad_asc_sugar[ind_idx] += cp.sum(weighted_diff[ind_idx, :, cs_idx, alt_idx])
+                elif sc == '무설탕':
+                    grad_asc_sugar_free[ind_idx] += cp.sum(weighted_diff[ind_idx, :, cs_idx, alt_idx])
+
+    gradients['asc_sugar'] = cp.asnumpy(grad_asc_sugar)
+    gradients['asc_sugar_free'] = cp.asnumpy(grad_asc_sugar_free)
+
+    # Beta gradients: (N, n_attr)
+    # ∂LL/∂β_k = Σ_n Σ_r Σ_cs Σ_alt w_r * (y - P) * X[alt, k]
+    grad_beta = cp.zeros((n_individuals, n_attributes))
+    for attr_idx in range(n_attributes):
+        attr_values = attributes_gpu[:, :, :, attr_idx]  # (N, n_choice_sets, 3)
+        # (N, R, n_choice_sets, 3) * (N, 1, n_choice_sets, 3)
+        grad_beta[:, attr_idx] = cp.sum(
+            weighted_diff * attr_values[:, None, :, :],
+            axis=(1, 2, 3)
+        )
+    gradients['beta'] = cp.asnumpy(grad_beta)
+
+    # Theta gradients: (N,) for each (alt, lv)
+    for (alt_name, lv_name), theta_val in theta_params.items():
+        grad_theta = cp.zeros(n_individuals)
+        lv_idx = lv_names.index(lv_name)
+
+        for ind_idx in range(n_individuals):
+            for cs_idx in range(n_choice_sets):
+                sc_values = sugar_contents_list[ind_idx][cs_idx]
+                for alt_idx in range(3):
+                    sc = sc_values[alt_idx]
+                    if (sc == '일반당' and alt_name == 'sugar') or \
+                       (sc == '무설탕' and alt_name == 'sugar_free'):
+                        lv_values = all_lvs_gpu[ind_idx, :, lv_idx]  # (R,)
+                        grad_theta[ind_idx] += cp.sum(
+                            weighted_diff[ind_idx, :, cs_idx, alt_idx] * lv_values
+                        )
+
+        gradients[f'theta_{alt_name}_{lv_name}'] = cp.asnumpy(grad_theta)
+
+    # Gamma gradients: (N,) for each (alt, lv, attr)
+    for (alt_name, lv_name, attr_name), gamma_val in gamma_interactions.items():
+        grad_gamma = cp.zeros(n_individuals)
+        lv_idx = lv_names.index(lv_name)
+        attr_idx = choice_attributes.index(attr_name)
+
+        for ind_idx in range(n_individuals):
+            for cs_idx in range(n_choice_sets):
+                sc_values = sugar_contents_list[ind_idx][cs_idx]
+                for alt_idx in range(3):
+                    sc = sc_values[alt_idx]
+                    if (sc == '일반당' and alt_name == 'sugar') or \
+                       (sc == '무설탕' and alt_name == 'sugar_free'):
+                        lv_values = all_lvs_gpu[ind_idx, :, lv_idx]  # (R,)
+                        attr_value = attributes_gpu[ind_idx, cs_idx, alt_idx, attr_idx]
+                        grad_gamma[ind_idx] += cp.sum(
+                            weighted_diff[ind_idx, :, cs_idx, alt_idx] * lv_values * attr_value
+                        )
+
+        gradients[f'gamma_{alt_name}_{lv_name}_{attr_name}'] = cp.asnumpy(grad_gamma)
 
     return gradients
 

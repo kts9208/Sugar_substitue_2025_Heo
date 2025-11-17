@@ -112,6 +112,11 @@ class ChoiceConfig:
     # 선택 유형
     choice_type: Literal['binary', 'multinomial', 'ordered'] = 'binary'
 
+    # ✅ 대안 개수 (Multinomial Logit용)
+    # - binary: 2개 (선택/비선택)
+    # - multinomial: 3개 이상 (일반당, 무설탕, opt-out 등)
+    n_alternatives: Optional[int] = None
+
     # 가격 변수 (WTP 계산용)
     price_variable: str = 'price'
 

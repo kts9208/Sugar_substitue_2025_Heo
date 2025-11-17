@@ -74,27 +74,78 @@ def compute_choice_batch_gpu(ind_data: pd.DataFrame,
     
     n_draws = len(lvs_list)
     n_choice_situations = len(ind_data)
-    
+
+    # ✅ 모델 타입 확인: ASC 기반 multinomial logit vs binary probit
+    use_alternative_specific = 'asc_sugar' in params or 'asc_A' in params
+
     # 파라미터 추출
-    intercept = params['intercept']
-    beta = params['beta']
+    if use_alternative_specific:
+        # Multinomial Logit with ASC
+        asc_sugar = params.get('asc_sugar', params.get('asc_A', 0.0))
+        asc_sugar_free = params.get('asc_sugar_free', params.get('asc_B', 0.0))
+        beta = params['beta']
 
-    # ✅ 유연한 리스트 기반: lambda_* 파라미터 수집
-    lambda_lvs = {}  # {lv_name: lambda_value}
-    for key in params:
-        if key.startswith('lambda_'):
-            lv_name = key.replace('lambda_', '')
-            lambda_lvs[lv_name] = params[key]
+        # ✅ 대안별 LV 계수 (theta_*)
+        theta_params = {}  # {(alt, lv_name): theta_value}
+        for key in params:
+            if key.startswith('theta_sugar_'):
+                lv_name = key.replace('theta_sugar_', '')
+                theta_params[('sugar', lv_name)] = params[key]
+            elif key.startswith('theta_sugar_free_'):
+                lv_name = key.replace('theta_sugar_free_', '')
+                theta_params[('sugar_free', lv_name)] = params[key]
+            elif key.startswith('theta_A_'):
+                lv_name = key.replace('theta_A_', '')
+                theta_params[('A', lv_name)] = params[key]
+            elif key.startswith('theta_B_'):
+                lv_name = key.replace('theta_B_', '')
+                theta_params[('B', lv_name)] = params[key]
 
-    # ✅ 유연한 리스트 기반: gamma_* 파라미터 수집 (LV-Attribute 상호작용)
-    gamma_interactions = {}  # {(lv_name, attr_name): gamma_value}
-    for key in params:
-        if key.startswith('gamma_') and not '_to_' in key:
-            # gamma_purchase_intention_health_label → lv_name='purchase_intention', attr_name='health_label'
-            parts = key.replace('gamma_', '').rsplit('_', 1)
-            if len(parts) == 2:
-                lv_name, attr_name = parts
-                gamma_interactions[(lv_name, attr_name)] = params[key]
+        # ✅ 대안별 LV-Attribute 상호작용 (gamma_*)
+        gamma_interactions = {}  # {(alt, lv_name, attr_name): gamma_value}
+        for key in params:
+            if key.startswith('gamma_sugar_') and not '_to_' in key:
+                # gamma_sugar_purchase_intention_health_label → alt='sugar', lv_name='purchase_intention', attr_name='health_label'
+                parts = key.replace('gamma_sugar_', '').rsplit('_', 1)
+                if len(parts) == 2:
+                    lv_name, attr_name = parts
+                    gamma_interactions[('sugar', lv_name, attr_name)] = params[key]
+            elif key.startswith('gamma_sugar_free_') and not '_to_' in key:
+                parts = key.replace('gamma_sugar_free_', '').rsplit('_', 1)
+                if len(parts) == 2:
+                    lv_name, attr_name = parts
+                    gamma_interactions[('sugar_free', lv_name, attr_name)] = params[key]
+            elif key.startswith('gamma_A_') and not '_to_' in key:
+                parts = key.replace('gamma_A_', '').rsplit('_', 1)
+                if len(parts) == 2:
+                    lv_name, attr_name = parts
+                    gamma_interactions[('A', lv_name, attr_name)] = params[key]
+            elif key.startswith('gamma_B_') and not '_to_' in key:
+                parts = key.replace('gamma_B_', '').rsplit('_', 1)
+                if len(parts) == 2:
+                    lv_name, attr_name = parts
+                    gamma_interactions[('B', lv_name, attr_name)] = params[key]
+    else:
+        # Binary Probit with intercept
+        intercept = params['intercept']
+        beta = params['beta']
+
+        # ✅ 유연한 리스트 기반: lambda_* 파라미터 수집
+        lambda_lvs = {}  # {lv_name: lambda_value}
+        for key in params:
+            if key.startswith('lambda_'):
+                lv_name = key.replace('lambda_', '')
+                lambda_lvs[lv_name] = params[key]
+
+        # ✅ 유연한 리스트 기반: gamma_* 파라미터 수집 (LV-Attribute 상호작용)
+        gamma_interactions = {}  # {(lv_name, attr_name): gamma_value}
+        for key in params:
+            if key.startswith('gamma_') and not '_to_' in key:
+                # gamma_purchase_intention_health_label → lv_name='purchase_intention', attr_name='health_label'
+                parts = key.replace('gamma_', '').rsplit('_', 1)
+                if len(parts) == 2:
+                    lv_name, attr_name = parts
+                    gamma_interactions[(lv_name, attr_name)] = params[key]
 
     # 선택 변수 찾기
     choice_var = None
@@ -106,39 +157,64 @@ def compute_choice_batch_gpu(ind_data: pd.DataFrame,
     if choice_var is None:
         raise ValueError(f"선택 변수를 찾을 수 없습니다. 가능한 컬럼: {ind_data.columns.tolist()}")
 
-    # 속성 데이터 준비
-    attributes = []
-    choices = []
-    valid_indices = []
+    if use_alternative_specific:
+        # ✅ Multinomial Logit: 대안별 데이터 준비
+        # 데이터는 이미 long format (각 행이 하나의 대안)
+        # sugar_content 컬럼으로 대안 구분
 
-    for idx in range(n_choice_situations):
-        row = ind_data.iloc[idx]
-        attr_values = [row[attr] for attr in choice_model.config.choice_attributes]
-        choice_value = row[choice_var]
+        # 유효한 choice set만 선택 (NaN 제외)
+        valid_mask = ~ind_data[choice_var].isna()
+        valid_data = ind_data[valid_mask].copy()
 
-        # NaN 체크
-        if not (pd.isna(choice_value) or any(pd.isna(v) for v in attr_values)):
-            attributes.append(attr_values)
-            choices.append(choice_value)
-            valid_indices.append(idx)
+        if len(valid_data) == 0:
+            return np.full(n_draws, -1e10)
 
-    if len(attributes) == 0:
-        # 모든 선택 상황이 NaN인 경우
-        return np.full(n_draws, -1e10)
+        # 속성 데이터 추출
+        attributes = valid_data[choice_model.config.choice_attributes].values
+        choices = valid_data[choice_var].values
 
-    attributes = np.array(attributes)  # (n_valid_situations, n_attributes)
-    choices = np.array(choices)  # (n_valid_situations,)
-    n_valid_situations = len(attributes)
+        # sugar_content 추출 (대안 구분용)
+        if 'sugar_content' in valid_data.columns:
+            sugar_contents = valid_data['sugar_content'].values
+        elif 'alternative' in valid_data.columns:
+            sugar_contents = valid_data['alternative'].values
+        else:
+            raise ValueError("sugar_content 또는 alternative 컬럼이 없습니다.")
 
-    # GPU로 전송
-    attributes_gpu = cp.asarray(attributes)
-    choices_gpu = cp.asarray(choices)
-    beta_gpu = cp.asarray(beta)
+        # GPU로 전송
+        attributes_gpu = cp.asarray(attributes)
+        choices_gpu = cp.asarray(choices)
+        beta_gpu = cp.asarray(beta)
 
-    # 첫 번째 draw에 대해서만 상세 로깅
-    log_detail = iteration_logger is not None
+    else:
+        # ✅ Binary Probit: 기존 방식
+        attributes = []
+        choices = []
+        valid_indices = []
 
-    # 파라미터 로깅 제거 (중복)
+        for idx in range(n_choice_situations):
+            row = ind_data.iloc[idx]
+            attr_values = [row[attr] for attr in choice_model.config.choice_attributes]
+            choice_value = row[choice_var]
+
+            # NaN 체크
+            if not (pd.isna(choice_value) or any(pd.isna(v) for v in attr_values)):
+                attributes.append(attr_values)
+                choices.append(choice_value)
+                valid_indices.append(idx)
+
+        if len(attributes) == 0:
+            # 모든 선택 상황이 NaN인 경우
+            return np.full(n_draws, -1e10)
+
+        attributes = np.array(attributes)  # (n_valid_situations, n_attributes)
+        choices = np.array(choices)  # (n_valid_situations,)
+        n_valid_situations = len(attributes)
+
+        # GPU로 전송
+        attributes_gpu = cp.asarray(attributes)
+        choices_gpu = cp.asarray(choices)
+        beta_gpu = cp.asarray(beta)
 
     # 속성 이름 리스트 (choice_model에서 가져오기)
     choice_attributes = choice_model.config.choice_attributes
@@ -149,41 +225,109 @@ def compute_choice_batch_gpu(ind_data: pd.DataFrame,
     for draw_idx in range(n_draws):
         lv_dict = lvs_list[draw_idx]
 
-        # ✅ 유연한 리스트 기반: 효용 계산
-        # V = intercept + beta*X + Σ(lambda_i * LV_i) + Σ(gamma_ij * LV_i * X_j)
-        utility = intercept + cp.dot(attributes_gpu, beta_gpu)
+        if use_alternative_specific:
+            # ✅ Multinomial Logit: 대안별 효용 계산
+            # V_alt = ASC_alt + β*X_alt + Σ(θ_alt_i * LV_i) + Σ(γ_alt_ij * LV_i * X_j)
 
-        # 주효과: Σ(lambda_i * LV_i)
-        for lv_name, lambda_val in lambda_lvs.items():
-            if lv_name in lv_dict:
-                lv_value = lv_dict[lv_name]
-                utility = utility + lambda_val * lv_value
+            utility = cp.zeros(len(attributes_gpu))
 
-        # LV-Attribute 상호작용: Σ(gamma_ij * LV_i * X_j)
-        for (lv_name, attr_name), gamma_val in gamma_interactions.items():
-            if lv_name in lv_dict:
-                lv_value = lv_dict[lv_name]
-                # attr_name에 해당하는 속성 인덱스 찾기
-                if attr_name in choice_attributes:
-                    attr_idx = choice_attributes.index(attr_name)
-                    # attributes_gpu[:, attr_idx]는 (n_valid_situations,) 형태
-                    attr_values = attributes_gpu[:, attr_idx]
-                    interaction = lv_value * attr_values
-                    utility = utility + gamma_val * interaction
+            for i in range(len(attributes_gpu)):
+                sugar_content = sugar_contents[i]
 
-        # 상세 로깅 제거 (중복)
+                if pd.isna(sugar_content):
+                    # opt-out (reference alternative)
+                    utility[i] = 0.0
+                elif sugar_content == '알반당' or sugar_content == 'A':
+                    # 일반당 대안
+                    utility[i] = asc_sugar + cp.dot(attributes_gpu[i], beta_gpu)
 
-        # 확률 계산: P = Φ(V) for choice=1, 1-Φ(V) for choice=0
-        prob = ndtr(utility)
+                    # 대안별 LV 주효과
+                    for (alt, lv_name), theta_val in theta_params.items():
+                        if (alt == 'sugar' or alt == 'A') and lv_name in lv_dict:
+                            utility[i] += theta_val * lv_dict[lv_name]
 
-        # choice=0인 경우 1-prob
-        prob = cp.where(choices_gpu == 1, prob, 1 - prob)
+                    # 대안별 LV-Attribute 상호작용
+                    for (alt, lv_name, attr_name), gamma_val in gamma_interactions.items():
+                        if (alt == 'sugar' or alt == 'A') and lv_name in lv_dict and attr_name in choice_attributes:
+                            attr_idx = choice_attributes.index(attr_name)
+                            utility[i] += gamma_val * lv_dict[lv_name] * attributes_gpu[i, attr_idx]
 
-        # 확률 클리핑 (수치 안정성)
-        prob = cp.clip(prob, 1e-10, 1 - 1e-10)
+                elif sugar_content == '무설탕' or sugar_content == 'B':
+                    # 무설탕 대안
+                    utility[i] = asc_sugar_free + cp.dot(attributes_gpu[i], beta_gpu)
 
-        # 로그우도 (모든 선택 상황의 곱 = 로그의 합)
-        ll = cp.sum(cp.log(prob))
+                    # 대안별 LV 주효과
+                    for (alt, lv_name), theta_val in theta_params.items():
+                        if (alt == 'sugar_free' or alt == 'B') and lv_name in lv_dict:
+                            utility[i] += theta_val * lv_dict[lv_name]
+
+                    # 대안별 LV-Attribute 상호작용
+                    for (alt, lv_name, attr_name), gamma_val in gamma_interactions.items():
+                        if (alt == 'sugar_free' or alt == 'B') and lv_name in lv_dict and attr_name in choice_attributes:
+                            attr_idx = choice_attributes.index(attr_name)
+                            utility[i] += gamma_val * lv_dict[lv_name] * attributes_gpu[i, attr_idx]
+
+            # Multinomial Logit 확률 계산
+            # P_i = exp(V_i) / Σ_j exp(V_j)
+            # choice set별로 그룹화 (3개 대안씩)
+            n_alternatives = 3
+            n_choice_sets = len(utility) // n_alternatives
+
+            ll = 0.0
+            for cs_idx in range(n_choice_sets):
+                start_idx = cs_idx * n_alternatives
+                end_idx = start_idx + n_alternatives
+
+                # 해당 choice set의 효용
+                V_cs = utility[start_idx:end_idx]
+
+                # 수치 안정성을 위해 최대값 빼기
+                V_max = cp.max(V_cs)
+                exp_V = cp.exp(V_cs - V_max)
+                sum_exp_V = cp.sum(exp_V)
+
+                # 선택된 대안의 확률
+                chosen_idx = start_idx + cp.where(choices_gpu[start_idx:end_idx] == 1)[0][0]
+                chosen_alt_idx = int(chosen_idx - start_idx)
+                prob_chosen = exp_V[chosen_alt_idx] / sum_exp_V
+
+                # 로그우도 누적
+                ll += cp.log(cp.clip(prob_chosen, 1e-10, 1.0))
+
+        else:
+            # ✅ Binary Probit: 기존 방식
+            # V = intercept + beta*X + Σ(lambda_i * LV_i) + Σ(gamma_ij * LV_i * X_j)
+            utility = intercept + cp.dot(attributes_gpu, beta_gpu)
+
+            # 주효과: Σ(lambda_i * LV_i)
+            for lv_name, lambda_val in lambda_lvs.items():
+                if lv_name in lv_dict:
+                    lv_value = lv_dict[lv_name]
+                    utility = utility + lambda_val * lv_value
+
+            # LV-Attribute 상호작용: Σ(gamma_ij * LV_i * X_j)
+            for (lv_name, attr_name), gamma_val in gamma_interactions.items():
+                if lv_name in lv_dict:
+                    lv_value = lv_dict[lv_name]
+                    # attr_name에 해당하는 속성 인덱스 찾기
+                    if attr_name in choice_attributes:
+                        attr_idx = choice_attributes.index(attr_name)
+                        # attributes_gpu[:, attr_idx]는 (n_valid_situations,) 형태
+                        attr_values = attributes_gpu[:, attr_idx]
+                        interaction = lv_value * attr_values
+                        utility = utility + gamma_val * interaction
+
+            # 확률 계산: P = Φ(V) for choice=1, 1-Φ(V) for choice=0
+            prob = ndtr(utility)
+
+            # choice=0인 경우 1-prob
+            prob = cp.where(choices_gpu == 1, prob, 1 - prob)
+
+            # 확률 클리핑 (수치 안정성)
+            prob = cp.clip(prob, 1e-10, 1 - 1e-10)
+
+            # 로그우도 (모든 선택 상황의 곱 = 로그의 합)
+            ll = cp.sum(cp.log(prob))
 
         # 유한성 체크
         if not cp.isfinite(ll):
@@ -368,10 +512,10 @@ def _compute_single_latent_structural_batch_gpu(ind_data: pd.DataFrame,
                                                 structural_model,
                                                 iteration_logger=None) -> np.ndarray:
     """단일 잠재변수 구조모델 우도 계산 (GPU 배치)"""
-    
+
     n_draws = len(lvs_list)
     gamma = params['gamma']
-    
+
     # 공변량 효과 계산 (모든 draws에 동일)
     first_row = ind_data.iloc[0]
     x_effect = 0.0
@@ -381,26 +525,26 @@ def _compute_single_latent_structural_batch_gpu(ind_data: pd.DataFrame,
             if pd.isna(value):
                 value = 0.0
             x_effect += gamma[i] * value
-    
+
     draw_lls = []
-    
+
     for draw_idx in range(n_draws):
         lv_dict = lvs_list[draw_idx]
         draw = draws[draw_idx]
-        
+
         # 예측값
         lv_mean = x_effect
-        
+
         # 실제값
         lv_actual = list(lv_dict.values())[0]
-        
+
         # 잔차
         residual = lv_actual - lv_mean
-        
+
         # 로그우도: log N(lv_actual | lv_mean, 1)
         ll = -0.5 * np.log(2 * np.pi) - 0.5 * residual**2
-        
+
         draw_lls.append(ll)
-    
+
     return np.array(draw_lls)
 
