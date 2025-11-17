@@ -7,29 +7,29 @@
 📌 설정 예시:
 
 1. Base Model (잠재변수 없음):
-    MAIN_LVS = []
-    MODERATION_LVS = []
-    LV_ATTRIBUTE_INTERACTIONS = []
+    MAIN_LVS = ['purchase_intention', 'nutrition_knowledge']  # Auto-generated
+    MODERATION_LVS = []  # Auto-generated
+    LV_ATTRIBUTE_INTERACTIONS = [('purchase_intention', 'health_label'), ('nutrition_knowledge', 'price')]  # Auto-generated
 
 2. Base + PI 주효과:
-    MAIN_LVS = ['purchase_intention']
-    MODERATION_LVS = []
-    LV_ATTRIBUTE_INTERACTIONS = []
+    MAIN_LVS = ['purchase_intention', 'nutrition_knowledge']  # Auto-generated
+    MODERATION_LVS = []  # Auto-generated
+    LV_ATTRIBUTE_INTERACTIONS = [('purchase_intention', 'health_label'), ('nutrition_knowledge', 'price')]  # Auto-generated
 
 3. Base + PI + NK 주효과:
-    MAIN_LVS = ['purchase_intention', 'nutrition_knowledge']
-    MODERATION_LVS = []
-    LV_ATTRIBUTE_INTERACTIONS = []
+    MAIN_LVS = ['purchase_intention', 'nutrition_knowledge']  # Auto-generated
+    MODERATION_LVS = []  # Auto-generated
+    LV_ATTRIBUTE_INTERACTIONS = [('purchase_intention', 'health_label'), ('nutrition_knowledge', 'price')]  # Auto-generated
 
 4. Base + PI 주효과 + PI×price 상호작용:
-    MAIN_LVS = ['purchase_intention']
-    MODERATION_LVS = []
-    LV_ATTRIBUTE_INTERACTIONS = [('purchase_intention', 'price')]
+    MAIN_LVS = ['purchase_intention', 'nutrition_knowledge']  # Auto-generated
+    MODERATION_LVS = []  # Auto-generated
+    LV_ATTRIBUTE_INTERACTIONS = [('purchase_intention', 'health_label'), ('nutrition_knowledge', 'price')]  # Auto-generated
 
 5. Base + PI + NK 주효과 + 조절효과 + 상호작용:
-    MAIN_LVS = ['purchase_intention', 'nutrition_knowledge']
-    MODERATION_LVS = [('perceived_price', 'nutrition_knowledge')]
-    LV_ATTRIBUTE_INTERACTIONS = [
+    MAIN_LVS = ['purchase_intention', 'nutrition_knowledge']  # Auto-generated
+    MODERATION_LVS = []  # Auto-generated
+    LV_ATTRIBUTE_INTERACTIONS = [('purchase_intention', 'health_label'), ('nutrition_knowledge', 'price')]  # Auto-generated
         ('purchase_intention', 'price'),
         ('nutrition_knowledge', 'health_label')
     ]
@@ -218,27 +218,27 @@ def main():
     # 📌 요인점수 변환 방법
     # 'zscore': Z-score 표준화 (평균 0, 표준편차 1) - 기본값
     # 'center': 중심화 (평균 0, 표준편차는 원본 유지)
-    STANDARDIZATION_METHOD = 'zscore'  # ✅ Z-score 표준화 사용
+    STANDARDIZATION_METHOD = 'zscore'  # Z-score 표준화 사용
 
     # 📌 선택모델 설정
     CHOICE_ATTRIBUTES = ['health_label', 'price']  # 선택 속성
-    CHOICE_TYPE = 'multinomial'  # 'binary' 또는 'multinomial' - ✅ 3개 대안이므로 multinomial 사용
+    CHOICE_TYPE = 'multinomial'  # 'binary' 또는 'multinomial' - 3개 대안이므로 multinomial 사용
     PRICE_VARIABLE = 'price'  # 가격 변수명
 
     # 📌 잠재변수 주효과 (원하는 잠재변수만 추가)
     # 예시: [] = Base Model (잠재변수 없음)
     #      ['purchase_intention'] = Base + PI 주효과
     #      ['purchase_intention', 'nutrition_knowledge'] = Base + PI + NK 주효과
-    MAIN_LVS = []  # ✅ Base Model 테스트
+    MAIN_LVS = ['purchase_intention', 'nutrition_knowledge']  # Auto-generated
 
     # 📌 조절효과 (잠재변수 2개 세트)
     # 예시: [('perceived_price', 'nutrition_knowledge')] = PP와 NK의 조절효과
-    MODERATION_LVS = []  # ✅ 조절효과 없음
+    MODERATION_LVS = []  # Auto-generated
 
     # 📌 LV-Attribute 상호작용 (잠재변수-속성 2개 세트)
     # 예시: [('purchase_intention', 'price')] = PI × price 상호작용
     #      [('purchase_intention', 'price'), ('nutrition_knowledge', 'health_label')]
-    LV_ATTRIBUTE_INTERACTIONS = []  # ✅ 상호작용 없음
+    LV_ATTRIBUTE_INTERACTIONS = [('purchase_intention', 'health_label'), ('nutrition_knowledge', 'price')]  # Auto-generated
 
     # ═══════════════════════════════════════════════════════════════════
     # 🤖 자동 처리 영역 - 수정 불필요
@@ -266,7 +266,7 @@ def main():
     print("\n[1] 데이터 로드 중...")
     data_path = project_root / "data" / "processed" / "iclv" / "integrated_data.csv"
     data = pd.read_csv(data_path)
-    print(f"✅ 데이터 로드 완료: {len(data)}행, {len(data.columns)}열")
+    print(f"[OK] 데이터 로드 완료: {len(data)}행, {len(data.columns)}열")
 
     # 2. 1단계 결과 로드
     print("\n[2] 1단계 결과 로드 중...")
@@ -275,7 +275,7 @@ def main():
     if not stage1_path.exists():
         raise FileNotFoundError(f"1단계 결과 파일이 없습니다: {stage1_path}")
 
-    print(f"✅ 1단계 결과 파일: {stage1_path.name}")
+    print(f"[OK] 1단계 결과 파일: {stage1_path.name}")
 
     # 3. 모델 설정 생성
     print("\n[3] 선택모델 설정 중...")
@@ -312,15 +312,15 @@ def main():
     if LV_ATTRIBUTE_INTERACTIONS:
         lv_attr_config = [{'lv': pair[0], 'attribute': pair[1]} for pair in LV_ATTRIBUTE_INTERACTIONS]
 
-    # ✅ all_lvs_as_main 설정: 주효과가 있거나 상호작용이 있으면 True
+    # all_lvs_as_main 설정: 주효과가 있거나 상호작용이 있으면 True
     all_lvs_as_main_setting = bool(MAIN_LVS) or bool(LV_ATTRIBUTE_INTERACTIONS)
 
     config.choice = ChoiceConfig(
         choice_attributes=CHOICE_ATTRIBUTES,
         choice_type=CHOICE_TYPE,
         price_variable=PRICE_VARIABLE,
-        all_lvs_as_main=all_lvs_as_main_setting,  # ✅ 수정: 상호작용 있으면 True
-        main_lvs=MAIN_LVS if MAIN_LVS else [],  # ✅ 수정: None 대신 빈 리스트
+        all_lvs_as_main=all_lvs_as_main_setting,  # 수정: 상호작용 있으면 True
+        main_lvs=MAIN_LVS if MAIN_LVS else [],  # 수정: None 대신 빈 리스트
         moderation_enabled=bool(MODERATION_LVS),  # 자동 설정
         moderator_lvs=moderator_lvs,  # 자동 설정
         main_lv=main_lv,  # 자동 설정
@@ -328,7 +328,7 @@ def main():
     )
 
     # 선택모델 설정 자동 출력
-    print(f"✅ 선택모델 설정:")
+    print(f"[OK] 선택모델 설정:")
     print(f"   - 모델 유형: {model_type_str}")
     print(f"   - 선택 속성: {', '.join(CHOICE_ATTRIBUTES)}")
 
@@ -359,17 +359,17 @@ def main():
     print("\n[4] 선택모델 생성 중...")
     if CHOICE_TYPE == 'multinomial':
         choice_model = MultinomialLogitChoice(config.choice)
-        print("✅ 선택모델 생성 완료 (Multinomial Logit)")
+        print("[OK] 선택모델 생성 완료 (Multinomial Logit)")
     elif CHOICE_TYPE == 'binary':
         choice_model = BinaryProbitChoice(config.choice)
-        print("✅ 선택모델 생성 완료 (Binary Probit)")
+        print("[OK] 선택모델 생성 완료 (Binary Probit)")
     else:
         raise ValueError(f"지원하지 않는 CHOICE_TYPE: {CHOICE_TYPE}")
 
     # 5. Estimator 생성
     print("\n[5] Estimator 생성 중...")
     estimator = SequentialEstimator(config, standardization_method=STANDARDIZATION_METHOD)
-    print("✅ Estimator 생성 완료")
+    print("[OK] Estimator 생성 완료")
     print(f"   - 요인점수 변환 방법: {STANDARDIZATION_METHOD}")
 
     # 6. 2단계 추정 실행
@@ -382,7 +382,7 @@ def main():
         factor_scores=str(stage1_path)  # 1단계 결과 파일 경로
     )
     
-    print("\n✅ 2단계 추정 완료!")
+    print("\n[OK] 2단계 추정 완료!")
 
     # 7. 결과 출력
     print("\n" + "=" * 70)
@@ -436,7 +436,7 @@ def main():
                 sig = _get_significance(stat['p'])
                 print(f"{key:40s} {stat['estimate']:12.4f} {stat['se']:12.4f} {stat['t']:12.4f} {stat['p']:12.4f} {sig:>10s}")
 
-        # ✅ gamma (LV-Attribute 상호작용)
+        # gamma (LV-Attribute 상호작용)
         for key in sorted([k for k in param_stats.keys() if k.startswith('gamma_')]):
             stat = param_stats[key]
             sig = _get_significance(stat['p'])
@@ -500,7 +500,7 @@ def main():
         if 'lambda_mod_nutrition_knowledge' in params:
             print(f"{'lambda_mod_nutrition_knowledge':40s} {params['lambda_mod_nutrition_knowledge']:15.4f} {'지식 조절':>20s}")
 
-        # ✅ gamma (LV-Attribute 상호작용, 대안별)
+        # gamma (LV-Attribute 상호작용, 대안별)
         gamma_descriptions = {
             'gamma_sugar_purchase_intention_price': '일반당: PI × price',
             'gamma_sugar_purchase_intention_health_label': '일반당: PI × health_label',
@@ -533,7 +533,7 @@ def main():
     print(f"  - 1단계 모델: {stage1_model_name}")
     print(f"  - 2단계 모델: {filename_prefix.split('1_')[1].replace('2', '')}")
 
-    # ✅ 통합 결과 저장 (적합도 + 파라미터)
+    # 통합 결과 저장 (적합도 + 파라미터)
     combined_data = []
 
     # 1. 적합도 지수 추가 (섹션: Model_Fit)
@@ -675,7 +675,7 @@ def main():
                     'description': desc
                 })
 
-        # ✅ gamma (LV-Attribute 상호작용, 대안별)
+        # gamma (LV-Attribute 상호작용, 대안별)
         gamma_descriptions = {
             'gamma_sugar_purchase_intention_price': '일반당: PI × price',
             'gamma_sugar_purchase_intention_health_label': '일반당: PI × health_label',
@@ -805,7 +805,7 @@ def main():
                 'description': '지식 조절'
             })
 
-        # ✅ gamma (LV-Attribute 상호작용, 대안별)
+        # gamma (LV-Attribute 상호작용, 대안별)
         gamma_descriptions = {
             'gamma_sugar_purchase_intention_price': '일반당: PI × price',
             'gamma_sugar_purchase_intention_health_label': '일반당: PI × health_label',
@@ -828,11 +828,11 @@ def main():
                     'description': desc
                 })
 
-    # ✅ 통합 결과 저장 (하나의 CSV 파일)
+    # 통합 결과 저장 (하나의 CSV 파일)
     combined_df = pd.DataFrame(combined_data)
     combined_path = save_dir / f"{filename_prefix}_results.csv"
     combined_df.to_csv(combined_path, index=False, encoding='utf-8-sig')
-    print(f"\n  📁 {combined_path}")
+    print(f"\n  [SAVED] {combined_path}")
     
     print("\n" + "=" * 70)
     print("2단계 추정 완료!")
