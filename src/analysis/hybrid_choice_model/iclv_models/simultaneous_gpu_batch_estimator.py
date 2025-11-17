@@ -262,15 +262,15 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
         self.iteration_logger.info(f"  intercept: {choice_params['intercept']:.6f}")
         self.iteration_logger.info(f"  beta: {choice_params['beta']}")
 
-        if 'lambda_main' in choice_params:
-            # 조절효과 모델
-            self.iteration_logger.info(f"  lambda_main: {choice_params['lambda_main']:.6f}")
-            for key in choice_params:
-                if key.startswith('lambda_mod_'):
-                    self.iteration_logger.info(f"  {key}: {choice_params[key]:.6f}")
-        else:
-            # 기본 모델
-            self.iteration_logger.info(f"  lambda: {choice_params['lambda']:.6f}")
+        # ✅ 유연한 리스트 기반: 모든 lambda_* 파라미터 출력
+        for key in sorted(choice_params.keys()):
+            if key.startswith('lambda_'):
+                self.iteration_logger.info(f"  {key}: {choice_params[key]:.6f}")
+
+        # ✅ 유연한 리스트 기반: 모든 gamma_* 파라미터 출력 (LV-Attribute 상호작용)
+        for key in sorted(choice_params.keys()):
+            if key.startswith('gamma_') and not '_to_' in key:
+                self.iteration_logger.info(f"  {key}: {choice_params[key]:.6f}")
 
         self.iteration_logger.info("="*80)
 
@@ -629,187 +629,24 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
             self.iteration_logger.info(f"  선택모델 intercept: {param_dict['choice']['intercept']}")
             self.iteration_logger.info(f"  선택모델 beta: {param_dict['choice']['beta']}")
 
-            # ✅ 조절효과 지원
-            if 'lambda_main' in param_dict['choice']:
-                self.iteration_logger.info(f"  선택모델 lambda_main: {param_dict['choice']['lambda_main']}")
-                for key in param_dict['choice']:
-                    if key.startswith('lambda_mod_'):
-                        self.iteration_logger.info(f"  선택모델 {key}: {param_dict['choice'][key]}")
-            else:
-                self.iteration_logger.info(f"  선택모델 lambda: {param_dict['choice']['lambda']}")
+            # ✅ 유연한 리스트 기반: 모든 lambda_* 파라미터 출력
+            for key in sorted(param_dict['choice'].keys()):
+                if key.startswith('lambda_'):
+                    self.iteration_logger.info(f"  선택모델 {key}: {param_dict['choice'][key]}")
+
+            # ✅ 유연한 리스트 기반: 모든 gamma_* 파라미터 출력 (LV-Attribute 상호작용)
+            for key in sorted(param_dict['choice'].keys()):
+                if key.startswith('gamma_') and not '_to_' in key:
+                    self.iteration_logger.info(f"  선택모델 {key}: {param_dict['choice'][key]}")
 
             self.iteration_logger.info("=" * 80)
             self._second_draw_logged = True
 
         return draw_lls
 
-    def _get_initial_parameters(self, measurement_model,
-                                structural_model, choice_model) -> np.ndarray:
-        """
-        초기 파라미터 설정 (다중 잠재변수 지원)
-
-        ✅ 사용자 정의 초기값이 있으면 우선 사용
-        ✅ 없으면 최종 수렴값 (Iteration 24) 기반 초기값 사용
-        """
-        # 사용자 정의 초기값이 있으면 그것을 사용
-        if self.user_initial_params is not None:
-            logger.info(f"사용자 정의 초기값 사용 (파라미터 수: {len(self.user_initial_params)})")
-            return self.user_initial_params
-
-        from .initial_values_final import (
-            get_zeta_initial_value,
-            get_sigma_sq_initial_value,
-            ZETA_INITIAL_VALUES,
-            SIGMA_SQ_INITIAL_VALUES
-        )
-
-        params = []
-
-        # 다중 잠재변수 측정모델 파라미터
-        if hasattr(self.config, 'measurement_configs'):
-            # 다중 잠재변수
-            for lv_name, config in self.config.measurement_configs.items():
-                # measurement_method 확인
-                method = getattr(config, 'measurement_method', 'continuous_linear')
-
-                if method == 'continuous_linear':
-                    # ContinuousLinearMeasurement
-                    n_indicators = len(config.indicators)
-
-                    # 요인적재량 (zeta)
-                    # ✅ Iteration 40 기반 초기값 사용
-                    if lv_name in ZETA_INITIAL_VALUES:
-                        zeta_values = ZETA_INITIAL_VALUES[lv_name]['values']
-                        if config.fix_first_loading:
-                            # 첫 번째는 1.0으로 고정 (파라미터 벡터에 포함하지 않음)
-                            params.extend(zeta_values)
-                        else:
-                            # 첫 번째도 포함
-                            params.extend([1.0] + zeta_values)
-                    else:
-                        # 기본값 (이전 방식)
-                        zeta_init = get_zeta_initial_value(lv_name, default=0.05)
-                        if config.fix_first_loading:
-                            params.extend([zeta_init] * (n_indicators - 1))
-                        else:
-                            params.extend([zeta_init] * n_indicators)
-
-                    # 오차분산 (sigma_sq)
-                    # ✅ Iteration 40 기반 초기값 사용
-                    if lv_name in SIGMA_SQ_INITIAL_VALUES:
-                        sigma_sq_values = SIGMA_SQ_INITIAL_VALUES[lv_name]['values']
-                        if not config.fix_error_variance:
-                            params.extend(sigma_sq_values)
-                    else:
-                        # 기본값 (이전 방식)
-                        sigma_sq_init = get_sigma_sq_initial_value(lv_name, default=0.03)
-                        if not config.fix_error_variance:
-                            params.extend([sigma_sq_init] * n_indicators)
-
-                elif method == 'ordered_probit':
-                    # OrderedProbitMeasurement
-                    n_indicators = len(config.indicators)
-                    n_thresholds = config.n_categories - 1
-
-                    # 요인적재량 (zeta)
-                    params.extend([1.0] * n_indicators)
-
-                    # 임계값 (tau)
-                    for _ in range(n_indicators):
-                        if n_thresholds == 4:
-                            params.extend([-2, -1, 1, 2])  # 5점 척도
-                        elif n_thresholds == 1:
-                            params.extend([0.0])  # 2점 척도
-                        else:
-                            # 일반적인 경우
-                            params.extend(list(range(-n_thresholds//2 + 1, n_thresholds//2 + 1)))
-
-                else:
-                    raise ValueError(f"지원하지 않는 측정 방법: {method}")
-        else:
-            # 단일 잠재변수
-            n_indicators = len(self.config.measurement.indicators)
-            params.extend([1.0] * n_indicators)
-
-            n_thresholds = self.config.measurement.n_categories - 1
-            for _ in range(n_indicators):
-                params.extend([-2, -1, 1, 2])
-
-        # 구조모델 파라미터
-        if hasattr(self.config.structural, 'is_hierarchical') and self.config.structural.is_hierarchical:
-            # ✅ 계층적 구조
-            from .initial_values_final import get_gamma_initial_value
-
-            for path in self.config.structural.hierarchical_paths:
-                target = path['target']
-                predictors = path['predictors']
-
-                for pred in predictors:
-                    # ✅ 최종 수렴값 기반 초기값 사용
-                    path_name = f'{pred}_to_{target}'
-                    gamma_init = get_gamma_initial_value(path_name, default=0.5)
-                    params.append(gamma_init)
-        elif hasattr(self.config.structural, 'n_exo'):
-            # 병렬 구조 (하위 호환)
-            n_exo = self.config.structural.n_exo
-            n_cov = self.config.structural.n_cov
-
-            # gamma_lv (외생 LV → 내생 LV)
-            params.extend([0.0] * n_exo)
-
-            # gamma_x (공변량 → 내생 LV)
-            params.extend([0.0] * n_cov)
-        else:
-            # 단일 잠재변수 구조모델
-            n_sociodem = len(self.config.structural.sociodemographics)
-            params.extend([0.0] * n_sociodem)
-
-        # 선택모델 파라미터
-        from .initial_values_final import get_choice_initial_value
-
-        # - 절편
-        # ✅ 최종 수렴값 기반 초기값 사용
-        params.append(get_choice_initial_value('intercept', default=0.0))
-
-        # - 속성 계수 (beta)
-        # ✅ 최종 수렴값 기반 초기값 사용
-        n_attributes = len(self.config.choice.choice_attributes)
-        for attr in self.config.choice.choice_attributes:
-            if 'price' in attr.lower():
-                params.append(get_choice_initial_value('beta_price', default=-0.26))
-            elif 'sugar' in attr.lower():
-                params.append(get_choice_initial_value('beta_sugar_free', default=0.23))
-            elif 'health' in attr.lower():
-                params.append(get_choice_initial_value('beta_health_label', default=0.23))
-            else:
-                # 기타 속성
-                params.append(0.2)
-
-        # - 잠재변수 계수
-        # ✅ 모든 LV 주효과 지원
-        if hasattr(self.config.choice, 'all_lvs_as_main') and self.config.choice.all_lvs_as_main:
-            # 모든 LV 주효과 모델: lambda_{lv_name}
-            if hasattr(self.config.choice, 'main_lvs'):
-                for lv_name in self.config.choice.main_lvs:
-                    # 각 LV별 초기값 (1.0)
-                    params.append(1.0)
-        elif hasattr(self.config.choice, 'moderation_enabled') and self.config.choice.moderation_enabled:
-            # ✅ 조절효과 모델 - 최종 수렴값 기반 초기값 사용
-            params.append(get_choice_initial_value('lambda_main', default=0.45))
-
-            # lambda_mod (조절효과 계수)
-            for mod_lv in self.config.choice.moderator_lvs:
-                if 'price' in mod_lv.lower():
-                    params.append(get_choice_initial_value('lambda_mod_perceived_price', default=-1.50))
-                elif 'knowledge' in mod_lv.lower():
-                    params.append(get_choice_initial_value('lambda_mod_nutrition_knowledge', default=1.05))
-                else:
-                    params.append(0.0)
-        else:
-            # 기본 모델 (하위 호환)
-            params.append(1.0)
-
-        return np.array(params)
+    # ❌ 제거됨: _get_initial_parameters
+    # ✅ 부모 클래스(SimultaneousEstimatorFixed)의 메서드 사용
+    # (ParameterManager 기반, 중복 로직 제거)
 
     def _get_parameter_bounds(self, measurement_model,
                               structural_model, choice_model) -> list:
@@ -910,207 +747,9 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
 
         return bounds
 
-    def _unpack_parameters(self, params: np.ndarray,
-                          measurement_model,
-                          structural_model,
-                          choice_model) -> Dict[str, Dict]:
-        """
-        파라미터 벡터를 딕셔너리로 변환 (다중 잠재변수 지원)
-        """
-        # 디버깅: 파라미터 언팩 호출 확인 (간소화)
-        if hasattr(self, 'iteration_logger') and self.iteration_logger is not None:
-            if not hasattr(self, '_unpack_count'):
-                self._unpack_count = 0
-            self._unpack_count += 1
-            # ✅ 파라미터 언팩 로깅 비활성화 (메모리 로깅 포함)
-            # 처음 3번만 로깅
-            # if self._unpack_count <= 3:
-            #     self.iteration_logger.info(f"[파라미터 언팩 #{self._unpack_count}] 처음 5개: {params[:5]}, 마지막 5개: {params[-5:]}")
-
-            # 메모리 체크 (파라미터 언팩 시) - 비활성화
-            # if hasattr(self, 'memory_monitor'):
-            #     self.memory_monitor.log_memory_stats(f"파라미터 언팩 #{self._unpack_count}")
-            #
-            #     # 항상 임계값 체크 및 필요시 정리
-            #     mem_info = self.memory_monitor.check_and_cleanup(f"파라미터 언팩 #{self._unpack_count}")
-
-        idx = 0
-        param_dict = {
-            'measurement': {},
-            'structural': {},
-            'choice': {}
-        }
-
-        # 다중 잠재변수 측정모델 파라미터
-        if hasattr(self.config, 'measurement_configs'):
-            # 다중 잠재변수
-            for lv_idx, (lv_name, config) in enumerate(self.config.measurement_configs.items()):
-                # measurement_method 확인
-                method = getattr(config, 'measurement_method', 'continuous_linear')
-
-                if method == 'continuous_linear':
-                    # ContinuousLinearMeasurement
-                    n_indicators = len(config.indicators)
-
-                    # 요인적재량 (zeta)
-                    if config.fix_first_loading:
-                        zeta = np.ones(n_indicators)
-                        zeta[0] = 1.0  # 고정
-                        zeta[1:] = params[idx:idx + n_indicators - 1]
-                        idx += n_indicators - 1
-                    else:
-                        zeta = params[idx:idx + n_indicators]
-                        idx += n_indicators
-
-                    # 오차분산 (sigma_sq)
-                    if config.fix_error_variance:
-                        sigma_sq = np.ones(n_indicators) * config.initial_error_variance
-                    else:
-                        sigma_sq = params[idx:idx + n_indicators]
-                        idx += n_indicators
-
-                    param_dict['measurement'][lv_name] = {'zeta': zeta, 'sigma_sq': sigma_sq}
-
-                    # 첫 번째 LV에 대해서만 상세 로깅
-                    if hasattr(self, 'iteration_logger') and hasattr(self, '_unpack_count'):
-                        if self._unpack_count <= 3 and lv_idx == 0:
-                            self.iteration_logger.info(f"  측정모델 {lv_name}: zeta[0]={zeta[0]:.4f}, sigma_sq[0]={sigma_sq[0]:.4f}")
-
-                elif method == 'ordered_probit':
-                    # OrderedProbitMeasurement
-                    n_indicators = len(config.indicators)
-                    n_thresholds = config.n_categories - 1
-
-                    # 요인적재량 (zeta)
-                    zeta = params[idx:idx+n_indicators]
-                    idx += n_indicators
-
-                    # 임계값 (tau)
-                    tau_list = []
-                    for i in range(n_indicators):
-                        tau_list.append(params[idx:idx+n_thresholds])
-                        idx += n_thresholds
-                    tau = np.array(tau_list)
-
-                    param_dict['measurement'][lv_name] = {'zeta': zeta, 'tau': tau}
-
-                    # 첫 번째 LV에 대해서만 상세 로깅
-                    if hasattr(self, 'iteration_logger') and hasattr(self, '_unpack_count'):
-                        if self._unpack_count <= 3 and lv_idx == 0:
-                            self.iteration_logger.info(f"  측정모델 {lv_name}: zeta[0]={zeta[0]:.4f}, tau[0,0]={tau[0,0]:.4f}")
-
-                else:
-                    raise ValueError(f"지원하지 않는 측정 방법: {method}")
-        else:
-            # 단일 잠재변수
-            n_indicators = len(self.config.measurement.indicators)
-            zeta = params[idx:idx+n_indicators]
-            idx += n_indicators
-
-            n_thresholds = self.config.measurement.n_categories - 1
-            tau_list = []
-            for i in range(n_indicators):
-                tau_list.append(params[idx:idx+n_thresholds])
-                idx += n_thresholds
-            tau = np.array(tau_list)
-
-            param_dict['measurement'] = {'zeta': zeta, 'tau': tau}
-
-        # 구조모델 파라미터
-        if hasattr(self.config.structural, 'is_hierarchical') and self.config.structural.is_hierarchical:
-            # ✅ 계층적 구조
-            for path in self.config.structural.hierarchical_paths:
-                target = path['target']
-                predictors = path['predictors']
-
-                for pred in predictors:
-                    param_name = f'gamma_{pred}_to_{target}'
-                    param_dict['structural'][param_name] = params[idx]
-                    idx += 1
-
-            # 상세 로깅
-            if hasattr(self, 'iteration_logger') and hasattr(self, '_unpack_count'):
-                if self._unpack_count <= 3:
-                    first_param = list(param_dict['structural'].keys())[0]
-                    self.iteration_logger.info(f"  구조모델 (계층적): {first_param}={param_dict['structural'][first_param]:.6f}")
-
-        elif hasattr(self.config.structural, 'n_exo'):
-            # 병렬 구조 (하위 호환)
-            n_exo = self.config.structural.n_exo
-            n_cov = self.config.structural.n_cov
-
-            # gamma_lv (외생 LV → 내생 LV)
-            gamma_lv = params[idx:idx+n_exo]
-            idx += n_exo
-
-            # gamma_x (공변량 → 내생 LV)
-            gamma_x = params[idx:idx+n_cov]
-            idx += n_cov
-
-            param_dict['structural'] = {'gamma_lv': gamma_lv, 'gamma_x': gamma_x}
-
-            # 상세 로깅 (간소화)
-            if hasattr(self, 'iteration_logger') and hasattr(self, '_unpack_count'):
-                if self._unpack_count <= 3:
-                    gamma_lv_str = f"gamma_lv[0]={gamma_lv[0]:.6f}" if len(gamma_lv) > 0 else "gamma_lv=[]"
-                    gamma_x_str = f"gamma_x[0]={gamma_x[0]:.6f}" if len(gamma_x) > 0 else "gamma_x=[]"
-                    self.iteration_logger.info(f"  구조모델: {gamma_lv_str}, {gamma_x_str}")
-        else:
-            # 단일 잠재변수 구조모델
-            n_sociodem = len(self.config.structural.sociodemographics)
-            gamma = params[idx:idx+n_sociodem]
-            idx += n_sociodem
-
-            param_dict['structural'] = {'gamma': gamma}
-
-        # 선택모델 파라미터
-        intercept = params[idx]
-        idx += 1
-
-        n_attributes = len(self.config.choice.choice_attributes)
-        beta = params[idx:idx+n_attributes]
-        idx += n_attributes
-
-        # 잠재변수 계수
-        if hasattr(self.config.choice, 'moderation_enabled') and self.config.choice.moderation_enabled:
-            # ✅ 조절효과 모델
-            lambda_main = params[idx]
-            idx += 1
-
-            param_dict['choice'] = {
-                'intercept': intercept,
-                'beta': beta,
-                'lambda_main': lambda_main
-            }
-
-            # 조절효과 계수
-            for mod_lv in self.config.choice.moderator_lvs:
-                param_name = f'lambda_mod_{mod_lv}'
-                param_dict['choice'][param_name] = params[idx]
-                idx += 1
-
-            # 상세 로깅
-            if hasattr(self, 'iteration_logger') and hasattr(self, '_unpack_count'):
-                if self._unpack_count <= 3:
-                    first_mod = self.config.choice.moderator_lvs[0]
-                    self.iteration_logger.info(f"  선택모델 (조절): intercept={intercept:.6f}, lambda_main={lambda_main:.6f}, lambda_mod_{first_mod}={param_dict['choice'][f'lambda_mod_{first_mod}']:.6f}")
-        else:
-            # 기본 모델 (하위 호환)
-            lambda_lv = params[idx]
-            idx += 1
-
-            param_dict['choice'] = {
-                'intercept': intercept,
-                'beta': beta,
-                'lambda': lambda_lv
-            }
-
-            # 상세 로깅 (간소화)
-            if hasattr(self, 'iteration_logger') and hasattr(self, '_unpack_count'):
-                if self._unpack_count <= 3:
-                    self.iteration_logger.info(f"  선택모델: intercept={intercept:.6f}, beta[0]={beta[0]:.6f}, lambda={lambda_lv:.6f}")
-
-        return param_dict
+    # ❌ 제거됨: _unpack_parameters (197 lines)
+    # ✅ 부모 클래스(SimultaneousEstimatorFixed)의 메서드 사용
+    # (ParameterManager 기반, 유연한 리스트 기반 시스템)
 
     def _structure_statistics(self, estimates, std_errors, t_stats, p_values,
                               measurement_model, structural_model, choice_model):

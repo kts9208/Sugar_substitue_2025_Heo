@@ -28,6 +28,9 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+# 공통 유틸리티 import
+from model_config_utils import build_paths_from_config, LV_NAMES, LV_KOREAN
+
 from src.analysis.hybrid_choice_model.iclv_models.sequential_estimator import SequentialEstimator
 from src.analysis.hybrid_choice_model.iclv_models.multi_latent_measurement import MultiLatentMeasurement
 from src.analysis.hybrid_choice_model.iclv_models.multi_latent_structural import MultiLatentStructural
@@ -59,80 +62,6 @@ CALCULATE_MODIFICATION_INDICES = False
 # ============================================================================
 # 🤖 자동 처리 영역 - 수정 불필요
 # ============================================================================
-
-# 약어 매핑
-LV_NAMES = {
-    'HC': 'health_concern',
-    'PB': 'perceived_benefit',
-    'PP': 'perceived_price',
-    'NK': 'nutrition_knowledge',
-    'PI': 'purchase_intention'
-}
-
-# 한글 이름 매핑
-LV_KOREAN = {
-    'HC': '건강관심도',
-    'PB': '건강유익성',
-    'PP': '가격수준',
-    'NK': '영양지식',
-    'PI': '구매의도'
-}
-
-
-def build_paths_from_config(paths_config):
-    """
-    경로 설정에서 hierarchical_paths 생성
-    
-    Args:
-        paths_config: {'HC->PB': True, ...} 형태의 딕셔너리
-    
-    Returns:
-        hierarchical_paths: [{'target': ..., 'predictors': [...]}, ...] or None
-        path_name: 파일명용 경로 이름 (예: 'HC-PB_PB-PI' 또는 'base_model')
-        model_description: 모델 설명 (예: 'HC→PB + PB→PI' 또는 'Base Model (경로 없음)')
-    """
-    # 활성화된 경로만 필터링
-    active_paths = {k: v for k, v in paths_config.items() if v}
-    
-    # 경로가 없으면 base_model
-    if not active_paths:
-        return None, "base_model", "Base Model (경로 없음)"
-    
-    # 경로를 target별로 그룹화
-    target_predictors = {}
-    
-    for path_str in active_paths.keys():
-        # 'HC->PB' 형태를 파싱
-        parts = path_str.split('->')
-        if len(parts) != 2:
-            raise ValueError(f"잘못된 경로 형식: {path_str}. 'LV1->LV2' 형태여야 합니다.")
-        
-        predictor_abbr, target_abbr = parts
-        predictor = LV_NAMES.get(predictor_abbr)
-        target = LV_NAMES.get(target_abbr)
-        
-        if predictor is None or target is None:
-            raise ValueError(f"알 수 없는 잠재변수: {path_str}")
-        
-        if target not in target_predictors:
-            target_predictors[target] = []
-        target_predictors[target].append(predictor)
-    
-    # hierarchical_paths 생성
-    hierarchical_paths = []
-    for target, predictors in target_predictors.items():
-        hierarchical_paths.append({
-            'target': target,
-            'predictors': predictors
-        })
-    
-    # 파일명용 경로 이름 생성 (예: 'HC-PB_PB-PI')
-    path_name = '_'.join(sorted(active_paths.keys())).replace('->', '-')
-    
-    # 모델 설명 생성 (예: 'HC→PB + PB→PI')
-    model_description = ' + '.join(sorted(active_paths.keys())).replace('->', '→')
-    
-    return hierarchical_paths, path_name, model_description
 
 
 def main():

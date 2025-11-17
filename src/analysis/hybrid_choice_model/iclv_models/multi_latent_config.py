@@ -241,22 +241,21 @@ def create_sugar_substitute_multi_lv_config(
     n_draws: int = 100,
     max_iterations: int = 1000,
     use_hierarchical: bool = True,  # ✅ 디폴트: 계층적 구조
-    all_lvs_as_main: bool = True,   # ✅ 디폴트: 모든 LV 주효과
-    use_moderation: bool = False,   # 조절효과 (하위 호환)
     use_full_paths: bool = False,   # ✅ 신규: 모든 잠재변수 간 경로 추정
     custom_paths: Optional[List[Dict[str, Any]]] = None,  # ✅ 사용자 정의 경로
     strict_validation: bool = True,  # ✅ 엄격한 검증 모드 (False로 설정 시 PI로 끝나야 하는 제약 제거)
     endogenous_lv: Optional[str] = None,  # ✅ 내생변수 (디폴트: purchase_intention)
     exogenous_lvs: Optional[List[str]] = None,  # ✅ 외생변수 (디폴트: HC, PP, NK)
+    choice_config_overrides: Optional[Dict[str, Any]] = None,  # ✅ 선택모델 설정 오버라이드
     **kwargs
 ) -> MultiLatentConfig:
     """
-    설탕 대체재 연구용 다중 LV ICLV 설정 생성
+    설탕 대체재 연구용 다중 LV ICLV 설정 생성 (유연한 리스트 기반)
 
     ✅ 디폴트 구조:
     - 계층적 구조: 건강관심도 → 건강유익성 → 구매의도
     - 선택모델: 5개 잠재변수 모두 주효과로 포함
-      V = intercept + β·X + λ₁·건강관심도 + λ₂·건강유익성 + λ₃·가격수준 + λ₄·영양지식 + λ₅·구매의도
+      V = intercept + β·X + Σ(λᵢ·LVᵢ)
     - 사회인구학적 변수: 제거
 
     5개 잠재변수:
@@ -270,14 +269,16 @@ def create_sugar_substitute_multi_lv_config(
         n_draws: Halton draws 수
         max_iterations: 최대 반복 횟수
         use_hierarchical: 계층적 구조 사용 여부 (디폴트: True)
-        all_lvs_as_main: 모든 LV 주효과 사용 여부 (디폴트: True)
-        use_moderation: 조절효과 사용 여부 (디폴트: False, 하위 호환)
         use_full_paths: 모든 잠재변수 간 경로 추정 여부 (디폴트: False)
             - True: perceived_benefit과 purchase_intention에 대한 모든 경로 추정
             - False: use_hierarchical 설정에 따름
         custom_paths: 사용자 정의 경로 (디폴트: None)
             - 예: [{'target': 'perceived_benefit', 'predictors': ['health_concern']},
                    {'target': 'purchase_intention', 'predictors': ['perceived_benefit', 'perceived_price', 'nutrition_knowledge']}]
+        choice_config_overrides: 선택모델 설정 오버라이드 (디폴트: None)
+            - build_choice_config_dict()로 생성한 딕셔너리를 전달하면 기본 설정을 오버라이드
+            - 예: {'main_lvs': ['purchase_intention', 'nutrition_knowledge'],
+                   'lv_attribute_interactions': [{'lv': 'purchase_intention', 'attribute': 'price'}]}
         **kwargs: 추가 설정
 
     Returns:
@@ -417,13 +418,26 @@ def create_sugar_substitute_multi_lv_config(
         )
 
     # 3. 선택모델 설정
-    if all_lvs_as_main:
+    # 3. 선택모델 설정 (유연한 리스트 기반)
+    if choice_config_overrides:
+        # ✅ 사용자 정의 설정 사용
+        print(f"[DEBUG] choice_config_overrides 사용: {choice_config_overrides}")
+
+        choice_config = ChoiceConfig(
+            choice_attributes=['sugar_free', 'health_label', 'price'],
+            choice_type='binary',
+            price_variable='price',
+            **choice_config_overrides
+        )
+
+        print(f"[DEBUG] 생성된 ChoiceConfig.main_lvs: {choice_config.main_lvs}")
+        print(f"[DEBUG] 생성된 ChoiceConfig.lv_attribute_interactions: {choice_config.lv_attribute_interactions}")
+    else:
         # ✅ 디폴트: 모든 LV 주효과
         choice_config = ChoiceConfig(
             choice_attributes=['sugar_free', 'health_label', 'price'],
             choice_type='binary',
             price_variable='price',
-            all_lvs_as_main=True,
             main_lvs=[
                 'health_concern',
                 'perceived_benefit',
@@ -431,28 +445,7 @@ def create_sugar_substitute_multi_lv_config(
                 'nutrition_knowledge',
                 'purchase_intention'
             ],
-            moderation_enabled=False
-        )
-    elif use_moderation:
-        # 조절효과 모드 (하위 호환)
-        choice_config = ChoiceConfig(
-            choice_attributes=['sugar_free', 'health_label', 'price'],
-            choice_type='binary',
-            price_variable='price',
-            all_lvs_as_main=False,
-            moderation_enabled=True,
-            moderator_lvs=['perceived_price', 'nutrition_knowledge'],
-            main_lv='purchase_intention'
-        )
-    else:
-        # 단일 LV 모드 (하위 호환)
-        choice_config = ChoiceConfig(
-            choice_attributes=['sugar_free', 'health_label', 'price'],
-            choice_type='binary',
-            price_variable='price',
-            all_lvs_as_main=False,
-            moderation_enabled=False,
-            main_lv='purchase_intention'
+            lv_attribute_interactions=[]
         )
 
     # 4. 추정 설정

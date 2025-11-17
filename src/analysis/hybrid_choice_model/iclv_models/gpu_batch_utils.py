@@ -79,18 +79,22 @@ def compute_choice_batch_gpu(ind_data: pd.DataFrame,
     intercept = params['intercept']
     beta = params['beta']
 
-    # ✅ 조절효과 지원
-    moderation_enabled = 'lambda_main' in params
-    if moderation_enabled:
-        lambda_main = params['lambda_main']
-        # lambda_mod는 딕셔너리 형태: {'perceived_price': -0.3, 'nutrition_knowledge': 0.2}
-        lambda_mod = {}
-        for key in params:
-            if key.startswith('lambda_mod_'):
-                mod_lv_name = key.replace('lambda_mod_', '')
-                lambda_mod[mod_lv_name] = params[key]
-    else:
-        lambda_lv = params['lambda']
+    # ✅ 유연한 리스트 기반: lambda_* 파라미터 수집
+    lambda_lvs = {}  # {lv_name: lambda_value}
+    for key in params:
+        if key.startswith('lambda_'):
+            lv_name = key.replace('lambda_', '')
+            lambda_lvs[lv_name] = params[key]
+
+    # ✅ 유연한 리스트 기반: gamma_* 파라미터 수집 (LV-Attribute 상호작용)
+    gamma_interactions = {}  # {(lv_name, attr_name): gamma_value}
+    for key in params:
+        if key.startswith('gamma_') and not '_to_' in key:
+            # gamma_purchase_intention_health_label → lv_name='purchase_intention', attr_name='health_label'
+            parts = key.replace('gamma_', '').rsplit('_', 1)
+            if len(parts) == 2:
+                lv_name, attr_name = parts
+                gamma_interactions[(lv_name, attr_name)] = params[key]
 
     # 선택 변수 찾기
     choice_var = None
@@ -136,35 +140,36 @@ def compute_choice_batch_gpu(ind_data: pd.DataFrame,
 
     # 파라미터 로깅 제거 (중복)
 
+    # 속성 이름 리스트 (choice_model에서 가져오기)
+    choice_attributes = choice_model.config.choice_attributes
+
     # 각 draw에 대한 우도 계산
     draw_lls = []
 
     for draw_idx in range(n_draws):
         lv_dict = lvs_list[draw_idx]
 
-        # 내생 LV 값 (purchase_intention)
-        if 'purchase_intention' in lv_dict:
-            main_lv_value = lv_dict['purchase_intention']
-        else:
-            # 단일 LV인 경우
-            main_lv_value = list(lv_dict.values())[0]
+        # ✅ 유연한 리스트 기반: 효용 계산
+        # V = intercept + beta*X + Σ(lambda_i * LV_i) + Σ(gamma_ij * LV_i * X_j)
+        utility = intercept + cp.dot(attributes_gpu, beta_gpu)
 
-        # 상세 로깅 제거 (중복)
+        # 주효과: Σ(lambda_i * LV_i)
+        for lv_name, lambda_val in lambda_lvs.items():
+            if lv_name in lv_dict:
+                lv_value = lv_dict[lv_name]
+                utility = utility + lambda_val * lv_value
 
-        # 효용 계산
-        if moderation_enabled:
-            # ✅ 조절효과 모델: V = intercept + beta*X + lambda_main*PI + Σ lambda_mod_k * (PI × LV_k)
-            utility = intercept + cp.dot(attributes_gpu, beta_gpu) + lambda_main * main_lv_value
-
-            # 조절효과 항 추가
-            for mod_lv_name, lambda_mod_val in lambda_mod.items():
-                if mod_lv_name in lv_dict:
-                    mod_lv_value = lv_dict[mod_lv_name]
-                    interaction = main_lv_value * mod_lv_value
-                    utility = utility + lambda_mod_val * interaction
-        else:
-            # 기본 모델: V = intercept + beta*X + lambda*LV
-            utility = intercept + cp.dot(attributes_gpu, beta_gpu) + lambda_lv * main_lv_value
+        # LV-Attribute 상호작용: Σ(gamma_ij * LV_i * X_j)
+        for (lv_name, attr_name), gamma_val in gamma_interactions.items():
+            if lv_name in lv_dict:
+                lv_value = lv_dict[lv_name]
+                # attr_name에 해당하는 속성 인덱스 찾기
+                if attr_name in choice_attributes:
+                    attr_idx = choice_attributes.index(attr_name)
+                    # attributes_gpu[:, attr_idx]는 (n_valid_situations,) 형태
+                    attr_values = attributes_gpu[:, attr_idx]
+                    interaction = lv_value * attr_values
+                    utility = utility + gamma_val * interaction
 
         # 상세 로깅 제거 (중복)
 

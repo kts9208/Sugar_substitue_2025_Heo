@@ -62,33 +62,19 @@ class BaseICLVChoice(ABC):
         self.choice_attributes = config.choice_attributes
         self.price_variable = config.price_variable
 
-        # ✅ 모든 LV 주효과 설정 (디폴트: 활성화)
-        self.all_lvs_as_main = getattr(config, 'all_lvs_as_main', False)
-        self.main_lvs = getattr(config, 'main_lvs', None)
-
-        # ✅ LV-Attribute 상호작용 설정
-        self.lv_attribute_interactions = getattr(config, 'lv_attribute_interactions', None)
-
-        # 조절효과 설정 (하위 호환성)
-        self.moderation_enabled = getattr(config, 'moderation_enabled', False)
-        self.moderator_lvs = getattr(config, 'moderator_lvs', None)
-        self.main_lv = getattr(config, 'main_lv', 'purchase_intention')
+        # ✅ 유연한 리스트 기반 설정
+        self.main_lvs = config.main_lvs if config.main_lvs else []
+        self.lv_attribute_interactions = config.lv_attribute_interactions if config.lv_attribute_interactions else []
 
         self.logger = logging.getLogger(__name__)
 
         self.logger.info(f"{self.__class__.__name__} 초기화")
         self.logger.info(f"  선택 속성: {self.choice_attributes}")
         self.logger.info(f"  가격 변수: {self.price_variable}")
-        self.logger.info(f"  모든 LV 주효과: {self.all_lvs_as_main}")
-        if self.all_lvs_as_main:
-            self.logger.info(f"  주효과 LV: {self.main_lvs}")
-        self.logger.info(f"  LV-Attribute 상호작용: {self.lv_attribute_interactions is not None}")
+        self.logger.info(f"  주효과 LV: {self.main_lvs if self.main_lvs else '없음 (Base Model)'}")
+        self.logger.info(f"  LV-Attribute 상호작용: {len(self.lv_attribute_interactions)}개")
         if self.lv_attribute_interactions:
             self.logger.info(f"  상호작용 항목: {self.lv_attribute_interactions}")
-        self.logger.info(f"  조절효과: {self.moderation_enabled}")
-        if self.moderation_enabled:
-            self.logger.info(f"  주 LV: {self.main_lv}")
-            self.logger.info(f"  조절 LV: {self.moderator_lvs}")
 
     def _compute_utilities(self, data: pd.DataFrame, lv, params: Dict) -> np.ndarray:
         """
@@ -140,31 +126,29 @@ class BaseICLVChoice(ABC):
             # V_alt = ASC_alt + Σ(θ_alt_i * LV_i) + β*X_alt
             # Base Model의 경우: V_alt = ASC_alt + β*X_alt (잠재변수 없음)
 
-            # 각 LV를 배열로 변환 (잠재변수가 있는 경우만)
+            # ✅ 각 LV를 배열로 변환 (유연한 리스트 기반)
             lv_arrays = {}
-            if self.all_lvs_as_main and isinstance(lv, dict):
+            if isinstance(lv, dict):
                 # 주효과에 사용되는 잠재변수
-                if self.main_lvs:
-                    for lv_name in self.main_lvs:
-                        if lv_name not in lv:
-                            raise KeyError(f"잠재변수 '{lv_name}'가 lv dict에 없습니다.")
+                for lv_name in self.main_lvs:
+                    if lv_name not in lv:
+                        raise KeyError(f"잠재변수 '{lv_name}'가 lv dict에 없습니다.")
 
+                    lv_value = lv[lv_name]
+                    if np.isscalar(lv_value):
+                        lv_arrays[lv_name] = np.full(len(data), lv_value)
+                    else:
+                        lv_arrays[lv_name] = lv_value
+
+                # ✅ 상호작용에 사용되는 잠재변수 (주효과 없어도 포함)
+                for interaction in self.lv_attribute_interactions:
+                    lv_name = interaction['lv']
+                    if lv_name not in lv_arrays and lv_name in lv:
                         lv_value = lv[lv_name]
                         if np.isscalar(lv_value):
                             lv_arrays[lv_name] = np.full(len(data), lv_value)
                         else:
                             lv_arrays[lv_name] = lv_value
-
-                # ✅ 상호작용에 사용되는 잠재변수 (주효과 없어도 포함)
-                if self.lv_attribute_interactions:
-                    for interaction in self.lv_attribute_interactions:
-                        lv_name = interaction['lv']
-                        if lv_name not in lv_arrays and lv_name in lv:
-                            lv_value = lv[lv_name]
-                            if np.isscalar(lv_value):
-                                lv_arrays[lv_name] = np.full(len(data), lv_value)
-                            else:
-                                lv_arrays[lv_name] = lv_value
 
                 # 디버깅: lv_arrays 내용 로깅 (첫 호출 시에만)
                 if not hasattr(self, '_lv_arrays_logged'):
@@ -198,8 +182,8 @@ class BaseICLVChoice(ABC):
                                         theta = params[param_name]
                                         V[i] += theta * lv_arrays[lv_name][i // self.n_alternatives]
 
-                            # ✅ LV-Attribute 상호작용 추가 (대안별) - 잠재변수가 있는 경우만
-                            if lv_arrays and self.lv_attribute_interactions is not None:
+                            # ✅ LV-Attribute 상호작용 추가 (대안별)
+                            if lv_arrays and self.lv_attribute_interactions:
                                 for interaction in self.lv_attribute_interactions:
                                     lv_name = interaction['lv']
                                     attr_name = interaction['attribute']
@@ -245,8 +229,8 @@ class BaseICLVChoice(ABC):
                                         theta = params[param_name]
                                         V[i] += theta * lv_arrays[lv_name][i // self.n_alternatives]
 
-                            # ✅ LV-Attribute 상호작용 추가 (대안별) - 잠재변수가 있는 경우만
-                            if lv_arrays and self.lv_attribute_interactions is not None:
+                            # ✅ LV-Attribute 상호작용 추가 (대안별)
+                            if lv_arrays and self.lv_attribute_interactions:
                                 for interaction in self.lv_attribute_interactions:
                                     lv_name = interaction['lv']
                                     attr_name = interaction['attribute']
@@ -345,7 +329,7 @@ class BaseICLVChoice(ABC):
                             V[i] += lambda_lv * lv_arrays[lv_name][i]
 
             # ✅ LV-Attribute 상호작용 추가
-            if self.lv_attribute_interactions is not None:
+            if self.lv_attribute_interactions:
                 for interaction in self.lv_attribute_interactions:
                     lv_name = interaction['lv']
                     attr_name = interaction['attribute']
@@ -745,27 +729,21 @@ class BinaryProbitChoice(BaseICLVChoice):
                 params['beta'][price_idx] = -0.001
                 self.logger.warning(f"가격 변수 '{self.price_variable}' 없음, 기본값 -0.001 사용")
 
-        # ✅ 모든 LV 주효과 모델
-        if self.all_lvs_as_main and self.main_lvs is not None:
+        # ✅ 유연한 리스트 기반: 잠재변수 계수 초기화
+        if self.main_lvs:
+            # 주효과 모델: lambda_{lv_name}
             for lv_name in self.main_lvs:
                 params[f'lambda_{lv_name}'] = 1.0
-        elif self.moderation_enabled:
-            # ✅ 조절효과 모델
-            params['lambda_main'] = 1.0
-
-            # 조절효과 초기값
-            for mod_lv in self.moderator_lvs:
-                param_name = f'lambda_mod_{mod_lv}'
-                # 가격은 부적 조절, 지식은 정적 조절 가정
-                if 'price' in mod_lv.lower():
-                    params[param_name] = -0.3
-                elif 'knowledge' in mod_lv.lower():
-                    params[param_name] = 0.2
-                else:
-                    params[param_name] = 0.0
         else:
             # 기본 모델 (하위 호환)
             params['lambda'] = 1.0
+
+        # ✅ LV-Attribute 상호작용 초기값
+        if self.lv_attribute_interactions:
+            for interaction in self.lv_attribute_interactions:
+                lv_name = interaction['lv']
+                attr_name = interaction['attribute']
+                params[f'gamma_{lv_name}_{attr_name}'] = 0.5
 
         self.logger.info(f"초기 파라미터: {params}")
 

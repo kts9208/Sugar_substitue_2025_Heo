@@ -62,36 +62,41 @@ class StructuralConfig:
 @dataclass
 class ChoiceConfig:
     """
-    선택모델 설정
+    선택모델 설정 (유연한 리스트 기반 시스템)
 
-    ✅ 디폴트: 모든 잠재변수 주효과 (All Main Effects)
+    ✅ 핵심 원칙: 플래그 없이 리스트만으로 모든 모델 표현
 
-    모든 LV 주효과 모드 (all_lvs_as_main=True):
+    Base Model (잠재변수 없음):
+    - V = intercept + β·X
+    - main_lvs = []
+    - lv_attribute_interactions = []
+
+    주효과 모델:
     - V = intercept + β·X + Σ(λ_i · LV_i)
-    - 모든 잠재변수가 독립적으로 선택에 영향
+    - main_lvs = ['purchase_intention', 'nutrition_knowledge']
+    - lv_attribute_interactions = []
 
-    조절효과 모드 (moderation_enabled=True):
-    - V = intercept + β·X + λ_main·LV_main + Σ(λ_mod_i · LV_main · LV_mod_i)
-
-    LV-Attribute 상호작용 모드 (lv_attribute_interactions):
+    LV-Attribute 상호작용 모델:
     - V = intercept + β·X + Σ(λ_i · LV_i) + Σ(γ_ij · LV_i · X_j)
-    - 잠재변수와 선택속성 간 상호작용 효과
+    - main_lvs = ['purchase_intention', 'nutrition_knowledge']
+    - lv_attribute_interactions = [{'lv': 'purchase_intention', 'attribute': 'price'}, ...]
 
-    기본 모드 (단일 LV):
-    - V = intercept + β·X + λ·LV
-
-    Example (모든 LV 주효과):
+    Example (Base Model):
         >>> config = ChoiceConfig(
         ...     choice_attributes=['sugar_free', 'health_label', 'price'],
-        ...     all_lvs_as_main=True,
-        ...     main_lvs=['health_concern', 'perceived_benefit', 'perceived_price',
-        ...               'nutrition_knowledge', 'purchase_intention']
+        ...     main_lvs=[],  # 빈 리스트 = 잠재변수 없음
+        ...     lv_attribute_interactions=[]
+        ... )
+
+    Example (주효과 모델):
+        >>> config = ChoiceConfig(
+        ...     choice_attributes=['sugar_free', 'health_label', 'price'],
+        ...     main_lvs=['purchase_intention', 'nutrition_knowledge']
         ... )
 
     Example (LV-Attribute 상호작용):
         >>> config = ChoiceConfig(
         ...     choice_attributes=['sugar_free', 'health_label', 'price'],
-        ...     all_lvs_as_main=True,
         ...     main_lvs=['purchase_intention', 'nutrition_knowledge'],
         ...     lv_attribute_interactions=[
         ...         {'lv': 'purchase_intention', 'attribute': 'price'},
@@ -110,27 +115,18 @@ class ChoiceConfig:
     # 가격 변수 (WTP 계산용)
     price_variable: str = 'price'
 
-    # ✅ 모든 LV 주효과 설정 (디폴트: 활성화)
-    all_lvs_as_main: bool = True
-    main_lvs: Optional[List[str]] = field(default_factory=lambda: [
-        'health_concern', 'perceived_benefit', 'perceived_price',
-        'nutrition_knowledge', 'purchase_intention'
-    ])
+    # ✅ 유연한 리스트 기반 설정
+    # 빈 리스트 = Base Model (잠재변수 없음)
+    # 1개 이상 = 해당 잠재변수들의 주효과
+    main_lvs: List[str] = field(default_factory=list)
 
     # ✅ LV-Attribute 상호작용 설정
     # 각 항목: {'lv': 잠재변수명, 'attribute': 속성명}
-    lv_attribute_interactions: Optional[List[Dict[str, str]]] = None
-
-    # 조절효과 설정 (하위 호환성)
-    moderation_enabled: bool = False
-    moderator_lvs: Optional[List[str]] = None
-    main_lv: str = 'purchase_intention'  # 단일 LV 모드용
+    # 빈 리스트 = 상호작용 없음
+    lv_attribute_interactions: List[Dict[str, str]] = field(default_factory=list)
 
     # 초기값
     initial_betas: Optional[Dict[str, float]] = None
-    initial_lambda: float = 1.0  # 잠재변수 계수 (하위 호환성)
-    initial_lambda_main: float = 1.0  # 주효과 계수
-    initial_lambda_mod: Optional[List[float]] = None  # 조절효과 계수
     initial_lambdas: Optional[Dict[str, float]] = None  # 각 LV별 초기값
     initial_lv_attr_interactions: Optional[Dict[str, float]] = None  # LV-Attribute 상호작용 초기값
 
@@ -138,26 +134,14 @@ class ChoiceConfig:
     thresholds: Optional[List[float]] = None
 
     @property
-    def n_moderators(self) -> int:
-        """조절변수 개수"""
-        if not self.moderation_enabled or self.moderator_lvs is None:
-            return 0
-        return len(self.moderator_lvs)
-
-    @property
     def n_main_lvs(self) -> int:
         """주효과 잠재변수 개수"""
-        if self.all_lvs_as_main and self.main_lvs is not None:
-            return len(self.main_lvs)
-        return 0
+        return len(self.main_lvs)
 
     @property
     def n_lv_attr_interactions(self) -> int:
         """LV-Attribute 상호작용 개수"""
-        if self.lv_attribute_interactions is None:
-            return 0
         return len(self.lv_attribute_interactions)
-        return 1  # 단일 LV 모드
 
 
 @dataclass

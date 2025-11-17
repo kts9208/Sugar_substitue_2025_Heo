@@ -412,6 +412,58 @@ class MultiLatentJointGradient:
                 self.use_gpu = False
                 self.use_full_parallel = False
     
+    def compute_gradients(self,
+                         all_ind_data: list,
+                         all_ind_draws: np.ndarray,
+                         params_dict: Dict,
+                         measurement_model,
+                         structural_model,
+                         choice_model,
+                         iteration_logger=None,
+                         log_level: str = 'MINIMAL') -> list:
+        """
+        🎯 단일 진입점: 모든 개인의 gradient 계산
+
+        GPU/CPU 분기를 내부에서 처리하여 호출자는 모드를 신경 쓰지 않음
+
+        Args:
+            all_ind_data: 모든 개인의 데이터 리스트
+            all_ind_draws: 모든 개인의 draws (N, n_draws, n_dims)
+            params_dict: 파라미터 딕셔너리
+            measurement_model: 측정모델
+            structural_model: 구조모델
+            choice_model: 선택모델
+            iteration_logger: 로거
+            log_level: 로깅 레벨
+
+        Returns:
+            개인별 gradient 딕셔너리 리스트
+        """
+        # GPU 상태 확인
+        gpu_ready = self.use_gpu and self.gpu_measurement_model is not None
+
+        if gpu_ready:
+            # GPU 모드: 완전 병렬 처리
+            if iteration_logger:
+                mode = "완전 병렬" if self.use_full_parallel else "배치"
+                iteration_logger.info(f"🚀 GPU {mode} 모드로 gradient 계산")
+
+            return self.compute_all_individuals_gradients_full_batch(
+                all_ind_data, all_ind_draws, params_dict,
+                measurement_model, structural_model, choice_model,
+                iteration_logger, log_level
+            )
+        else:
+            # CPU 모드: 순차 처리
+            if iteration_logger:
+                iteration_logger.info("⚙️ CPU 순차 모드로 gradient 계산")
+
+            return self.compute_all_individuals_gradients_batch(
+                all_ind_data, all_ind_draws, params_dict,
+                measurement_model, structural_model, choice_model,
+                iteration_logger, log_level
+            )
+
     def compute_individual_gradient(self, ind_data: pd.DataFrame,
                                    ind_draws: np.ndarray,
                                    params_dict: Dict,

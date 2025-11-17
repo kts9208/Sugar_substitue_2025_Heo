@@ -48,7 +48,7 @@ def compute_measurement_full_parallel_gpu(
         log_level: 로깅 레벨
     
     Returns:
-        {lv_name: {'grad_zeta': (326, n_indicators), 'grad_sigma_sq': (326, n_indicators)}}
+        {lv_name: {'zeta': (326, n_indicators), 'sigma_sq': (326, n_indicators)}}
     """
     if not CUPY_AVAILABLE:
         raise RuntimeError("CuPy not available for full parallel computation")
@@ -178,8 +178,8 @@ def compute_measurement_full_parallel_gpu(
             grad_zeta_lv = cp.asnumpy(grad_zeta_all[:, idx:idx+n_ind])
         
         gradients[lv_name] = {
-            'grad_zeta': grad_zeta_lv,
-            'grad_sigma_sq': cp.asnumpy(grad_sigma_sq_all[:, idx:idx+n_ind])
+            'zeta': grad_zeta_lv,
+            'sigma_sq': cp.asnumpy(grad_sigma_sq_all[:, idx:idx+n_ind])
         }
         
         idx += n_ind
@@ -337,26 +337,26 @@ def compute_all_individuals_gradients_full_parallel_gpu(
     all_individual_gradients = []
     
     for ind_idx in range(n_individuals):
-        # 측정모델: {lv_name: {'grad_zeta': array, 'grad_sigma_sq': array}}
+        # 측정모델: {lv_name: {'zeta': array, 'sigma_sq': array}}
         meas_dict = {}
         for lv_name in meas_grads:
             meas_dict[lv_name] = {
-                'grad_zeta': meas_grads[lv_name]['grad_zeta'][ind_idx],
-                'grad_sigma_sq': meas_grads[lv_name]['grad_sigma_sq'][ind_idx]
+                'zeta': meas_grads[lv_name]['zeta'][ind_idx],
+                'sigma_sq': meas_grads[lv_name]['sigma_sq'][ind_idx]
             }
-        
+
         # 구조모델: {param_name: scalar}
         struct_dict = {
-            key: struct_grads[key][ind_idx].item() if hasattr(struct_grads[key][ind_idx], 'item') 
-            else struct_grads[key][ind_idx] 
+            key: struct_grads[key][ind_idx].item() if hasattr(struct_grads[key][ind_idx], 'item')
+            else struct_grads[key][ind_idx]
             for key in struct_grads
         }
-        
-        # 선택모델: {'grad_intercept': scalar, 'grad_beta': array, ...}
+
+        # 선택모델: {'intercept': scalar, 'beta': array, ...}
         choice_dict = {}
         for key in choice_grads:
             val = choice_grads[key][ind_idx]
-            if key == 'grad_beta':
+            if key == 'beta':
                 choice_dict[key] = val
             elif hasattr(val, 'item'):
                 choice_dict[key] = val.item()

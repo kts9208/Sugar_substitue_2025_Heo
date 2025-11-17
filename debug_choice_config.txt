@@ -1,0 +1,4 @@
+config.choice.main_lvs = ['purchase_intention', 'nutrition_knowledge']
+config.choice.lv_attribute_interactions = [{'lv': 'purchase_intention', 'attribute': 'health_label'}, {'lv': 'nutrition_knowledge', 'attribute': 'price'}]
+choice_model.main_lvs = ['purchase_intention', 'nutrition_knowledge']
+choice_model.lv_attribute_interactions = [{'lv': 'purchase_intention', 'attribute': 'health_label'}, {'lv': 'nutrition_knowledge', 'attribute': 'price'}]

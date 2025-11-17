@@ -59,6 +59,13 @@ sys.path.insert(0, str(project_root))
 import pandas as pd
 import numpy as np
 
+# 공통 유틸리티 import
+from model_config_utils import (
+    build_choice_config_dict,
+    extract_stage1_model_name,
+    generate_stage2_filename
+)
+
 
 def _get_significance(p_value: float) -> str:
     """p-value에서 유의성 기호 반환"""
@@ -70,6 +77,7 @@ def _get_significance(p_value: float) -> str:
         return '*'
     else:
         return ''
+
 from src.analysis.hybrid_choice_model.iclv_models.sequential_estimator import SequentialEstimator
 from src.analysis.hybrid_choice_model.iclv_models.multi_latent_config import (
     create_sugar_substitute_multi_lv_config
@@ -78,133 +86,6 @@ from src.analysis.hybrid_choice_model.iclv_models.choice_equations import (
     MultinomialLogitChoice,
     BinaryProbitChoice
 )
-
-
-def extract_stage1_model_name(stage1_filename: str) -> str:
-    """
-    1단계 결과 파일명에서 모델 이름 추출
-
-    Args:
-        stage1_filename: 1단계 결과 파일명 (예: "stage1_HC-PB_PB-PI_results.pkl")
-
-    Returns:
-        모델 이름 (예: "HC-PB_PB-PI" 또는 "base")
-    """
-    # 파일명에서 확장자 제거
-    name = stage1_filename.replace('.pkl', '')
-
-    # "stage1_" 제거
-    if name.startswith('stage1_'):
-        name = name[7:]  # len('stage1_') = 7
-
-    # "_results" 제거
-    if name.endswith('_results'):
-        name = name[:-8]  # len('_results') = 8
-
-    # 빈 문자열이거나 "base_model"이면 "base"로 변환
-    if not name or name == 'base_model':
-        return 'base'
-
-    return name
-
-
-def generate_stage2_filename(config, stage1_model_name: str = None) -> str:
-    """
-    선택모델 설정을 기반으로 2단계 결과 파일명 생성
-
-    Args:
-        config: ChoiceConfig 또는 MultiLatentConfig 객체
-        stage1_model_name: 1단계 모델 이름 (예: "HC-PB_PB-PI" 또는 "base")
-
-    Returns:
-        파일명 접두사 (예: "st2_base1_base2", "st2_HC-PB_PB-PI1_NK2")
-    """
-    # config가 MultiLatentConfig인 경우 choice 속성 추출
-    choice_config = getattr(config, 'choice', config)
-
-    # 1단계 모델 이름 (기본값: "base")
-    stage1_name = stage1_model_name if stage1_model_name else "base"
-
-    # 2단계 모델 이름 생성
-    # 1. 잠재변수가 없는 경우 -> base
-    has_lvs = False
-
-    # 주효과 LV 확인
-    if getattr(choice_config, 'all_lvs_as_main', False):
-        main_lvs = getattr(choice_config, 'main_lvs', None)
-        if main_lvs and len(main_lvs) > 0:
-            has_lvs = True
-
-    # 조절효과 확인
-    if getattr(choice_config, 'moderation_enabled', False):
-        has_lvs = True
-
-    # LV-Attribute 상호작용 확인 (주효과 없이 상호작용만 있을 수도 있음)
-    lv_attr_interactions = getattr(choice_config, 'lv_attribute_interactions', None)
-    if lv_attr_interactions and len(lv_attr_interactions) > 0:
-        has_lvs = True
-
-    # 잠재변수가 전혀 없으면 base
-    if not has_lvs:
-        stage2_name = "base"
-    else:
-        # 2. 잠재변수가 있는 경우 -> 구성 요소별 이름 생성
-        parts = []
-
-        # 2-1. 주효과 LV
-        if getattr(choice_config, 'all_lvs_as_main', False):
-            main_lvs = getattr(choice_config, 'main_lvs', None)
-            if main_lvs and len(main_lvs) > 0:
-                # LV 약어 생성 (예: purchase_intention -> PI)
-                lv_abbr = []
-                abbr_map = {
-                    'health_concern': 'HC',
-                    'perceived_benefit': 'PB',
-                    'perceived_price': 'PP',
-                    'nutrition_knowledge': 'NK',
-                    'purchase_intention': 'PI'
-                }
-                for lv in main_lvs:
-                    lv_abbr.append(abbr_map.get(lv, lv[:2].upper()))
-                parts.append('_'.join(lv_abbr))
-
-        # 2-2. 조절효과
-        if getattr(choice_config, 'moderation_enabled', False):
-            moderator_lvs = getattr(choice_config, 'moderator_lvs', None)
-            if moderator_lvs:
-                n_mods = len(moderator_lvs)
-                parts.append(f"mod{n_mods}")
-
-        # 2-3. LV-Attribute 상호작용
-        if lv_attr_interactions and len(lv_attr_interactions) > 0:
-            # 상호작용 속성 추출 (예: health_label -> hl, price -> pr)
-            attr_abbr_map = {
-                'health_label': 'hl',
-                'price': 'pr'
-            }
-            # LV 약어 추출
-            lv_abbr_map = {
-                'health_concern': 'HC',
-                'perceived_benefit': 'PB',
-                'perceived_price': 'PP',
-                'nutrition_knowledge': 'NK',
-                'purchase_intention': 'PI'
-            }
-
-            interaction_strs = []
-            for interaction in lv_attr_interactions:
-                lv = interaction['lv']
-                attr = interaction['attribute']
-                lv_abbr = lv_abbr_map.get(lv, lv[:2].upper())
-                attr_abbr = attr_abbr_map.get(attr, attr[:2])
-                interaction_strs.append(f"{lv_abbr}x{attr_abbr}")
-
-            parts.append(f"int_{'_'.join(interaction_strs)}")
-
-        stage2_name = '_'.join(parts) if parts else "base"
-
-    # 최종 파일명: st2_{stage1_name}1_{stage2_name}2
-    return f"st2_{stage1_name}1_{stage2_name}2"
 
 
 def main():
@@ -295,36 +176,20 @@ def main():
         custom_paths=custom_paths
     )
 
-    # 선택모델 설정 자동 생성
+    # 선택모델 설정 자동 생성 (공통 유틸리티 사용)
     from src.analysis.hybrid_choice_model.iclv_models.iclv_config import ChoiceConfig
 
-    # 조절효과 설정 변환
-    # MODERATION_LVS = [('lv1', 'lv2')] → moderator_lvs = ['lv2'] (두 번째 변수가 조절변수)
-    moderator_lvs = None
-    main_lv = 'purchase_intention'  # 기본값
-    if MODERATION_LVS:
-        # 첫 번째 튜플의 첫 번째 요소를 main_lv로, 나머지를 moderator_lvs로
-        main_lv = MODERATION_LVS[0][0]
-        moderator_lvs = [pair[1] for pair in MODERATION_LVS]
-
-    # LV-Attribute 상호작용 설정 변환
-    lv_attr_config = None
-    if LV_ATTRIBUTE_INTERACTIONS:
-        lv_attr_config = [{'lv': pair[0], 'attribute': pair[1]} for pair in LV_ATTRIBUTE_INTERACTIONS]
-
-    # all_lvs_as_main 설정: 주효과가 있거나 상호작용이 있으면 True
-    all_lvs_as_main_setting = bool(MAIN_LVS) or bool(LV_ATTRIBUTE_INTERACTIONS)
+    choice_config_dict = build_choice_config_dict(
+        main_lvs=MAIN_LVS,
+        moderation_lvs=MODERATION_LVS,
+        lv_attribute_interactions=LV_ATTRIBUTE_INTERACTIONS
+    )
 
     config.choice = ChoiceConfig(
         choice_attributes=CHOICE_ATTRIBUTES,
         choice_type=CHOICE_TYPE,
         price_variable=PRICE_VARIABLE,
-        all_lvs_as_main=all_lvs_as_main_setting,  # 수정: 상호작용 있으면 True
-        main_lvs=MAIN_LVS if MAIN_LVS else [],  # 수정: None 대신 빈 리스트
-        moderation_enabled=bool(MODERATION_LVS),  # 자동 설정
-        moderator_lvs=moderator_lvs,  # 자동 설정
-        main_lv=main_lv,  # 자동 설정
-        lv_attribute_interactions=lv_attr_config  # 자동 설정
+        **choice_config_dict  # 공통 유틸리티에서 생성한 설정 사용
     )
 
     # 선택모델 설정 자동 출력

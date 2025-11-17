@@ -28,6 +28,8 @@ from .gradient_calculator import (
 )
 from .parameter_scaler import ParameterScaler
 from .bhhh_calculator import BHHHCalculator
+from .parameter_manager import ParameterManager
+from .gpu_compute_state import GPUComputeState
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +207,10 @@ class SimultaneousEstimator:
         self.choice_grad = None
         self.joint_grad = None
         self.use_analytic_gradient = False  # 기본값: 수치적 그래디언트
+
+        # ✅ ParameterManager 초기화
+        self.param_manager = ParameterManager(config)
+        self.param_names = None  # estimate() 시작 시 생성
 
     def _setup_iteration_logger(self, log_file_path: str):
         """
@@ -443,12 +449,9 @@ class SimultaneousEstimator:
         )
         self.iteration_logger.info(f"초기 파라미터 설정 완료 (총 {len(initial_params)}개)")
 
-        # 파라미터 이름 생성
-        param_names = self._get_parameter_names(
-            measurement_model, structural_model, choice_model
-        )
-        # ✅ self.param_names로 저장 (EarlyStoppingWrapper에서 사용)
-        self.param_names = param_names
+        # ✅ 파라미터 이름은 _get_initial_parameters에서 이미 self.param_names에 저장됨
+        # (ParameterManager 사용)
+        param_names = self.param_names
 
         # 파라미터 스케일링 설정 확인
         use_parameter_scaling = getattr(self.config.estimation, 'use_parameter_scaling', True)
@@ -1661,128 +1664,9 @@ class SimultaneousEstimator:
 
         return bounds
 
-    def _get_parameter_names(self, measurement_model,
-                             structural_model, choice_model) -> List[str]:
-        """파라미터 이름 리스트 생성 (스케일링용)"""
-
-        names = []
-
-        # 다중 잠재변수 여부 확인
-        from .multi_latent_config import MultiLatentConfig
-        is_multi_latent = isinstance(self.config, MultiLatentConfig)
-
-        # 측정모델 파라미터
-        if is_multi_latent:
-            # 다중 잠재변수: 각 LV별로 파라미터 추가
-            for lv_name, meas_config in self.config.measurement_configs.items():
-                # measurement_method 확인
-                method = getattr(meas_config, 'measurement_method', 'ordered_probit')
-
-                if method == 'continuous_linear':
-                    # ✅ ContinuousLinearMeasurement
-                    # 요인적재량 (zeta)
-                    if meas_config.fix_first_loading:
-                        # 첫 번째 제외
-                        for indicator in meas_config.indicators[1:]:
-                            names.append(f"zeta_{lv_name}_{indicator}")
-                    else:
-                        for indicator in meas_config.indicators:
-                            names.append(f"zeta_{lv_name}_{indicator}")
-
-                    # 오차분산 (sigma_sq)
-                    if not meas_config.fix_error_variance:
-                        for indicator in meas_config.indicators:
-                            names.append(f"sigma_sq_{lv_name}_{indicator}")
-
-                else:
-                    # OrderedProbitMeasurement (기존 방식)
-                    # 요인적재량 (zeta)
-                    for indicator in meas_config.indicators:
-                        names.append(f"zeta_{lv_name}_{indicator}")
-
-                    # 임계값 (tau)
-                    n_thresholds = meas_config.n_categories - 1
-                    for indicator in meas_config.indicators:
-                        for j in range(n_thresholds):
-                            names.append(f"tau_{lv_name}_{indicator}_{j+1}")
-        else:
-            # 단일 잠재변수
-            indicators = self.config.measurement.indicators
-            for indicator in indicators:
-                names.append(f"zeta_{indicator}")
-
-            n_thresholds = self.config.measurement.n_categories - 1
-            for indicator in indicators:
-                for j in range(n_thresholds):
-                    names.append(f"tau_{indicator}_{j+1}")
-
-        # 구조모델 파라미터 (gamma)
-        if is_multi_latent:
-            # ✅ 계층적 구조 지원
-            if hasattr(self.config.structural, 'is_hierarchical') and self.config.structural.is_hierarchical:
-                # 계층적 구조: 각 경로마다 파라미터
-                for path in self.config.structural.hierarchical_paths:
-                    target = path['target']
-                    predictors = path['predictors']
-
-                    for pred in predictors:
-                        param_name = f"gamma_{pred}_to_{target}"
-                        names.append(param_name)
-            else:
-                # 병렬 구조 (하위 호환): gamma_lv (외생 LV → 내생 LV)
-                for exo_lv in self.config.structural.exogenous_lvs:
-                    names.append(f"gamma_lv_{exo_lv}")
-
-                # gamma_x (공변량 → 내생 LV)
-                for cov in self.config.structural.covariates:
-                    names.append(f"gamma_x_{cov}")
-        else:
-            # 단일 잠재변수
-            sociodem = self.config.structural.sociodemographics
-            for var in sociodem:
-                names.append(f"gamma_{var}")
-
-        # 선택모델 파라미터
-        # - 절편
-        names.append("beta_intercept")
-
-        # - 속성 계수 (beta)
-        attributes = self.config.choice.choice_attributes
-        for attr in attributes:
-            names.append(f"beta_{attr}")
-
-        # ✅ 모든 LV 주효과 지원
-        if hasattr(self.config.choice, 'all_lvs_as_main') and self.config.choice.all_lvs_as_main:
-            # 모든 LV 주효과 모델: lambda_{lv_name}
-            if hasattr(self.config.choice, 'main_lvs'):
-                for lv_name in self.config.choice.main_lvs:
-                    names.append(f"lambda_{lv_name}")
-        elif hasattr(self.config.choice, 'moderation_enabled') and self.config.choice.moderation_enabled:
-            # 조절효과 모델: lambda_main + lambda_mod_*
-            names.append("lambda_main")
-
-            # 조절변수별 lambda_mod
-            if hasattr(self.config.choice, 'moderator_lvs'):
-                for mod_lv in self.config.choice.moderator_lvs:
-                    names.append(f"lambda_mod_{mod_lv}")
-        else:
-            # 기본 모델: lambda
-            names.append("lambda")
-
-        # - 사회인구학적 변수 계수 (선택모델에 포함되는 경우)
-        if is_multi_latent:
-            # 다중 잠재변수: covariates 사용
-            if hasattr(self.config.structural, 'include_in_choice'):
-                if self.config.structural.include_in_choice:
-                    for var in self.config.structural.covariates:
-                        names.append(f"beta_{var}")
-        else:
-            # 단일 잠재변수
-            if self.config.structural.include_in_choice:
-                for var in sociodem:
-                    names.append(f"beta_{var}")
-
-        return names
+    # ❌ 제거됨: _get_parameter_names
+    # ✅ ParameterManager.get_parameter_names()를 사용하도록 변경
+    # (중복 로직 제거, 단일 진실 공급원)
 
     def _get_custom_scales(self, param_names: List[str]) -> Dict[str, float]:
         """
@@ -1881,65 +1765,75 @@ class SimultaneousEstimator:
 
     def _get_initial_parameters(self, measurement_model,
                                 structural_model, choice_model) -> np.ndarray:
-        """초기 파라미터 설정"""
+        """
+        초기 파라미터 생성 (ParameterManager 사용)
 
-        params = []
+        사용자 정의 초기값(self.user_initial_params)이 있으면 사용하고,
+        없으면 자동 생성합니다.
 
-        # 측정모델 파라미터
-        # - 요인적재량 (zeta)
-        n_indicators = len(self.config.measurement.indicators)
-        params.extend([1.0] * n_indicators)  # zeta
+        Returns:
+            초기 파라미터 벡터
+        """
+        # ✅ 파라미터 이름 리스트 생성 (한 번만)
+        # 🔍 디버깅: choice_model 설정 확인
+        self.iteration_logger.info(f"[DEBUG _get_initial_parameters] choice_model.all_lvs_as_main = {getattr(choice_model, 'all_lvs_as_main', None)}")
+        self.iteration_logger.info(f"[DEBUG _get_initial_parameters] choice_model.main_lvs = {getattr(choice_model, 'main_lvs', None)}")
 
-        # - 임계값 (tau)
-        n_thresholds = self.config.measurement.n_categories - 1
-        for _ in range(n_indicators):
-            params.extend([-2, -1, 1, 2])  # 5점 척도 기본값
+        self.param_names = self.param_manager.get_parameter_names(
+            measurement_model, structural_model, choice_model
+        )
 
-        # 구조모델 파라미터 (gamma)
-        n_sociodem = len(self.config.structural.sociodemographics)
-        params.extend([0.0] * n_sociodem)
+        self.iteration_logger.info(f"파라미터 이름 리스트 생성 완료: {len(self.param_names)}개")
+        # 🔍 디버깅: 선택모델 파라미터 이름 확인
+        choice_param_names = [name for name in self.param_names if name.startswith(('beta_', 'lambda_', 'gamma_')) and '_to_' not in name]
+        self.iteration_logger.info(f"[DEBUG _get_initial_parameters] 선택모델 파라미터 이름: {choice_param_names}")
 
-        # 선택모델 파라미터
-        # - 절편
-        params.append(0.0)
+        # ✅ 사용자 정의 초기값 확인
+        if hasattr(self, 'user_initial_params') and self.user_initial_params is not None:
+            user_params = self.user_initial_params
 
-        # - 속성 계수 (beta)
-        # ✅ 초기값을 0이 아닌 값으로 설정하여 parameter scaling 활성화
-        n_attributes = len(self.config.choice.choice_attributes)
-        for attr in self.config.choice.choice_attributes:
-            if 'price' in attr.lower():
-                # 가격 변수: 음수 초기값 (일반적으로 가격 증가 → 효용 감소)
-                # Price는 스케일링되어 2~3 범위 (원본: 2000~3000, ÷1000)
-                params.append(-1.0)
+            # 딕셔너리 형태인 경우 (순차추정 결과)
+            if isinstance(user_params, dict):
+                self.logger.info("사용자 정의 초기값 (딕셔너리) 사용")
+
+                # 측정모델 + 구조모델 파라미터는 사용자 값 사용
+                # 선택모델 파라미터는 자동 초기화
+                partial_dict = {
+                    'measurement': user_params.get('measurement', {}),
+                    'structural': user_params.get('structural', {}),
+                    'choice': {}  # 빈 딕셔너리로 초기화
+                }
+
+                # 선택모델 초기값 자동 생성
+                choice_initial = choice_model.get_initial_params()
+                partial_dict['choice'] = choice_initial
+
+                # 딕셔너리 → 배열 변환
+                initial_values = self.param_manager.dict_to_array(
+                    partial_dict, self.param_names
+                )
+
+                self.logger.info(f"사용자 정의 초기값 변환 완료: {len(initial_values)}개")
+
+            # 배열 형태인 경우 (이전 동시추정 결과)
+            elif isinstance(user_params, np.ndarray):
+                self.logger.info(f"사용자 정의 초기값 (배열) 사용: {len(user_params)}개")
+                initial_values = user_params
             else:
-                # 기타 속성: 작은 양수 초기값
-                params.append(0.1)
-
-        # - 잠재변수 계수 (lambda)
-        # ✅ 모든 LV 주효과 지원
-        if hasattr(self.config.choice, 'all_lvs_as_main') and self.config.choice.all_lvs_as_main:
-            # 모든 LV 주효과 모델: lambda_{lv_name}
-            if hasattr(self.config.choice, 'main_lvs'):
-                for lv_name in self.config.choice.main_lvs:
-                    # 각 LV별 초기값 (1.0)
-                    params.append(1.0)
-        elif hasattr(self.config.choice, 'moderation_enabled') and self.config.choice.moderation_enabled:
-            # 조절효과 모델: lambda_main + lambda_mod_*
-            params.append(1.0)  # lambda_main
-
-            # lambda_mod (조절효과 계수)
-            if hasattr(self.config.choice, 'moderator_lvs'):
-                for mod_lv in self.config.choice.moderator_lvs:
-                    params.append(0.0)  # lambda_mod_{mod_lv}
+                self.logger.warning(f"사용자 정의 초기값 형식 오류: {type(user_params)}")
+                self.logger.warning("자동 초기화를 사용합니다.")
+                initial_values = self.param_manager.get_initial_values(
+                    self.param_names, measurement_model, structural_model, choice_model
+                )
         else:
-            # 기본 모델: lambda
-            params.append(1.0)
+            # ✅ 자동 초기값 생성 (이름 기반)
+            initial_values = self.param_manager.get_initial_values(
+                self.param_names, measurement_model, structural_model, choice_model
+            )
 
-        # - 사회인구학적 변수 계수 (선택모델에 포함되는 경우)
-        if hasattr(self.config.structural, 'include_in_choice') and self.config.structural.include_in_choice:
-            params.extend([0.0] * n_sociodem)
+            self.logger.info(f"자동 초기 파라미터 생성 완료: {len(initial_values)}개")
 
-        return np.array(params)
+        return initial_values
     
 
     
@@ -1987,66 +1881,23 @@ class SimultaneousEstimator:
                           measurement_model,
                           structural_model,
                           choice_model) -> Dict[str, Dict]:
-        """파라미터 벡터를 딕셔너리로 변환"""
-        
-        idx = 0
-        param_dict = {
-            'measurement': {},
-            'structural': {},
-            'choice': {}
-        }
-        
-        # 측정모델 파라미터
-        n_indicators = len(self.config.measurement.indicators)
-        param_dict['measurement']['zeta'] = params[idx:idx+n_indicators]
-        idx += n_indicators
+        """
+        파라미터 벡터를 딕셔너리로 변환 (ParameterManager 사용)
 
-        n_thresholds = self.config.measurement.n_categories - 1
-        # tau를 2D 배열로 저장 (n_indicators, n_thresholds)
-        tau_list = []
-        for i in range(n_indicators):
-            tau_list.append(params[idx:idx+n_thresholds])
-            idx += n_thresholds
-        param_dict['measurement']['tau'] = np.array(tau_list)
-        
-        # 구조모델 파라미터
-        n_sociodem = len(self.config.structural.sociodemographics)
-        param_dict['structural']['gamma'] = params[idx:idx+n_sociodem]
-        idx += n_sociodem
-        
-        # 선택모델 파라미터
-        param_dict['choice']['intercept'] = params[idx]
-        idx += 1
-        
-        n_attributes = len(self.config.choice.choice_attributes)
-        param_dict['choice']['beta'] = params[idx:idx+n_attributes]
-        idx += n_attributes
+        Args:
+            params: 파라미터 배열
+            measurement_model: 측정모델 객체
+            structural_model: 구조모델 객체
+            choice_model: 선택모델 객체
 
-        # ✅ 모든 LV 주효과 지원
-        if hasattr(self.config.choice, 'all_lvs_as_main') and self.config.choice.all_lvs_as_main:
-            # 모든 LV 주효과 모델: lambda_{lv_name}
-            if hasattr(self.config.choice, 'main_lvs'):
-                for lv_name in self.config.choice.main_lvs:
-                    param_dict['choice'][f'lambda_{lv_name}'] = params[idx]
-                    idx += 1
-        elif hasattr(self.config.choice, 'moderation_enabled') and self.config.choice.moderation_enabled:
-            # 조절효과 모델: lambda_main + lambda_mod_*
-            param_dict['choice']['lambda_main'] = params[idx]
-            idx += 1
-
-            # lambda_mod (조절효과 계수)
-            if hasattr(self.config.choice, 'moderator_lvs'):
-                for mod_lv in self.config.choice.moderator_lvs:
-                    param_dict['choice'][f'lambda_mod_{mod_lv}'] = params[idx]
-                    idx += 1
-        else:
-            # 기본 모델: lambda
-            param_dict['choice']['lambda'] = params[idx]
-            idx += 1
-
-        if hasattr(self.config.structural, 'include_in_choice') and self.config.structural.include_in_choice:
-            param_dict['choice']['beta_sociodem'] = params[idx:idx+n_sociodem]
-            idx += n_sociodem
+        Returns:
+            파라미터 딕셔너리
+        """
+        # ✅ ParameterManager를 사용하여 배열 → 딕셔너리 변환
+        param_dict = self.param_manager.array_to_dict(
+            params, self.param_names,
+            measurement_model, structural_model, choice_model
+        )
 
         return param_dict
 
@@ -2074,6 +1925,10 @@ class SimultaneousEstimator:
             params, measurement_model, structural_model, choice_model
         )
 
+        # 🔍 디버깅: param_dict['choice'] 키 확인
+        if 'choice' in param_dict:
+            self.iteration_logger.info(f"[DEBUG _compute_gradient] param_dict['choice'] 키: {list(param_dict['choice'].keys())}")
+
         # 병렬처리 설정 가져오기
         use_parallel = getattr(self.config.estimation, 'use_parallel', False)
         n_cores = getattr(self.config.estimation, 'n_cores', None)
@@ -2083,100 +1938,65 @@ class SimultaneousEstimator:
         is_multi_latent = isinstance(self.config, MultiLatentConfig)
 
         if is_multi_latent:
-            # 다중 잠재변수: GPU batch 사용 여부 확인
-            use_gpu = hasattr(self.joint_grad, 'use_gpu') and self.joint_grad.use_gpu
+            # ✅ GPU 상태 객체 생성
+            gpu_state = GPUComputeState.from_joint_gradient(
+                self.joint_grad,
+                getattr(self, 'gpu_measurement_model', None)
+            )
 
-            # ✅ GPU Batch 모드: 모든 개인을 동시에 처리
-            if use_gpu and hasattr(self.joint_grad, 'compute_all_individuals_gradients_full_batch'):
-                individual_ids = self.data[self.config.individual_id_column].unique()
+            # ✅ 통합 로깅
+            self._log_gpu_status(gpu_state)
 
-                # 모든 개인의 데이터와 draws 준비
-                all_ind_data = []
-                all_ind_draws = []
+            # 개인 데이터 준비
+            individual_ids = self.data[self.config.individual_id_column].unique()
+            self.logger.info(f"처리할 개인 수: {len(individual_ids)}")
 
-                for ind_id in individual_ids:
-                    ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
-                    ind_idx = np.where(individual_ids == ind_id)[0][0]
-                    ind_draws = self.halton_generator.get_draws()[ind_idx]
+            all_ind_data = []
+            all_ind_draws = []
 
-                    all_ind_data.append(ind_data)
-                    all_ind_draws.append(ind_draws)
+            for ind_id in individual_ids:
+                ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
+                ind_idx = np.where(individual_ids == ind_id)[0][0]
+                ind_draws = self.halton_generator.get_draws()[ind_idx]
 
-                # NumPy 배열로 변환
-                all_ind_draws = np.array(all_ind_draws)  # (N, n_draws, n_dims)
+                all_ind_data.append(ind_data)
+                all_ind_draws.append(ind_draws)
 
-                # 🚀 완전 GPU Batch로 모든 개인의 gradient 동시 계산
-                all_grad_dicts = self.joint_grad.compute_all_individuals_gradients_full_batch(
-                    all_ind_data=all_ind_data,
-                    all_ind_draws=all_ind_draws,
-                    params_dict=param_dict,
-                    measurement_model=measurement_model,
-                    structural_model=structural_model,
-                    choice_model=choice_model,
-                    iteration_logger=None,  # 로깅 비활성화
-                    log_level='MINIMAL'
-                )
+            # NumPy 배열로 변환
+            all_ind_draws = np.array(all_ind_draws)  # (N, n_draws, n_dims)
 
-                # 모든 개인의 gradient 합산
-                total_grad_dict = None
-                for ind_grad in all_grad_dicts:
-                    if total_grad_dict is None:
-                        import copy
-                        total_grad_dict = copy.deepcopy(ind_grad)
-                    else:
-                        # 재귀적으로 합산
-                        def add_gradients(total, ind):
-                            for key in total:
-                                if isinstance(total[key], dict):
-                                    add_gradients(total[key], ind[key])
-                                elif isinstance(total[key], np.ndarray):
-                                    total[key] += ind[key]
-                                else:
-                                    total[key] += ind[key]
+            # 🎯 단일 진입점으로 gradient 계산
+            all_grad_dicts = self.joint_grad.compute_gradients(
+                all_ind_data=all_ind_data,
+                all_ind_draws=all_ind_draws,
+                params_dict=param_dict,
+                measurement_model=measurement_model,
+                structural_model=structural_model,
+                choice_model=choice_model,
+                iteration_logger=self.iteration_logger,
+                log_level='MINIMAL'
+            )
 
-                        add_gradients(total_grad_dict, ind_grad)
+            # 모든 개인의 gradient 합산
+            total_grad_dict = None
+            for ind_grad in all_grad_dicts:
+                if total_grad_dict is None:
+                    import copy
+                    total_grad_dict = copy.deepcopy(ind_grad)
+                else:
+                    # 재귀적으로 합산
+                    def add_gradients(total, ind):
+                        for key in total:
+                            if isinstance(total[key], dict):
+                                add_gradients(total[key], ind[key])
+                            elif isinstance(total[key], np.ndarray):
+                                total[key] += ind[key]
+                            else:
+                                total[key] += ind[key]
 
-                grad_dict = total_grad_dict
+                    add_gradients(total_grad_dict, ind_grad)
 
-            else:
-                # CPU 모드: 개인별 순차 처리
-                individual_ids = self.data[self.config.individual_id_column].unique()
-                total_grad_dict = None
-
-                for ind_id in individual_ids:
-                    ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
-                    ind_idx = np.where(individual_ids == ind_id)[0][0]
-                    ind_draws = self.halton_generator.get_draws()[ind_idx]
-
-                    ind_grad = self.joint_grad.compute_individual_gradient(
-                        ind_data=ind_data,
-                        ind_draws=ind_draws,
-                        params_dict=param_dict,
-                        measurement_model=measurement_model,
-                        structural_model=structural_model,
-                        choice_model=choice_model,
-                        ind_id=ind_id
-                    )
-
-                    # 그래디언트 합산 (재귀적으로 처리)
-                    if total_grad_dict is None:
-                        # 첫 번째 개인: deep copy
-                        import copy
-                        total_grad_dict = copy.deepcopy(ind_grad)
-                    else:
-                        # 재귀적으로 합산
-                        def add_gradients(total, ind):
-                            for key in total:
-                                if isinstance(total[key], dict):
-                                    add_gradients(total[key], ind[key])
-                                elif isinstance(total[key], np.ndarray):
-                                    total[key] += ind[key]
-                                else:
-                                    total[key] += ind[key]
-
-                        add_gradients(total_grad_dict, ind_grad)
-
-                grad_dict = total_grad_dict
+            grad_dict = total_grad_dict
         else:
             # 단일 잠재변수: compute_gradient 사용
             grad_dict = self.joint_grad.compute_gradient(
@@ -2203,10 +2023,10 @@ class SimultaneousEstimator:
     def _pack_gradient(self, grad_dict: Dict, measurement_model,
                       structural_model, choice_model) -> np.ndarray:
         """
-        그래디언트 딕셔너리를 벡터로 변환 (파라미터 순서와 동일)
+        그래디언트 딕셔너리를 벡터로 변환 (ParameterManager 사용)
 
         Args:
-            grad_dict: 그래디언트 딕셔너리
+            grad_dict: 그래디언트 딕셔너리 (GPU에서 직접 반환, grad_ 접두사 없음)
             measurement_model: 측정모델
             structural_model: 구조모델
             choice_model: 선택모델
@@ -2214,147 +2034,149 @@ class SimultaneousEstimator:
         Returns:
             gradient_vector: 그래디언트 벡터
         """
-        # ✅ [_pack_gradient] 디버그 로그 비활성화
-        # print(f"[_pack_gradient] START", flush=True)
-        # print(f"[_pack_gradient] grad_dict keys: {list(grad_dict.keys())}", flush=True)
-        # print(f"[_pack_gradient] measurement keys: {list(grad_dict['measurement'].keys())}", flush=True)
-        # print(f"[_pack_gradient] structural keys: {list(grad_dict['structural'].keys())}", flush=True)
-        # print(f"[_pack_gradient] choice keys: {list(grad_dict['choice'].keys())}", flush=True)
+        # ✅ Gradient 딕셔너리 검증
+        self._validate_gradient_dict(grad_dict, self.param_names, measurement_model)
 
-        gradient_list = []
-
-        # 다중 잠재변수 여부 확인
-        from .multi_latent_config import MultiLatentConfig
-        is_multi_latent = isinstance(self.config, MultiLatentConfig)
-
-        logger.info(f"[_pack_gradient] is_multi_latent: {is_multi_latent}")
-
-        if is_multi_latent:
-            # 다중 잠재변수: 각 LV별로 그래디언트 추출
-            for lv_name in measurement_model.models.keys():
-                logger.info(f"[_pack_gradient] Processing LV: {lv_name}")
-                lv_grad = grad_dict['measurement'][lv_name]
-                logger.info(f"[_pack_gradient]   Keys for {lv_name}: {list(lv_grad.keys())}")
-
-                # ✅ fix_first_loading 확인
-                lv_config = self.config.measurement_configs[lv_name]
-                fix_first_loading = getattr(lv_config, 'fix_first_loading', True)
-
-                # ✅ GPU gradient는 이미 첫 번째 요소가 제외되어 있음
-                # CPU gradient는 모든 요소를 포함하므로 첫 번째 제외 필요
-                use_gpu = hasattr(self, 'use_gpu') and self.use_gpu
-
-                if fix_first_loading and not use_gpu:
-                    # CPU gradient: 첫 번째 zeta gradient 제외
-                    gradient_list.append(lv_grad['grad_zeta'][1:])
-                    logger.info(f"[_pack_gradient]   Added grad_zeta (excluding first), size: {len(lv_grad['grad_zeta'][1:])}")
-                else:
-                    # GPU gradient 또는 fix_first_loading=False: 그대로 사용
-                    gradient_list.append(lv_grad['grad_zeta'])
-                    logger.info(f"[_pack_gradient]   Added grad_zeta, size: {len(lv_grad['grad_zeta'])}")
-
-                # ✅ grad_dict에 있는 키를 기준으로 판단 (measurement_method 속성이 아님)
-                if 'grad_sigma_sq' in lv_grad:
-                    # Continuous Linear 방식
-                    # ✅ fix_error_variance 확인
-                    fix_error_variance = getattr(lv_config, 'fix_error_variance', False)
-                    if fix_error_variance:
-                        # 오차분산 고정: gradient 포함하지 않음
-                        logger.info(f"[_pack_gradient]   Skipped grad_sigma_sq (fixed)")
-                    else:
-                        gradient_list.append(lv_grad['grad_sigma_sq'].flatten())
-                        logger.info(f"[_pack_gradient]   Added grad_sigma_sq, size: {len(lv_grad['grad_sigma_sq'].flatten())}")
-                elif 'grad_tau' in lv_grad:
-                    # Ordered Probit 방식
-                    gradient_list.append(lv_grad['grad_tau'].flatten())
-                    logger.info(f"[_pack_gradient]   Added grad_tau, size: {len(lv_grad['grad_tau'].flatten())}")
-                else:
-                    raise KeyError(f"Neither grad_sigma_sq nor grad_tau found for {lv_name}. Available keys: {list(lv_grad.keys())}")
-
-            # ✅ 구조모델 그래디언트: 계층적 vs 병렬
-            is_hierarchical = getattr(structural_model, 'is_hierarchical', False)
-            logger.info(f"[_pack_gradient] Structural model hierarchical: {is_hierarchical}")
-            logger.info(f"[_pack_gradient] Structural gradient keys: {list(grad_dict['structural'].keys())}")
-
-            if is_hierarchical:
-                # 계층적 구조: 각 경로별 gradient
-                for path in structural_model.hierarchical_paths:
-                    target = path['target']
-                    predictors = path['predictors']
-                    param_key = f"grad_gamma_{predictors[0]}_to_{target}"
-                    logger.info(f"[_pack_gradient] Adding structural gradient: {param_key}")
-                    gradient_list.append(np.array([grad_dict['structural'][param_key]]))
-            else:
-                # 병렬 구조: gamma_lv, gamma_x
-                gradient_list.append(grad_dict['structural']['grad_gamma_lv'])
-                gradient_list.append(grad_dict['structural']['grad_gamma_x'])
-        else:
-            # 단일 잠재변수
-            gradient_list.append(grad_dict['grad_zeta'])
-
-            # ✅ grad_dict에 있는 키를 기준으로 판단
-            if 'grad_sigma_sq' in grad_dict:
-                # Continuous Linear 방식
-                gradient_list.append(grad_dict['grad_sigma_sq'].flatten())
-            elif 'grad_tau' in grad_dict:
-                # Ordered Probit 방식
-                gradient_list.append(grad_dict['grad_tau'].flatten())
-            else:
-                raise KeyError(f"Neither grad_sigma_sq nor grad_tau found. Available keys: {list(grad_dict.keys())}")
-
-            gradient_list.append(grad_dict['grad_gamma'])
-
-        # ✅ 선택모델 그래디언트: grad_dict 키를 기준으로 판단
-        gradient_list.append(np.array([grad_dict['choice']['grad_intercept']]))
-        gradient_list.append(grad_dict['choice']['grad_beta'])
-
-        # ✅ 모든 LV 주효과 지원
-        # grad_dict에 있는 키를 기준으로 모든 LV 주효과 vs 조절효과 vs 일반 판단
-        if hasattr(self.config.choice, 'all_lvs_as_main') and self.config.choice.all_lvs_as_main:
-            # 모든 LV 주효과: lambda_{lv_name}
-            if hasattr(self.config.choice, 'main_lvs'):
-                for lv_name in self.config.choice.main_lvs:
-                    grad_key = f'grad_lambda_{lv_name}'
-                    if grad_key in grad_dict['choice']:
-                        gradient_list.append(np.array([grad_dict['choice'][grad_key]]))
-                    else:
-                        raise KeyError(f"Gradient key '{grad_key}' not found in choice gradients. Available keys: {list(grad_dict['choice'].keys())}")
-        elif 'grad_lambda_main' in grad_dict['choice']:
-            # 조절효과: lambda_main + lambda_mod_{moderator}
-            gradient_list.append(np.array([grad_dict['choice']['grad_lambda_main']]))
-
-            # 모든 lambda_mod_* 키 찾기 (정렬하여 순서 보장)
-            lambda_mod_keys = sorted([key for key in grad_dict['choice'].keys() if key.startswith('grad_lambda_mod_')])
-            logger.info(f"[_pack_gradient] Found lambda_mod keys: {lambda_mod_keys}")
-            for key in lambda_mod_keys:
-                gradient_list.append(np.array([grad_dict['choice'][key]]))
-        elif 'grad_lambda' in grad_dict['choice']:
-            # 일반: lambda
-            gradient_list.append(np.array([grad_dict['choice']['grad_lambda']]))
-        else:
-            raise KeyError(f"Neither grad_lambda nor grad_lambda_main nor grad_lambda_{{lv_name}} found in choice gradients. Available keys: {list(grad_dict['choice'].keys())}")
-
-        # 사회인구학적 변수가 선택모델에 포함되는 경우
-        if hasattr(self.config.structural, 'include_in_choice') and self.config.structural.include_in_choice:
-            # 현재는 구현되지 않음
-            n_sociodem = len(self.config.structural.sociodemographics)
-            gradient_list.append(np.zeros(n_sociodem))
-
-        # 🔍 디버깅: 각 gradient 항목의 크기 확인
-        logger.info(f"[_pack_gradient] Number of gradient items: {len(gradient_list)}")
-        total_size = 0
-        for i, item in enumerate(gradient_list):
-            item_size = len(item) if hasattr(item, '__len__') else 1
-            total_size += item_size
-            logger.info(f"  Item {i}: size={item_size}, cumulative={total_size}")
-
-        # 벡터로 결합
-        gradient_vector = np.concatenate(gradient_list)
-
-        # 🔍 디버깅: gradient 벡터 크기 확인
-        logger.info(f"[_pack_gradient] Gradient vector size: {len(gradient_vector)}, Expected: {len(self.param_scaler.scales) if hasattr(self, 'param_scaler') else 'N/A'}")
+        # ✅ ParameterManager를 사용하여 배열로 변환
+        gradient_vector = self.param_manager.dict_to_array(
+            grad_dict, self.param_names, measurement_model
+        )
 
         return gradient_vector
+
+
+
+    def _validate_gradient_dict(self, grad_dict: Dict, param_names: list, measurement_model) -> None:
+        """
+        Gradient 딕셔너리가 모든 필요한 파라미터를 포함하는지 검증
+
+        Args:
+            grad_dict: Gradient 딕셔너리 (parameter 스타일로 변환된 후)
+            param_names: 필요한 파라미터 이름 리스트
+
+        Raises:
+            ValueError: 필요한 파라미터가 누락된 경우
+        """
+        missing_params = []
+
+        for name in param_names:
+            # 측정모델 파라미터
+            if name.startswith('zeta_'):
+                # ✅ indicator 이름 파싱 (예: zeta_health_concern_q7)
+                parts = name.split('_')
+                lv_name = '_'.join(parts[1:-1])  # 'health_concern'
+
+                # measurement[lv_name]['zeta'] 배열이 있는지 확인
+                found = False
+                if 'measurement' in grad_dict and lv_name in grad_dict['measurement']:
+                    if isinstance(grad_dict['measurement'][lv_name], dict):
+                        if 'zeta' in grad_dict['measurement'][lv_name]:
+                            found = True
+                if not found:
+                    missing_params.append(name)
+
+            elif name.startswith('sigma_sq_'):
+                # ✅ indicator 이름 파싱 (예: sigma_sq_health_concern_q7)
+                parts = name.split('_')
+                lv_name = '_'.join(parts[2:-1])  # 'sigma_sq' 제외
+
+                # measurement[lv_name]['sigma_sq'] 배열이 있는지 확인
+                found = False
+                if 'measurement' in grad_dict and lv_name in grad_dict['measurement']:
+                    if isinstance(grad_dict['measurement'][lv_name], dict):
+                        if 'sigma_sq' in grad_dict['measurement'][lv_name]:
+                            found = True
+                if not found:
+                    missing_params.append(name)
+
+            elif name.startswith('tau_'):
+                # ✅ indicator 이름 파싱 (예: tau_health_concern_q7_1)
+                parts = name.split('_')
+                lv_name = '_'.join(parts[1:-2])  # 'tau' 제외, indicator와 tau_idx 제외
+
+                # measurement[lv_name]['tau'] 배열이 있는지 확인
+                found = False
+                if 'measurement' in grad_dict and lv_name in grad_dict['measurement']:
+                    if isinstance(grad_dict['measurement'][lv_name], dict):
+                        if 'tau' in grad_dict['measurement'][lv_name]:
+                            found = True
+                if not found:
+                    missing_params.append(name)
+
+            # 구조모델 파라미터
+            elif name.startswith('gamma_') and '_to_' in name:
+                if 'structural' not in grad_dict or name not in grad_dict['structural']:
+                    missing_params.append(name)
+
+            # 선택모델 파라미터
+            elif name == 'beta_intercept':
+                # beta_intercept → 'intercept'
+                if 'choice' not in grad_dict or 'intercept' not in grad_dict['choice']:
+                    missing_params.append(name)
+
+            elif name.startswith('beta_'):
+                # beta_sugar_free, beta_health_label, beta_price → 'beta' 배열
+                if 'choice' not in grad_dict or 'beta' not in grad_dict['choice']:
+                    missing_params.append(name)
+
+            elif name.startswith('lambda_'):
+                if 'choice' not in grad_dict or name not in grad_dict['choice']:
+                    missing_params.append(name)
+
+            elif name.startswith('gamma_') and not '_to_' in name:
+                # LV-Attribute 상호작용 파라미터
+                if 'choice' not in grad_dict or name not in grad_dict['choice']:
+                    missing_params.append(name)
+
+        if missing_params:
+            # 상세한 에러 메시지 생성
+            error_msg = [
+                "=" * 80,
+                "Gradient 딕셔너리 검증 실패",
+                "=" * 80,
+                f"누락된 파라미터 ({len(missing_params)}개):",
+            ]
+            for param in missing_params[:10]:  # 최대 10개만 표시
+                error_msg.append(f"  - {param}")
+            if len(missing_params) > 10:
+                error_msg.append(f"  ... 외 {len(missing_params) - 10}개")
+
+            error_msg.append("")
+            error_msg.append("사용 가능한 Gradient 키:")
+            error_msg.append(f"  measurement: {list(grad_dict.get('measurement', {}).keys())[:5]}...")
+            error_msg.append(f"  structural: {list(grad_dict.get('structural', {}).keys())}")
+            error_msg.append(f"  choice: {list(grad_dict.get('choice', {}).keys())}")
+            error_msg.append("=" * 80)
+
+            raise ValueError("\n".join(error_msg))
+
+    def _log_gpu_status(self, gpu_state: GPUComputeState, prefix: str = ""):
+        """
+        GPU 상태를 일관되게 로깅
+
+        Args:
+            gpu_state: GPU 계산 상태 객체
+            prefix: 로그 메시지 접두사
+        """
+        separator = "=" * 80
+        mode_msg = f"{prefix}Gradient 계산 모드: {gpu_state.get_mode_name()}"
+
+        # 콘솔과 파일 모두에 기록
+        self.logger.info(separator)
+        self.logger.info(mode_msg)
+        self.logger.info(separator)
+
+        self.iteration_logger.info(separator)
+        self.iteration_logger.info(mode_msg)
+        self.iteration_logger.info(separator)
+
+        # 상세 정보는 파일에만 기록
+        status = gpu_state.get_status_dict()
+        self.iteration_logger.info(f"{prefix}  enabled: {status['enabled']}")
+        self.iteration_logger.info(f"{prefix}  measurement_model: {status['measurement_model_available']}")
+        self.iteration_logger.info(f"{prefix}  full_parallel: {status['full_parallel']}")
+        self.iteration_logger.info(f"{prefix}  is_ready: {status['is_ready']}")
+        self.iteration_logger.info(separator)
 
     def _process_results(self, optimization_result,
                         measurement_model,
