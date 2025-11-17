@@ -23,7 +23,7 @@ def analyze_data_scaling():
     
     # 1. 데이터 로드
     print("\n1. 데이터 로드 중...")
-    data_path = project_root / 'data' / 'processed' / 'iclv' / 'integrated_data_cleaned.csv'
+    data_path = project_root / 'data' / 'processed' / 'iclv' / 'integrated_data.csv'
     data = pd.read_csv(data_path)
     print(f"   데이터 shape: {data.shape}")
     print(f"   전체 개인 수: {data['respondent_id'].nunique()}")

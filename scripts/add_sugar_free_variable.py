@@ -1,18 +1,16 @@
 """
-설탕함량 변수 이진 변환 및 Price 스케일링 스크립트
+설탕함량 변수 이진 변환 스크립트
 
-목적: integrated_data.csv에 sugar_free 변수 추가 및 price 스케일링
+목적: integrated_data.csv에 sugar_free 변수 추가
 변환:
   1. sugar_content ('알반당', '무설탕') → sugar_free (0, 1)
      - '무설탕' → 1
      - '알반당' → 0
      - NaN → NaN (구매안함 대안)
-  2. price (2000~3000) → price_scaled (2~3)
-     - price / 1000
 
 Author: Sugar Substitute Research Team
 Date: 2025-11-09
-Updated: 2025-11-11 (Price scaling 추가)
+Updated: 2025-11-17 (Price scaling 제거 - 원본 가격 유지)
 """
 
 import pandas as pd
@@ -61,22 +59,12 @@ def main():
     print(f"   - sugar_free 값 분포:")
     print(df['sugar_free'].value_counts(dropna=False).to_string())
 
-    # 4. Price 스케일링 (1000으로 나누기)
-    print("\n[4] Price 스케일링 중...")
-
-    # 원본 price 통계
-    print(f"   - 원본 price 통계:")
-    print(f"     Min: {df['price'].min():.3f}, Max: {df['price'].max():.3f}, Mean: {df['price'].mean():.3f}")
-
-    # Price가 이미 스케일링되었는지 확인 (2~3 범위면 이미 스케일링됨)
-    if df['price'].max() > 100:
-        # Price를 1000으로 나누기 (2000~3000 → 2~3)
-        df['price'] = df['price'] / 1000.0
-        print(f"   - 스케일링 완료 (÷ 1000)")
-        print(f"   - 스케일링된 price 통계:")
-        print(f"     Min: {df['price'].min():.3f}, Max: {df['price'].max():.3f}, Mean: {df['price'].mean():.3f}")
-    else:
-        print(f"   - ⚠️  Price가 이미 스케일링되어 있습니다 (건너뛰기)")
+    # 4. Price 확인 (원본 유지)
+    print("\n[4] Price 확인 (원본 유지)...")
+    print(f"   - price 통계:")
+    print(f"     Min: {df['price'].min():.1f}, Max: {df['price'].max():.1f}, Mean: {df['price'].mean():.1f}")
+    print(f"   - price 고유값: {sorted(df['price'].dropna().unique())}")
+    print(f"   ✅ 원본 가격 유지 (스케일링 없음)")
 
     # 5. 검증
     print("\n[5] 변환 검증:")
@@ -128,12 +116,12 @@ def main():
     print(f"     · 무설탕 (1): {(df['sugar_free'] == 1).sum():,}개")
     print(f"     · 일반당 (0): {(df['sugar_free'] == 0).sum():,}개")
     print(f"     · NaN: {df['sugar_free'].isna().sum():,}개")
-    print(f"   - price 스케일링: ✅")
-    print(f"     · 범위: {df['price'].min():.3f} ~ {df['price'].max():.3f}")
-    print(f"     · 평균: {df['price'].mean():.3f}")
+    print(f"   - price 원본 유지: ✅")
+    print(f"     · 범위: {df['price'].min():.1f} ~ {df['price'].max():.1f}")
+    print(f"     · 평균: {df['price'].mean():.1f}")
 
     print("\n" + "=" * 80)
-    print("설탕함량 변수 이진 변환 및 Price 스케일링 완료!")
+    print("설탕함량 변수 이진 변환 완료!")
     print("=" * 80)
 
 

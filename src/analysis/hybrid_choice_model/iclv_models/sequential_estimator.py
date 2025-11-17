@@ -49,20 +49,29 @@ class SequentialEstimator(BaseEstimator):
     - 동시추정보다 효율성 낮음
     """
     
-    def __init__(self, config):
+    def __init__(self, config, standardization_method: str = 'center'):
         """
         Args:
             config: ICLVConfig 또는 MultiLatentConfig
+            standardization_method: 요인점수 변환 방법
+                - 'center': 중심화 (평균 0, 표준편차는 원본 유지) - 기본값
+                - 'zscore': Z-score 표준화 (평균 0, 표준편차 1)
         """
         super().__init__(config)
-        
+
         # 순차추정 전용 컴포넌트
         self.initializer = SequentialInitializer(config)
         self.likelihood_calculator = SequentialLikelihoodCalculator(
-            config, 
+            config,
             config.individual_id_column
         )
-        
+
+        # 요인점수 변환 방법 설정
+        if standardization_method not in ['center', 'zscore']:
+            raise ValueError(f"standardization_method는 'center' 또는 'zscore'여야 합니다. 입력값: {standardization_method}")
+        self.standardization_method = standardization_method
+        self.logger.info(f"요인점수 변환 방법: {standardization_method}")
+
         # 단계별 결과 저장
         self.measurement_results = None
         self.structural_results = None
@@ -118,10 +127,11 @@ class SequentialEstimator(BaseEstimator):
             self.factor_scores = cfa_results['factor_scores']
             self.logger.info(f"요인점수 추출 완료: {list(self.factor_scores.keys())}")
 
-            # 요인점수 표준화
-            self.logger.info("\n요인점수 Z-score 표준화 적용...")
-            self.factor_scores = self._standardize_factor_scores(self.factor_scores)
-            self.logger.info("요인점수 표준화 완료")
+            # 요인점수 변환 (표준화 또는 중심화)
+            method_name = "Z-score 표준화" if self.standardization_method == 'zscore' else "중심화"
+            self.logger.info(f"\n요인점수 {method_name} 적용...")
+            self.factor_scores = self._standardize_factor_scores(self.factor_scores, method=self.standardization_method)
+            self.logger.info(f"요인점수 {method_name} 완료")
 
             # 결과 정리
             results = {
@@ -516,10 +526,11 @@ class SequentialEstimator(BaseEstimator):
             # ✅ 표준화 전 분산 체크 (원본 요인점수)
             self._check_factor_score_variance(original_factor_scores)
 
-            # 요인점수 Z-score 표준화
-            self.logger.info("\n요인점수 Z-score 표준화 적용...")
-            self.factor_scores = self._standardize_factor_scores(original_factor_scores)
-            self.logger.info("요인점수 표준화 완료")
+            # 요인점수 변환 (표준화 또는 중심화)
+            method_name = "Z-score 표준화" if self.standardization_method == 'zscore' else "중심화"
+            self.logger.info(f"\n요인점수 {method_name} 적용...")
+            self.factor_scores = self._standardize_factor_scores(original_factor_scores, method=self.standardization_method)
+            self.logger.info(f"요인점수 {method_name} 완료")
 
             # 표준화 후 로깅
             self._log_factor_scores(self.factor_scores, stage="SEM 추출 직후 (표준화 후)")
@@ -663,7 +674,25 @@ class SequentialEstimator(BaseEstimator):
             if isinstance(factor_scores, str):
                 self.logger.info(f"\n요인점수 로드 중: {factor_scores}")
                 loaded_results = self.load_stage1_results(factor_scores)
-                self.factor_scores = loaded_results['factor_scores']
+
+                # ✅ 원본 요인점수가 있으면 사용, 없으면 변환된 요인점수 사용
+                if 'original_factor_scores' in loaded_results:
+                    self.logger.info("원본 요인점수 발견 - 현재 설정에 맞게 재변환합니다")
+                    original_factor_scores = loaded_results['original_factor_scores']
+
+                    # 현재 설정에 맞게 재변환
+                    method_name = "Z-score 표준화" if self.standardization_method == 'zscore' else "중심화"
+                    self.logger.info(f"요인점수 {method_name} 적용 중...")
+                    self.factor_scores = self._standardize_factor_scores(
+                        original_factor_scores,
+                        method=self.standardization_method
+                    )
+                    self.logger.info(f"요인점수 {method_name} 완료")
+                else:
+                    self.logger.warning("⚠️  원본 요인점수가 없습니다 - 저장된 변환 요인점수를 그대로 사용합니다")
+                    self.logger.warning(f"   (1단계 추정 시 사용된 변환 방법이 적용된 상태입니다)")
+                    self.factor_scores = loaded_results['factor_scores']
+
                 self.logger.info(f"요인점수 로드 완료: {list(self.factor_scores.keys())}")
             else:
                 self.factor_scores = factor_scores
@@ -743,10 +772,11 @@ class SequentialEstimator(BaseEstimator):
             # ✅ 표준화 전 분산 체크 (원본 요인점수)
             self._check_factor_score_variance(original_factor_scores)
 
-            # ✅ 요인점수 Z-score 표준화
-            self.logger.info("\n요인점수 Z-score 표준화 적용...")
-            self.factor_scores = self._standardize_factor_scores(original_factor_scores)
-            self.logger.info("요인점수 표준화 완료")
+            # ✅ 요인점수 변환 (표준화 또는 중심화)
+            method_name = "Z-score 표준화" if self.standardization_method == 'zscore' else "중심화"
+            self.logger.info(f"\n요인점수 {method_name} 적용...")
+            self.factor_scores = self._standardize_factor_scores(original_factor_scores, method=self.standardization_method)
+            self.logger.info(f"요인점수 {method_name} 완료")
 
             # ✅ 표준화 후 로깅
             self._log_factor_scores(self.factor_scores, stage="SEM 추출 직후 (표준화 후)")
@@ -1214,13 +1244,18 @@ class SequentialEstimator(BaseEstimator):
 
         self.logger.info("=" * 100)
 
-    def _standardize_factor_scores(self, factor_scores: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    def _standardize_factor_scores(self, factor_scores: Dict[str, np.ndarray],
+                                    method: str = 'center') -> Dict[str, np.ndarray]:
         """
-        요인점수 Z-score 표준화
+        요인점수 표준화 또는 중심화
 
-        각 잠재변수의 요인점수를 평균 0, 표준편차 1로 표준화합니다.
+        각 잠재변수의 요인점수를 변환합니다.
 
-        z = (x - mean(x)) / std(x)
+        - method='zscore': Z-score 표준화 (평균 0, 표준편차 1)
+          z = (x - mean(x)) / std(x)
+
+        - method='center': 중심화 (평균 0, 표준편차는 원본 유지)
+          centered = x - mean(x)
 
         Args:
             factor_scores: 원본 요인점수 딕셔너리
@@ -1229,14 +1264,25 @@ class SequentialEstimator(BaseEstimator):
                     'perceived_price': np.ndarray (n_individuals,),
                     ...
                 }
+            method: 변환 방법
+                - 'zscore': Z-score 표준화 (기본값에서 변경)
+                - 'center': 중심화 (새로운 기본값)
 
         Returns:
-            표준화된 요인점수 딕셔너리 (동일한 구조)
+            변환된 요인점수 딕셔너리 (동일한 구조)
         """
-        standardized = {}
+        transformed = {}
 
-        self.logger.info("\n요인점수 Z-score 표준화:")
-        self.logger.info(f"{'변수':30s} {'원본 평균':>12s} {'원본 std':>12s} → {'표준화 평균':>12s} {'표준화 std':>12s}")
+        # 메서드 이름 설정
+        if method == 'zscore':
+            method_name = "Z-score 표준화"
+            method_desc = "평균 0, 표준편차 1"
+        else:  # method == 'center'
+            method_name = "중심화 (Centering)"
+            method_desc = "평균 0, 표준편차는 원본 유지"
+
+        self.logger.info(f"\n요인점수 {method_name}:")
+        self.logger.info(f"{'변수':30s} {'원본 평균':>12s} {'원본 std':>12s} → {'변환 평균':>12s} {'변환 std':>12s}")
         self.logger.info('-' * 90)
 
         for lv_name, scores in factor_scores.items():
@@ -1244,27 +1290,34 @@ class SequentialEstimator(BaseEstimator):
             mean = np.mean(scores)
             std = np.std(scores, ddof=0)  # 모집단 표준편차 (N으로 나눔)
 
-            # Z-score 표준화
-            if std > 1e-10:  # 표준편차가 0이 아닌 경우만
-                standardized_scores = (scores - mean) / std
-            else:
-                self.logger.warning(f"  {lv_name}: 표준편차가 0에 가까워 표준화하지 않음")
-                standardized_scores = scores - mean  # 평균만 제거
+            if method == 'zscore':
+                # Z-score 표준화
+                if std > 1e-10:  # 표준편차가 0이 아닌 경우만
+                    transformed_scores = (scores - mean) / std
+                else:
+                    self.logger.warning(f"  {lv_name}: 표준편차가 0에 가까워 중심화만 적용")
+                    transformed_scores = scores - mean  # 평균만 제거
+            else:  # method == 'center'
+                # 중심화 (평균만 제거)
+                transformed_scores = scores - mean
 
-            standardized[lv_name] = standardized_scores
+            transformed[lv_name] = transformed_scores
 
             # 검증
-            new_mean = np.mean(standardized_scores)
-            new_std = np.std(standardized_scores, ddof=0)
+            new_mean = np.mean(transformed_scores)
+            new_std = np.std(transformed_scores, ddof=0)
 
             self.logger.info(
                 f'{lv_name:30s} {mean:>12.4f} {std:>12.4f} → {new_mean:>12.6f} {new_std:>12.6f}'
             )
 
         self.logger.info('-' * 90)
-        self.logger.info("✅ 모든 요인점수가 평균 0, 표준편차 1로 표준화됨")
+        if method == 'zscore':
+            self.logger.info("✅ 모든 요인점수가 평균 0, 표준편차 1로 표준화됨")
+        else:
+            self.logger.info("✅ 모든 요인점수가 평균 0으로 중심화됨 (표준편차는 원본 유지)")
 
-        return standardized
+        return transformed
 
     def _log_factor_scores(self, factor_scores: Dict[str, np.ndarray], stage: str = ""):
         """

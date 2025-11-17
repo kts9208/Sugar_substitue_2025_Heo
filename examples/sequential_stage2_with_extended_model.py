@@ -174,8 +174,29 @@ def generate_stage2_filename(config, stage1_model_name: str = None) -> str:
 
         # 2-3. LV-Attribute 상호작용
         if lv_attr_interactions and len(lv_attr_interactions) > 0:
-            n_interactions = len(lv_attr_interactions)
-            parts.append(f"{n_interactions}int")
+            # 상호작용 속성 추출 (예: health_label -> hl, price -> pr)
+            attr_abbr_map = {
+                'health_label': 'hl',
+                'price': 'pr'
+            }
+            # LV 약어 추출
+            lv_abbr_map = {
+                'health_concern': 'HC',
+                'perceived_benefit': 'PB',
+                'perceived_price': 'PP',
+                'nutrition_knowledge': 'NK',
+                'purchase_intention': 'PI'
+            }
+
+            interaction_strs = []
+            for interaction in lv_attr_interactions:
+                lv = interaction['lv']
+                attr = interaction['attribute']
+                lv_abbr = lv_abbr_map.get(lv, lv[:2].upper())
+                attr_abbr = attr_abbr_map.get(attr, attr[:2])
+                interaction_strs.append(f"{lv_abbr}x{attr_abbr}")
+
+            parts.append(f"int_{'_'.join(interaction_strs)}")
 
         stage2_name = '_'.join(parts) if parts else "base"
 
@@ -191,6 +212,11 @@ def main():
     # 📌 1단계 결과 파일명 (1단계에서 생성된 파일명)
     STAGE1_RESULT_FILE = "stage1_HC-PB_PB-PI_results.pkl"
 
+    # 📌 요인점수 변환 방법
+    # 'center': 중심화 (평균 0, 표준편차는 원본 유지) - 기본값
+    # 'zscore': Z-score 표준화 (평균 0, 표준편차 1)
+    STANDARDIZATION_METHOD = 'center'  # ✅ 중심화 사용
+
     # 📌 선택모델 설정
     CHOICE_ATTRIBUTES = ['health_label', 'price']  # 선택 속성
     CHOICE_TYPE = 'binary'  # 'binary' 또는 'multinomial'
@@ -200,16 +226,16 @@ def main():
     # 예시: [] = Base Model (잠재변수 없음)
     #      ['purchase_intention'] = Base + PI 주효과
     #      ['purchase_intention', 'nutrition_knowledge'] = Base + PI + NK 주효과
-    MAIN_LVS = []  # ✅ 상호작용만 (주효과 없음)
+    MAIN_LVS = []  # ✅ Base Model 테스트
 
     # 📌 조절효과 (잠재변수 2개 세트)
     # 예시: [('perceived_price', 'nutrition_knowledge')] = PP와 NK의 조절효과
-    MODERATION_LVS = []  # ✅ 여기에 조절효과 추가! 예: [('lv1', 'lv2')]
+    MODERATION_LVS = []  # ✅ 조절효과 없음
 
     # 📌 LV-Attribute 상호작용 (잠재변수-속성 2개 세트)
     # 예시: [('purchase_intention', 'price')] = PI × price 상호작용
     #      [('purchase_intention', 'price'), ('nutrition_knowledge', 'health_label')]
-    LV_ATTRIBUTE_INTERACTIONS = [('purchase_intention', 'health_label')]  # ✅ PI × health_label
+    LV_ATTRIBUTE_INTERACTIONS = []  # ✅ 상호작용 없음
 
     # ═══════════════════════════════════════════════════════════════════
     # 🤖 자동 처리 영역 - 수정 불필요
@@ -235,7 +261,7 @@ def main():
 
     # 1. 데이터 로드
     print("\n[1] 데이터 로드 중...")
-    data_path = project_root / "data" / "processed" / "iclv" / "integrated_data_cleaned.csv"
+    data_path = project_root / "data" / "processed" / "iclv" / "integrated_data.csv"
     data = pd.read_csv(data_path)
     print(f"✅ 데이터 로드 완료: {len(data)}행, {len(data.columns)}열")
 
@@ -333,8 +359,9 @@ def main():
 
     # 5. Estimator 생성
     print("\n[5] Estimator 생성 중...")
-    estimator = SequentialEstimator(config)
+    estimator = SequentialEstimator(config, standardization_method=STANDARDIZATION_METHOD)
     print("✅ Estimator 생성 완료")
+    print(f"   - 요인점수 변환 방법: {STANDARDIZATION_METHOD}")
 
     # 6. 2단계 추정 실행
     print("\n[6] 2단계 추정 실행 중...")
@@ -497,10 +524,44 @@ def main():
     print(f"  - 1단계 모델: {stage1_model_name}")
     print(f"  - 2단계 모델: {filename_prefix.split('1_')[1].replace('2', '')}")
 
-    # 파라미터 저장 (통계량 포함)
+    # ✅ 통합 결과 저장 (적합도 + 파라미터)
+    combined_data = []
+
+    # 1. 적합도 지수 추가 (섹션: Model_Fit)
+    combined_data.append({
+        'section': 'Model_Fit',
+        'parameter': 'log_likelihood',
+        'estimate': results['log_likelihood'],
+        'std_error': '',
+        't_statistic': '',
+        'p_value': '',
+        'significance': '',
+        'description': 'Log-Likelihood'
+    })
+    combined_data.append({
+        'section': 'Model_Fit',
+        'parameter': 'AIC',
+        'estimate': results['aic'],
+        'std_error': '',
+        't_statistic': '',
+        'p_value': '',
+        'significance': '',
+        'description': 'Akaike Information Criterion'
+    })
+    combined_data.append({
+        'section': 'Model_Fit',
+        'parameter': 'BIC',
+        'estimate': results['bic'],
+        'std_error': '',
+        't_statistic': '',
+        'p_value': '',
+        'significance': '',
+        'description': 'Bayesian Information Criterion'
+    })
+
+    # 2. 파라미터 추가 (섹션: Parameters)
     if 'parameter_statistics' in results and results['parameter_statistics'] is not None:
         param_stats = results['parameter_statistics']
-        param_data = []
 
         # ASC (대안별 상수)
         asc_descriptions = {
@@ -517,7 +578,8 @@ def main():
         for key, desc in asc_descriptions.items():
             if key in param_stats:
                 stat = param_stats[key]
-                param_data.append({
+                combined_data.append({
+                    'section': 'Parameters',
                     'parameter': key,
                     'estimate': stat['estimate'],
                     'std_error': stat['se'],
@@ -530,7 +592,8 @@ def main():
         # intercept (대안별 모델이 아닌 경우)
         if 'intercept' in param_stats:
             stat = param_stats['intercept']
-            param_data.append({
+            combined_data.append({
+                'section': 'Parameters',
                 'parameter': 'intercept',
                 'estimate': stat['estimate'],
                 'std_error': stat['se'],
@@ -543,7 +606,8 @@ def main():
         # beta (속성 계수)
         if 'beta' in param_stats:
             for attr_name, stat in param_stats['beta'].items():
-                param_data.append({
+                combined_data.append({
+                    'section': 'Parameters',
                     'parameter': f'beta_{attr_name}',
                     'estimate': stat['estimate'],
                     'std_error': stat['se'],
@@ -568,7 +632,8 @@ def main():
         for key in sorted([k for k in param_stats.keys() if k.startswith('theta_')]):
             stat = param_stats[key]
             desc = theta_descriptions.get(key, key)
-            param_data.append({
+            combined_data.append({
+                'section': 'Parameters',
                 'parameter': key,
                 'estimate': stat['estimate'],
                 'std_error': stat['se'],
@@ -590,7 +655,8 @@ def main():
         for key, desc in lambda_descriptions.items():
             if key in param_stats:
                 stat = param_stats[key]
-                param_data.append({
+                combined_data.append({
+                    'section': 'Parameters',
                     'parameter': key,
                     'estimate': stat['estimate'],
                     'std_error': stat['se'],
@@ -613,7 +679,8 @@ def main():
         for key in sorted([k for k in param_stats.keys() if k.startswith('gamma_')]):
             stat = param_stats[key]
             desc = gamma_descriptions.get(key, key)
-            param_data.append({
+            combined_data.append({
+                'section': 'Parameters',
                 'parameter': key,
                 'estimate': stat['estimate'],
                 'std_error': stat['se'],
@@ -623,20 +690,23 @@ def main():
                 'description': desc
             })
 
-        param_df = pd.DataFrame(param_data)
-        param_path = save_dir / f"{filename_prefix}_parameters.csv"
-        param_df.to_csv(param_path, index=False, encoding='utf-8-sig')
-        print(f"\n  📁 {param_path}")
-
     elif 'params' in results:
-        # 통계량이 없는 경우 파라미터만 저장
+        # 통계량이 없는 경우 파라미터만 저장 (간소화된 형식)
         params = results['params']
-        param_data = []
         beta_names = ['sugar_free', 'health_label', 'price']
 
         # intercept
         if 'intercept' in params:
-            param_data.append({'parameter': 'intercept', 'value': params['intercept'], 'description': '절편'})
+            combined_data.append({
+                'section': 'Parameters',
+                'parameter': 'intercept',
+                'estimate': params['intercept'],
+                'std_error': '',
+                't_statistic': '',
+                'p_value': '',
+                'significance': '',
+                'description': '절편'
+            })
 
         # beta
         if 'beta' in params:
@@ -644,24 +714,87 @@ def main():
             if isinstance(beta, np.ndarray):
                 for i, val in enumerate(beta):
                     name = beta_names[i] if i < len(beta_names) else f'beta_{i}'
-                    param_data.append({'parameter': f'beta_{name}', 'value': val, 'description': name})
+                    combined_data.append({
+                        'section': 'Parameters',
+                        'parameter': f'beta_{name}',
+                        'estimate': val,
+                        'std_error': '',
+                        't_statistic': '',
+                        'p_value': '',
+                        'significance': '',
+                        'description': name
+                    })
             else:
-                param_data.append({'parameter': 'beta', 'value': beta, 'description': '속성계수'})
+                combined_data.append({
+                    'section': 'Parameters',
+                    'parameter': 'beta',
+                    'estimate': beta,
+                    'std_error': '',
+                    't_statistic': '',
+                    'p_value': '',
+                    'significance': '',
+                    'description': '속성계수'
+                })
 
         # lambda (잠재변수 주 효과)
         if 'lambda_purchase_intention' in params:
-            param_data.append({'parameter': 'lambda_purchase_intention', 'value': params['lambda_purchase_intention'], 'description': '구매의도 (PI)'})
+            combined_data.append({
+                'section': 'Parameters',
+                'parameter': 'lambda_purchase_intention',
+                'estimate': params['lambda_purchase_intention'],
+                'std_error': '',
+                't_statistic': '',
+                'p_value': '',
+                'significance': '',
+                'description': '구매의도 (PI)'
+            })
 
         if 'lambda_nutrition_knowledge' in params:
-            param_data.append({'parameter': 'lambda_nutrition_knowledge', 'value': params['lambda_nutrition_knowledge'], 'description': '영양지식 (NK)'})
+            combined_data.append({
+                'section': 'Parameters',
+                'parameter': 'lambda_nutrition_knowledge',
+                'estimate': params['lambda_nutrition_knowledge'],
+                'std_error': '',
+                't_statistic': '',
+                'p_value': '',
+                'significance': '',
+                'description': '영양지식 (NK)'
+            })
 
         # 기타 lambda (하위 호환)
         if 'lambda_main' in params:
-            param_data.append({'parameter': 'lambda_main', 'value': params['lambda_main'], 'description': '주 효과'})
+            combined_data.append({
+                'section': 'Parameters',
+                'parameter': 'lambda_main',
+                'estimate': params['lambda_main'],
+                'std_error': '',
+                't_statistic': '',
+                'p_value': '',
+                'significance': '',
+                'description': '주 효과'
+            })
         if 'lambda_mod_perceived_price' in params:
-            param_data.append({'parameter': 'lambda_mod_perceived_price', 'value': params['lambda_mod_perceived_price'], 'description': '가격 조절'})
+            combined_data.append({
+                'section': 'Parameters',
+                'parameter': 'lambda_mod_perceived_price',
+                'estimate': params['lambda_mod_perceived_price'],
+                'std_error': '',
+                't_statistic': '',
+                'p_value': '',
+                'significance': '',
+                'description': '가격 조절'
+            })
         if 'lambda_mod_nutrition_knowledge' in params:
-            param_data.append({'parameter': 'lambda_mod_nutrition_knowledge', 'value': params['lambda_mod_nutrition_knowledge'], 'description': '지식 조절'})
+            combined_data.append({
+                'section': 'Parameters',
+                'parameter': 'lambda_mod_nutrition_knowledge',
+                'estimate': params['lambda_mod_nutrition_knowledge'],
+                'std_error': '',
+                't_statistic': '',
+                'p_value': '',
+                'significance': '',
+                'description': '지식 조절'
+            })
 
         # ✅ gamma (LV-Attribute 상호작용, 대안별)
         gamma_descriptions = {
@@ -675,22 +808,22 @@ def main():
 
         for key, desc in gamma_descriptions.items():
             if key in params:
-                param_data.append({'parameter': key, 'value': params[key], 'description': desc})
+                combined_data.append({
+                    'section': 'Parameters',
+                    'parameter': key,
+                    'estimate': params[key],
+                    'std_error': '',
+                    't_statistic': '',
+                    'p_value': '',
+                    'significance': '',
+                    'description': desc
+                })
 
-        param_df = pd.DataFrame(param_data)
-        param_path = save_dir / f"{filename_prefix}_parameters.csv"
-        param_df.to_csv(param_path, index=False, encoding='utf-8-sig')
-        print(f"\n  📁 {param_path}")
-
-    # 적합도 저장
-    fit_path = save_dir / f"{filename_prefix}_fit.csv"
-    fit_df = pd.DataFrame([{
-        'log_likelihood': results['log_likelihood'],
-        'AIC': results['aic'],
-        'BIC': results['bic']
-    }])
-    fit_df.to_csv(fit_path, index=False, encoding='utf-8-sig')
-    print(f"  📁 {fit_path}")
+    # ✅ 통합 결과 저장 (하나의 CSV 파일)
+    combined_df = pd.DataFrame(combined_data)
+    combined_path = save_dir / f"{filename_prefix}_results.csv"
+    combined_df.to_csv(combined_path, index=False, encoding='utf-8-sig')
+    print(f"\n  📁 {combined_path}")
     
     print("\n" + "=" * 70)
     print("2단계 추정 완료!")

@@ -48,6 +48,11 @@ PATHS = {
     'NK->PI': False,  # 영양지식 → 구매의도
 }
 
+# 요인점수 변환 방법
+# 'center': 중심화 (평균 0, 표준편차는 원본 유지) - 기본값
+# 'zscore': Z-score 표준화 (평균 0, 표준편차 1)
+STANDARDIZATION_METHOD = 'center'  # ✅ 중심화 사용
+
 # 수정지수 계산 여부 (True: 경로 추가 제안, False: 제안 안 함)
 CALCULATE_MODIFICATION_INDICES = False
 
@@ -158,7 +163,7 @@ def main():
 
     # 2. 데이터 로드
     print("\n[2] 데이터 로드 중...")
-    data_path = project_root / "data" / "processed" / "iclv" / "integrated_data_cleaned.csv"
+    data_path = project_root / "data" / "processed" / "iclv" / "integrated_data.csv"
     data = pd.read_csv(data_path)
     print(f"✅ 데이터 로드 완료: {len(data)}행, {len(data.columns)}열")
 
@@ -175,8 +180,9 @@ def main():
     print("\n[4] 모델 생성 중...")
     measurement_model = MultiLatentMeasurement(config.measurement_configs)
     structural_model = MultiLatentStructural(config.structural)
-    estimator = SequentialEstimator(config)
+    estimator = SequentialEstimator(config, standardization_method=STANDARDIZATION_METHOD)
     print("✅ 모델 생성 완료")
+    print(f"   - 요인점수 변환 방법: {STANDARDIZATION_METHOD}")
 
     # 5. 1단계 추정
     print("\n[5] 1단계 추정 실행 중...")

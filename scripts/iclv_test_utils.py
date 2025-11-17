@@ -100,8 +100,8 @@ def load_integrated_data():
         pd.DataFrame: 통합 데이터
     """
     print("\n데이터 로드 중...")
-    # integrated_data_cleaned.csv 사용 (중복 제거된 버전)
-    data_path = project_root / 'data' / 'processed' / 'iclv' / 'integrated_data_cleaned.csv'
+    # integrated_data.csv 사용 (dummy coding 0/1, 원본 가격)
+    data_path = project_root / 'data' / 'processed' / 'iclv' / 'integrated_data.csv'
     data = pd.read_csv(data_path)
 
     print(f"   데이터 shape: {data.shape}")
