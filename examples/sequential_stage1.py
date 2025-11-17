@@ -49,9 +49,9 @@ PATHS = {
 }
 
 # 요인점수 변환 방법
-# 'center': 중심화 (평균 0, 표준편차는 원본 유지) - 기본값
-# 'zscore': Z-score 표준화 (평균 0, 표준편차 1)
-STANDARDIZATION_METHOD = 'center'  # ✅ 중심화 사용
+# 'zscore': Z-score 표준화 (평균 0, 표준편차 1) - 기본값
+# 'center': 중심화 (평균 0, 표준편차는 원본 유지)
+STANDARDIZATION_METHOD = 'zscore'  # ✅ Z-score 표준화 사용
 
 # 수정지수 계산 여부 (True: 경로 추가 제안, False: 제안 안 함)
 CALCULATE_MODIFICATION_INDICES = False

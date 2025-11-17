@@ -676,6 +676,7 @@ class BinaryProbitChoice(BaseICLVChoice):
 
         ✅ 모든 LV 주효과 지원
         ✅ 조절효과 지원
+        ✅ 가격 스케일 자동 조정
 
         Args:
             data: 선택 데이터
@@ -715,10 +716,34 @@ class BinaryProbitChoice(BaseICLVChoice):
             'beta': np.zeros(n_attributes)
         }
 
-        # 가격 변수가 있으면 음수로 초기화
+        # 가격 변수가 있으면 음수로 초기화 (스케일 자동 조정)
         if self.price_variable in self.choice_attributes:
             price_idx = self.choice_attributes.index(self.price_variable)
-            params['beta'][price_idx] = -1.0
+
+            # 가격 데이터 확인
+            if self.price_variable in data.columns:
+                price_data = data[self.price_variable].dropna()
+                if len(price_data) > 0:
+                    price_mean = price_data.mean()
+                    price_std = price_data.std()
+
+                    # 가격 스케일에 따라 초기값 조정
+                    # 목표: 효용이 -5 ~ 5 범위가 되도록
+                    if price_mean > 100:  # 원본 가격 스케일 (예: 2000~3000)
+                        params['beta'][price_idx] = -0.001
+                        self.logger.info(f"가격 스케일 감지: 평균={price_mean:.1f}, 초기 beta_price=-0.001")
+                    elif price_mean > 1:  # 1000으로 나눈 스케일 (예: 2.0~3.0)
+                        params['beta'][price_idx] = -1.0
+                        self.logger.info(f"가격 스케일 감지: 평균={price_mean:.1f}, 초기 beta_price=-1.0")
+                    else:  # 표준화된 스케일 (예: -1~1)
+                        params['beta'][price_idx] = -0.5
+                        self.logger.info(f"가격 스케일 감지: 평균={price_mean:.1f}, 초기 beta_price=-0.5")
+                else:
+                    params['beta'][price_idx] = -0.001
+                    self.logger.warning(f"가격 데이터 없음, 기본값 -0.001 사용")
+            else:
+                params['beta'][price_idx] = -0.001
+                self.logger.warning(f"가격 변수 '{self.price_variable}' 없음, 기본값 -0.001 사용")
 
         # ✅ 모든 LV 주효과 모델
         if self.all_lvs_as_main and self.main_lvs is not None:
@@ -1301,10 +1326,32 @@ class MultinomialLogitChoice(BaseICLVChoice):
             'beta': np.zeros(n_attributes)
         }
 
-        # 가격 변수가 있으면 음수로 초기화
+        # 가격 변수가 있으면 음수로 초기화 (스케일 자동 조정)
         if self.price_variable in self.choice_attributes:
             price_idx = self.choice_attributes.index(self.price_variable)
-            params['beta'][price_idx] = -1.0
+
+            # 가격 데이터 확인
+            if self.price_variable in data.columns:
+                price_data = data[self.price_variable].dropna()
+                if len(price_data) > 0:
+                    price_mean = price_data.mean()
+
+                    # 가격 스케일에 따라 초기값 조정
+                    if price_mean > 100:  # 원본 가격 스케일 (예: 2000~3000)
+                        params['beta'][price_idx] = -0.001
+                        self.logger.info(f"가격 스케일 감지: 평균={price_mean:.1f}, 초기 beta_price=-0.001")
+                    elif price_mean > 1:  # 1000으로 나눈 스케일 (예: 2.0~3.0)
+                        params['beta'][price_idx] = -1.0
+                        self.logger.info(f"가격 스케일 감지: 평균={price_mean:.1f}, 초기 beta_price=-1.0")
+                    else:  # 표준화된 스케일 (예: -1~1)
+                        params['beta'][price_idx] = -0.5
+                        self.logger.info(f"가격 스케일 감지: 평균={price_mean:.1f}, 초기 beta_price=-0.5")
+                else:
+                    params['beta'][price_idx] = -0.001
+                    self.logger.warning(f"가격 데이터 없음, 기본값 -0.001 사용")
+            else:
+                params['beta'][price_idx] = -0.001
+                self.logger.warning(f"가격 변수 '{self.price_variable}' 없음, 기본값 -0.001 사용")
 
         # ✅ 대안별 모델 (Multinomial Logit with alternative-specific constants)
         # n_alternatives가 3이면 대안별 모델 사용

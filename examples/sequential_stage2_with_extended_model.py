@@ -74,7 +74,10 @@ from src.analysis.hybrid_choice_model.iclv_models.sequential_estimator import Se
 from src.analysis.hybrid_choice_model.iclv_models.multi_latent_config import (
     create_sugar_substitute_multi_lv_config
 )
-from src.analysis.hybrid_choice_model.iclv_models.choice_equations import MultinomialLogitChoice
+from src.analysis.hybrid_choice_model.iclv_models.choice_equations import (
+    MultinomialLogitChoice,
+    BinaryProbitChoice
+)
 
 
 def extract_stage1_model_name(stage1_filename: str) -> str:
@@ -213,13 +216,13 @@ def main():
     STAGE1_RESULT_FILE = "stage1_HC-PB_PB-PI_results.pkl"
 
     # 📌 요인점수 변환 방법
-    # 'center': 중심화 (평균 0, 표준편차는 원본 유지) - 기본값
-    # 'zscore': Z-score 표준화 (평균 0, 표준편차 1)
-    STANDARDIZATION_METHOD = 'center'  # ✅ 중심화 사용
+    # 'zscore': Z-score 표준화 (평균 0, 표준편차 1) - 기본값
+    # 'center': 중심화 (평균 0, 표준편차는 원본 유지)
+    STANDARDIZATION_METHOD = 'zscore'  # ✅ Z-score 표준화 사용
 
     # 📌 선택모델 설정
     CHOICE_ATTRIBUTES = ['health_label', 'price']  # 선택 속성
-    CHOICE_TYPE = 'binary'  # 'binary' 또는 'multinomial'
+    CHOICE_TYPE = 'multinomial'  # 'binary' 또는 'multinomial' - ✅ 3개 대안이므로 multinomial 사용
     PRICE_VARIABLE = 'price'  # 가격 변수명
 
     # 📌 잠재변수 주효과 (원하는 잠재변수만 추가)
@@ -354,8 +357,14 @@ def main():
 
     # 4. 선택모델 생성
     print("\n[4] 선택모델 생성 중...")
-    choice_model = MultinomialLogitChoice(config.choice)
-    print("✅ 선택모델 생성 완료")
+    if CHOICE_TYPE == 'multinomial':
+        choice_model = MultinomialLogitChoice(config.choice)
+        print("✅ 선택모델 생성 완료 (Multinomial Logit)")
+    elif CHOICE_TYPE == 'binary':
+        choice_model = BinaryProbitChoice(config.choice)
+        print("✅ 선택모델 생성 완료 (Binary Probit)")
+    else:
+        raise ValueError(f"지원하지 않는 CHOICE_TYPE: {CHOICE_TYPE}")
 
     # 5. Estimator 생성
     print("\n[5] Estimator 생성 중...")

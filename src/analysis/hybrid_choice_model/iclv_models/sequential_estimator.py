@@ -49,13 +49,13 @@ class SequentialEstimator(BaseEstimator):
     - 동시추정보다 효율성 낮음
     """
     
-    def __init__(self, config, standardization_method: str = 'center'):
+    def __init__(self, config, standardization_method: str = 'zscore'):
         """
         Args:
             config: ICLVConfig 또는 MultiLatentConfig
             standardization_method: 요인점수 변환 방법
-                - 'center': 중심화 (평균 0, 표준편차는 원본 유지) - 기본값
-                - 'zscore': Z-score 표준화 (평균 0, 표준편차 1)
+                - 'zscore': Z-score 표준화 (평균 0, 표준편차 1) - 기본값
+                - 'center': 중심화 (평균 0, 표준편차는 원본 유지)
         """
         super().__init__(config)
 
@@ -1245,13 +1245,13 @@ class SequentialEstimator(BaseEstimator):
         self.logger.info("=" * 100)
 
     def _standardize_factor_scores(self, factor_scores: Dict[str, np.ndarray],
-                                    method: str = 'center') -> Dict[str, np.ndarray]:
+                                    method: str = 'zscore') -> Dict[str, np.ndarray]:
         """
         요인점수 표준화 또는 중심화
 
         각 잠재변수의 요인점수를 변환합니다.
 
-        - method='zscore': Z-score 표준화 (평균 0, 표준편차 1)
+        - method='zscore': Z-score 표준화 (평균 0, 표준편차 1) - 기본값
           z = (x - mean(x)) / std(x)
 
         - method='center': 중심화 (평균 0, 표준편차는 원본 유지)
@@ -1265,8 +1265,8 @@ class SequentialEstimator(BaseEstimator):
                     ...
                 }
             method: 변환 방법
-                - 'zscore': Z-score 표준화 (기본값에서 변경)
-                - 'center': 중심화 (새로운 기본값)
+                - 'zscore': Z-score 표준화 (기본값)
+                - 'center': 중심화
 
         Returns:
             변환된 요인점수 딕셔너리 (동일한 구조)

@@ -133,6 +133,7 @@ def main():
     print("  2. DCE 데이터 전처리 (Wide → Long)")
     print("  3. ICLV 데이터 통합 (DCE + Survey + Sociodem)")
     print("  4. sugar_free 변수 추가")
+    print("  5. 가격 Z-score 표준화")
     print("\n입력: data/raw/Sugar_substitue_Raw data_251108.xlsx (326명)")
     print("출력: data/processed/iclv/integrated_data.csv")
     
@@ -162,6 +163,11 @@ def main():
             'script': project_root / 'scripts' / 'add_sugar_free_variable.py',
             'description': 'sugar_free 변수 추가',
             'step_num': 4
+        },
+        {
+            'script': project_root / 'scripts' / 'standardize_price.py',
+            'description': '가격 Z-score 표준화',
+            'step_num': 5
         }
     ]
     
