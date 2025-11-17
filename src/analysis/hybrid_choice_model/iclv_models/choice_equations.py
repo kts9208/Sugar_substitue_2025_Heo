@@ -142,16 +142,36 @@ class BaseICLVChoice(ABC):
 
             # 각 LV를 배열로 변환 (잠재변수가 있는 경우만)
             lv_arrays = {}
-            if self.all_lvs_as_main and isinstance(lv, dict) and self.main_lvs:
-                for lv_name in self.main_lvs:
-                    if lv_name not in lv:
-                        raise KeyError(f"잠재변수 '{lv_name}'가 lv dict에 없습니다.")
+            if self.all_lvs_as_main and isinstance(lv, dict):
+                # 주효과에 사용되는 잠재변수
+                if self.main_lvs:
+                    for lv_name in self.main_lvs:
+                        if lv_name not in lv:
+                            raise KeyError(f"잠재변수 '{lv_name}'가 lv dict에 없습니다.")
 
-                    lv_value = lv[lv_name]
-                    if np.isscalar(lv_value):
-                        lv_arrays[lv_name] = np.full(len(data), lv_value)
-                    else:
-                        lv_arrays[lv_name] = lv_value
+                        lv_value = lv[lv_name]
+                        if np.isscalar(lv_value):
+                            lv_arrays[lv_name] = np.full(len(data), lv_value)
+                        else:
+                            lv_arrays[lv_name] = lv_value
+
+                # ✅ 상호작용에 사용되는 잠재변수 (주효과 없어도 포함)
+                if self.lv_attribute_interactions:
+                    for interaction in self.lv_attribute_interactions:
+                        lv_name = interaction['lv']
+                        if lv_name not in lv_arrays and lv_name in lv:
+                            lv_value = lv[lv_name]
+                            if np.isscalar(lv_value):
+                                lv_arrays[lv_name] = np.full(len(data), lv_value)
+                            else:
+                                lv_arrays[lv_name] = lv_value
+
+                # 디버깅: lv_arrays 내용 로깅 (첫 호출 시에만)
+                if not hasattr(self, '_lv_arrays_logged'):
+                    self.logger.info(f"lv_arrays 생성 완료: {list(lv_arrays.keys())}")
+                    for lv_name, lv_arr in lv_arrays.items():
+                        self.logger.info(f"  {lv_name}: shape={lv_arr.shape if hasattr(lv_arr, 'shape') else 'scalar'}, first 3 values={lv_arr[:3] if hasattr(lv_arr, '__getitem__') else lv_arr}")
+                    self._lv_arrays_logged = True
 
             # 효용 계산
             for i in range(len(data)):
@@ -188,9 +208,29 @@ class BaseICLVChoice(ABC):
                                     if param_name in params and attr_name in self.choice_attributes:
                                         gamma = params[param_name]
                                         attr_idx = self.choice_attributes.index(attr_name)
-                                        lv_value = lv_arrays[lv_name][i // self.n_alternatives]
-                                        attr_value = X[i, attr_idx]
-                                        V[i] += gamma * lv_value * attr_value
+                                        if lv_name in lv_arrays:
+                                            lv_value = lv_arrays[lv_name][i // self.n_alternatives]
+                                            attr_value = X[i, attr_idx]
+                                            interaction_term = gamma * lv_value * attr_value
+                                            V[i] += interaction_term
+
+                                            # 🔍 상세 로깅 (첫 5개 관측치만)
+                                            if i < 15 and not hasattr(self, '_interaction_logged_sugar'):
+                                                self.logger.info(f"[알반당 상호작용] i={i}, gamma={gamma:.4f}, LV={lv_value:.4f}, attr={attr_value:.4f}, term={interaction_term:.4f}, V[{i}]={V[i]:.4f}")
+                                        else:
+                                            # 디버깅: lv_name이 lv_arrays에 없음
+                                            if i == 0:  # 첫 번째 행에서만 로그
+                                                self.logger.warning(f"LV '{lv_name}'이 lv_arrays에 없습니다. lv_arrays keys: {list(lv_arrays.keys())}")
+                                    elif i == 0:
+                                        # 파라미터가 없거나 속성이 없는 경우
+                                        if param_name not in params:
+                                            self.logger.warning(f"[알반당] 파라미터 '{param_name}'이 params에 없습니다. params keys: {list(params.keys())}")
+                                        if attr_name not in self.choice_attributes:
+                                            self.logger.warning(f"[알반당] 속성 '{attr_name}'이 choice_attributes에 없습니다.")
+
+                                # 로깅 플래그 설정
+                                if not hasattr(self, '_interaction_logged_sugar'):
+                                    self._interaction_logged_sugar = True
 
                         elif sugar_content == '무설탕':
                             # 무설탕 대안
@@ -215,9 +255,29 @@ class BaseICLVChoice(ABC):
                                     if param_name in params and attr_name in self.choice_attributes:
                                         gamma = params[param_name]
                                         attr_idx = self.choice_attributes.index(attr_name)
-                                        lv_value = lv_arrays[lv_name][i // self.n_alternatives]
-                                        attr_value = X[i, attr_idx]
-                                        V[i] += gamma * lv_value * attr_value
+                                        if lv_name in lv_arrays:
+                                            lv_value = lv_arrays[lv_name][i // self.n_alternatives]
+                                            attr_value = X[i, attr_idx]
+                                            interaction_term = gamma * lv_value * attr_value
+                                            V[i] += interaction_term
+
+                                            # 🔍 상세 로깅 (첫 5개 관측치만)
+                                            if i < 15 and not hasattr(self, '_interaction_logged_sugar_free'):
+                                                self.logger.info(f"[무설탕 상호작용] i={i}, gamma={gamma:.4f}, LV={lv_value:.4f}, attr={attr_value:.4f}, term={interaction_term:.4f}, V[{i}]={V[i]:.4f}")
+                                        else:
+                                            # 디버깅: lv_name이 lv_arrays에 없음
+                                            if i == 0:  # 첫 번째 행에서만 로그
+                                                self.logger.warning(f"LV '{lv_name}'이 lv_arrays에 없습니다. lv_arrays keys: {list(lv_arrays.keys())}")
+                                    elif i == 0:
+                                        # 파라미터가 없거나 속성이 없는 경우
+                                        if param_name not in params:
+                                            self.logger.warning(f"[무설탕] 파라미터 '{param_name}'이 params에 없습니다. params keys: {list(params.keys())}")
+                                        if attr_name not in self.choice_attributes:
+                                            self.logger.warning(f"[무설탕] 속성 '{attr_name}'이 choice_attributes에 없습니다.")
+
+                                # 로깅 플래그 설정
+                                if not hasattr(self, '_interaction_logged_sugar_free'):
+                                    self._interaction_logged_sugar_free = True
                         else:
                             # 알 수 없는 값
                             V[i] = 0.0
@@ -1061,6 +1121,13 @@ class MultinomialLogitChoice(BaseICLVChoice):
                 print(f"  반복 {iteration_count[0]:3d}: NLL = {nll:12.4f}, LL = {ll:12.4f}")
                 self.logger.info(f"  반복 {iteration_count[0]:3d}: NLL = {nll:12.4f}, LL = {ll:12.4f}")
 
+                # 🔍 gamma 파라미터 추적 (상호작용 항이 있는 경우)
+                if hasattr(self, 'lv_attribute_interactions') and self.lv_attribute_interactions:
+                    gamma_params = {k: v for k, v in params.items() if k.startswith('gamma_')}
+                    if gamma_params:
+                        gamma_str = ', '.join([f"{k}={v:.4f}" for k, v in gamma_params.items()])
+                        self.logger.info(f"    🔍 Gamma: {gamma_str}")
+
             return nll
 
         # 6. 최적화 실행
@@ -1254,13 +1321,18 @@ class MultinomialLogitChoice(BaseICLVChoice):
                         params[f'theta_sugar_{lv_name}'] = 0.5
                         params[f'theta_sugar_free_{lv_name}'] = 0.5
 
-                # ✅ LV-Attribute 상호작용 초기값 (대안별)
+                # ✅ LV-Attribute 상호작용 초기값 (대안별) - 주효과 없이도 가능
                 if hasattr(self, 'lv_attribute_interactions') and self.lv_attribute_interactions:
+                    self.logger.info(f"🔍 LV-Attribute 상호작용 초기화 시작: {len(self.lv_attribute_interactions)}개")
                     for interaction in self.lv_attribute_interactions:
                         lv_name = interaction['lv']
                         attr_name = interaction['attribute']
-                        params[f'gamma_sugar_{lv_name}_{attr_name}'] = 0.0
-                        params[f'gamma_sugar_free_{lv_name}_{attr_name}'] = 0.0
+                        param_sugar = f'gamma_sugar_{lv_name}_{attr_name}'
+                        param_sugar_free = f'gamma_sugar_free_{lv_name}_{attr_name}'
+                        params[param_sugar] = 0.1  # 0이 아닌 작은 값으로 초기화
+                        params[param_sugar_free] = 0.1
+                        self.logger.info(f"  - {param_sugar} = 0.1")
+                        self.logger.info(f"  - {param_sugar_free} = 0.1")
             else:
                 # sugar_content 컬럼이 없으면 기존 방식 (alternative 기준)
                 params['asc_A'] = 0.5
@@ -1404,9 +1476,19 @@ class MultinomialLogitChoice(BaseICLVChoice):
                 if param_name_sugar in params:
                     param_names.append(param_name_sugar)
                     param_values.append(params[param_name_sugar])
+                    # 🔍 로깅
+                    if not hasattr(self, '_gamma_to_array_logged'):
+                        self.logger.info(f"🔍 [_params_to_array] {param_name_sugar} = {params[param_name_sugar]:.4f} 추가됨")
                 if param_name_sugar_free in params:
                     param_names.append(param_name_sugar_free)
                     param_values.append(params[param_name_sugar_free])
+                    # 🔍 로깅
+                    if not hasattr(self, '_gamma_to_array_logged'):
+                        self.logger.info(f"🔍 [_params_to_array] {param_name_sugar_free} = {params[param_name_sugar_free]:.4f} 추가됨")
+
+            # 로깅 플래그
+            if not hasattr(self, '_gamma_to_array_logged'):
+                self._gamma_to_array_logged = True
 
         return param_names, np.array(param_values)
 
@@ -1454,6 +1536,13 @@ class MultinomialLogitChoice(BaseICLVChoice):
             elif name.startswith('gamma_'):
                 # ✅ LV-Attribute 상호작용: gamma_{lv_name}_{attr_name}
                 params[name] = value
+                # 🔍 로깅
+                if not hasattr(self, '_gamma_from_array_logged'):
+                    self.logger.info(f"🔍 [_array_to_params] {name} = {value:.4f} 복원됨")
+
+        # 로깅 플래그
+        if not hasattr(self, '_gamma_from_array_logged'):
+            self._gamma_from_array_logged = True
 
         # beta 배열로 변환
         if beta_values:
