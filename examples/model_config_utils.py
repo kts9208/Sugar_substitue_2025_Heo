@@ -40,6 +40,269 @@ LV_KOREAN = {
 # 전체 이름 → 약어 (역매핑)
 LV_ABBR = {v: k for k, v in LV_NAMES.items()}
 
+# 속성 약어 매핑
+ATTR_NAMES = {
+    'hl': 'health_label',
+    'pr': 'price'
+}
+
+# 속성 전체 이름 → 약어 (역매핑)
+ATTR_ABBR = {v: k for k, v in ATTR_NAMES.items()}
+
+
+# ============================================================================
+# CSV 파일명 파싱 함수
+# ============================================================================
+
+def parse_csv_filename(csv_filename: str) -> Dict:
+    """
+    순차추정 2단계 CSV 파일명에서 모델 설정 추출
+
+    파일명 형식:
+    - st2_{stage1_paths}1_{stage2_config}2_results.csv
+
+    예시:
+    1. st2_HC-PB_PB-PI1_NK_PI2_results.csv
+       → stage1: HC->PB, PB->PI
+       → stage2: NK, PI 주효과
+
+    2. st2_HC-PB_PB-PI1_PI_int_PIxhl_NKxpr2_results.csv
+       → stage1: HC->PB, PB->PI
+       → stage2: PI 주효과 + PI×health_label + NK×price 상호작용
+
+    3. st2_HC-PB_PB-PI1_NK_PI_int_PIxhl2_results.csv
+       → stage1: HC->PB, PB->PI
+       → stage2: NK, PI 주효과 + PI×health_label 상호작용
+
+    Args:
+        csv_filename: CSV 파일명 (예: "st2_HC-PB_PB-PI1_NK_PI2_results.csv")
+
+    Returns:
+        {
+            'stage1_paths': {'HC->PB': True, 'PB->PI': True, ...},
+            'main_lvs': ['nutrition_knowledge', 'purchase_intention'],
+            'lv_attribute_interactions': [('purchase_intention', 'health_label'), ...]
+        }
+    """
+    import re
+
+    # 파일명에서 확장자 제거
+    filename = csv_filename.replace('_results.csv', '').replace('.csv', '')
+
+    # st2_{stage1}1_{stage2}2 형식 파싱
+    match = re.match(r'st2_(.+?)1_(.+)2', filename)
+    if not match:
+        raise ValueError(f"파일명 형식이 올바르지 않습니다: {csv_filename}\n"
+                        f"예상 형식: st2_{{stage1}}1_{{stage2}}2_results.csv")
+
+    stage1_str = match.group(1)
+    stage2_str = match.group(2)
+
+    # ========================================
+    # 1. Stage 1 경로 파싱
+    # ========================================
+    paths_config = {
+        'HC->PB': False,
+        'HC->PP': False,
+        'HC->PI': False,
+        'PB->PI': False,
+        'PP->PI': False,
+        'NK->PI': False,
+    }
+
+    # "HC-PB_PB-PI" → ["HC-PB", "PB-PI"]
+    path_parts = stage1_str.split('_')
+    for part in path_parts:
+        if '-' in part:
+            # "HC-PB" → "HC->PB"
+            path_key = part.replace('-', '->')
+            if path_key in paths_config:
+                paths_config[path_key] = True
+
+    # ========================================
+    # 2. Stage 2 선택모델 설정 파싱
+    # ========================================
+    main_lvs = []
+    lv_attribute_interactions = []
+
+    # "_int_" 구분자로 주효과와 상호작용 분리
+    if '_int_' in stage2_str:
+        parts = stage2_str.split('_int_')
+        main_part = parts[0]  # 주효과 부분
+        interaction_part = parts[1] if len(parts) > 1 else ""  # 상호작용 부분
+    else:
+        main_part = stage2_str
+        interaction_part = ""
+
+    # 2-1. 주효과 LV 파싱
+    # "NK_PI" → ["NK", "PI"]
+    if main_part and main_part != "base":
+        lv_abbrs = main_part.split('_')
+        for abbr in lv_abbrs:
+            if abbr in LV_NAMES:
+                main_lvs.append(LV_NAMES[abbr])
+
+    # 2-2. LV-Attribute 상호작용 파싱
+    # "PIxhl_NKxpr" → [("PI", "hl"), ("NK", "pr")]
+    if interaction_part:
+        # 언더스코어로 분리된 각 상호작용 파싱
+        interaction_items = interaction_part.split('_')
+        for item in interaction_items:
+            # "PIxhl" → ("PI", "hl")
+            if 'x' in item:
+                lv_abbr, attr_abbr = item.split('x', 1)
+
+                # 약어를 전체 이름으로 변환
+                if lv_abbr in LV_NAMES and attr_abbr in ATTR_NAMES:
+                    lv_name = LV_NAMES[lv_abbr]
+                    attr_name = ATTR_NAMES[attr_abbr]
+                    lv_attribute_interactions.append((lv_name, attr_name))
+
+    return {
+        'stage1_paths': paths_config,
+        'main_lvs': main_lvs,
+        'lv_attribute_interactions': lv_attribute_interactions,
+        'moderation_lvs': []  # 현재는 조절효과 미지원
+    }
+
+
+def parse_csv_content(csv_filepath: str) -> Dict:
+    """
+    CSV 파일 내용을 파싱하여 모델 설정 추출
+
+    파일명만으로는 상호작용 정보를 알 수 없는 경우,
+    CSV 파일 내용(파라미터 이름)을 분석하여 설정 추출
+
+    Args:
+        csv_filepath: CSV 파일 전체 경로
+
+    Returns:
+        {
+            'main_lvs': [...],
+            'lv_attribute_interactions': [...]
+        }
+    """
+    import pandas as pd
+    import re
+
+    # CSV 파일 읽기
+    df = pd.read_csv(csv_filepath)
+
+    # Parameters 섹션만 필터링
+    params_df = df[df['section'] == 'Parameters']
+
+    main_lvs = set()
+    lv_attribute_interactions = set()
+
+    # 파라미터 이름 분석
+    for param_name in params_df['parameter']:
+        # theta_sugar_purchase_intention → PI 주효과
+        # theta_sugar_free_nutrition_knowledge → NK 주효과
+        if param_name.startswith('theta_'):
+            # "theta_sugar_purchase_intention" → "purchase_intention"
+            # "theta_sugar_free_nutrition_knowledge" → "nutrition_knowledge"
+
+            # sugar_free 먼저 제거
+            if 'sugar_free' in param_name:
+                lv_name = param_name.replace('theta_sugar_free_', '')
+            elif 'sugar' in param_name:
+                lv_name = param_name.replace('theta_sugar_', '')
+            else:
+                lv_name = param_name.replace('theta_', '')
+
+            main_lvs.add(lv_name)
+
+        # gamma_sugar_purchase_intention_health_label → (purchase_intention, health_label) 상호작용
+        # gamma_sugar_free_nutrition_knowledge_price → (nutrition_knowledge, price) 상호작용
+        elif param_name.startswith('gamma_'):
+            # sugar_free 먼저 제거
+            if 'sugar_free' in param_name:
+                remaining = param_name.replace('gamma_sugar_free_', '')
+            elif 'sugar' in param_name:
+                remaining = param_name.replace('gamma_sugar_', '')
+            else:
+                remaining = param_name.replace('gamma_', '')
+
+            # "purchase_intention_health_label" → ("purchase_intention", "health_label")
+            # "nutrition_knowledge_price" → ("nutrition_knowledge", "price")
+
+            # 알려진 속성 이름으로 분리
+            if remaining.endswith('_health_label'):
+                lv_name = remaining.replace('_health_label', '')
+                attr_name = 'health_label'
+                lv_attribute_interactions.add((lv_name, attr_name))
+            elif remaining.endswith('_price'):
+                lv_name = remaining.replace('_price', '')
+                attr_name = 'price'
+                lv_attribute_interactions.add((lv_name, attr_name))
+
+    return {
+        'main_lvs': sorted(list(main_lvs)),
+        'lv_attribute_interactions': sorted(list(lv_attribute_interactions))
+    }
+
+
+def validate_csv_config_match(
+    csv_filename: str,
+    csv_filepath: str,
+    paths_config: Dict[str, bool],
+    main_lvs: List[str],
+    lv_attribute_interactions: List[Tuple[str, str]],
+    moderation_lvs: List[Tuple[str, str]] = None
+) -> bool:
+    """
+    CSV 파일명/내용과 현재 설정이 일치하는지 검증
+
+    Args:
+        csv_filename: CSV 파일명
+        csv_filepath: CSV 파일 전체 경로
+        paths_config: 경로 설정 딕셔너리
+        main_lvs: 주효과 LV 리스트
+        lv_attribute_interactions: LV-Attribute 상호작용 리스트
+        moderation_lvs: 조절효과 리스트 (선택)
+
+    Returns:
+        True if match, raises ValueError if mismatch
+    """
+    # 1. CSV 파일명에서 설정 파싱
+    parsed_filename = parse_csv_filename(csv_filename)
+
+    # 2. CSV 파일 내용에서 설정 파싱 (더 정확함)
+    parsed_content = parse_csv_content(csv_filepath)
+
+    # 3. Stage 1 경로 검증 (파일명 기반)
+    if parsed_filename['stage1_paths'] != paths_config:
+        raise ValueError(
+            f"[ERROR] CSV 파일명과 경로 설정이 불일치합니다!\n"
+            f"  CSV 파일명: {csv_filename}\n"
+            f"  CSV 경로: {[k for k, v in parsed_filename['stage1_paths'].items() if v]}\n"
+            f"  현재 설정: {[k for k, v in paths_config.items() if v]}"
+        )
+
+    # 4. 주효과 LV 검증 (파일 내용 기반)
+    parsed_main = set(parsed_content['main_lvs'])
+    config_main = set(main_lvs)
+    if parsed_main != config_main:
+        raise ValueError(
+            f"[ERROR] CSV 파일 내용과 주효과 LV 설정이 불일치합니다!\n"
+            f"  CSV 파일: {csv_filename}\n"
+            f"  CSV 주효과 (파일 내용): {parsed_content['main_lvs']}\n"
+            f"  현재 설정: {main_lvs}"
+        )
+
+    # 5. LV-Attribute 상호작용 검증 (파일 내용 기반)
+    parsed_interactions = set(parsed_content['lv_attribute_interactions'])
+    config_interactions = set(lv_attribute_interactions)
+    if parsed_interactions != config_interactions:
+        raise ValueError(
+            f"[ERROR] CSV 파일 내용과 LV-Attribute 상호작용 설정이 불일치합니다!\n"
+            f"  CSV 파일: {csv_filename}\n"
+            f"  CSV 상호작용 (파일 내용): {parsed_content['lv_attribute_interactions']}\n"
+            f"  현재 설정: {lv_attribute_interactions}"
+        )
+
+    return True
+
 
 # ============================================================================
 # 경로 설정 함수

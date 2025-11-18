@@ -401,42 +401,47 @@ class ParameterManager:
             # ✅ 대안별 모델 파라미터
             elif name.startswith('asc_'):
                 # asc_sugar, asc_sugar_free
-                param_array.append(param_dict['choice'][name])
+                param_array.append(param_dict['choice'].get(name, 0.0))
 
             elif name.startswith('theta_'):
                 # theta_sugar_purchase_intention, theta_sugar_free_nutrition_knowledge
-                param_array.append(param_dict['choice'][name])
+                param_array.append(param_dict['choice'].get(name, 0.0))
 
             elif name.startswith('gamma_sugar_') or name.startswith('gamma_sugar_free_'):
                 # gamma_sugar_purchase_intention_health_label
                 # gamma_sugar_free_nutrition_knowledge_price
-                param_array.append(param_dict['choice'][name])
+                param_array.append(param_dict['choice'].get(name, 0.0))
 
             # ✅ Binary/기타 모델 파라미터 (하위 호환)
             elif name.startswith('gamma_') and not '_to_' in name:
                 # LV-Attribute 상호작용 파라미터
-                param_array.append(param_dict['choice'][name])
+                param_array.append(param_dict['choice'].get(name, 0.0))
 
             elif name == 'beta_intercept':
                 # beta_intercept
-                param_array.append(param_dict['choice']['intercept'])
+                param_array.append(param_dict['choice'].get('intercept', 0.0))
 
             elif name.startswith('beta_'):
-                # beta는 배열 형태이므로 현재까지 처리한 beta 개수로 인덱스 결정
-                # ✅ beta_intercept 제외하고 카운트
-                beta_count = sum(1 for n in param_names[:param_names.index(name)]
-                                if n.startswith('beta_') and n != 'beta_intercept')
-                beta_array = param_dict['choice']['beta']
-                if isinstance(beta_array, np.ndarray) and beta_count < len(beta_array):
-                    param_array.append(beta_array[beta_count])
-                elif name in param_dict['choice']:
-                    # 딕셔너리에 직접 저장된 경우
+                # ✅ 먼저 flat 딕셔너리 형식 확인 (CSV에서 로드한 경우)
+                if name in param_dict['choice']:
+                    # 딕셔너리에 직접 저장된 경우 (예: beta_health_label: 1.0)
                     param_array.append(param_dict['choice'][name])
+                elif 'beta' in param_dict['choice']:
+                    # beta는 배열 형태이므로 현재까지 처리한 beta 개수로 인덱스 결정
+                    # ✅ beta_intercept 제외하고 카운트
+                    beta_count = sum(1 for n in param_names[:param_names.index(name)]
+                                    if n.startswith('beta_') and n != 'beta_intercept')
+                    beta_array = param_dict['choice']['beta']
+                    if isinstance(beta_array, np.ndarray) and beta_count < len(beta_array):
+                        param_array.append(beta_array[beta_count])
+                    else:
+                        param_array.append(beta_array)
                 else:
-                    param_array.append(beta_array)
+                    # 둘 다 없으면 0.0으로 초기화
+                    param_array.append(0.0)
 
             elif name.startswith('lambda_'):
-                param_array.append(param_dict['choice'][name])
+                param_array.append(param_dict['choice'].get(name, 0.0))
 
         return np.array(param_array)
 
@@ -563,14 +568,14 @@ class ParameterManager:
         """
         # 측정모델 파라미터
         if param_name.startswith('zeta_'):
-            # Factor loadings: [0.1, 10.0]
-            # 너무 작으면 identification 문제, 너무 크면 수치 불안정
-            return (0.1, 10.0)
+            # Factor loadings: [-2.0, 2.0]
+            # 더 엄격한 제약으로 수치 안정성 향상
+            return (-2.0, 2.0)
 
         elif param_name.startswith('sigma_sq_'):
-            # Measurement error variance: [0.01, 100.0]
-            # 양수여야 하고, 너무 크면 모델 적합도 문제
-            return (0.01, 100.0)
+            # Measurement error variance: [-15.0, 15.0]
+            # 확대된 범위로 측정 오차 분산 추정 허용
+            return (-15.0, 15.0)
 
         elif param_name.startswith('tau_'):
             # Thresholds (순서형): [-10.0, 10.0]
@@ -579,9 +584,9 @@ class ParameterManager:
 
         # 구조모델 파라미터
         elif param_name.startswith('gamma_') and '_to_' in param_name:
-            # 구조방정식 계수: unbounded
-            # 경로계수는 이론적으로 제약 없음
-            return (None, None)
+            # 구조방정식 계수: [-2.0, 2.0]
+            # 경로계수에 합리적 제약 설정
+            return (-2.0, 2.0)
 
         # 선택모델 파라미터
         elif param_name.startswith('asc_'):
@@ -593,8 +598,9 @@ class ParameterManager:
             return (None, None)
 
         elif param_name.startswith('beta_'):
-            # Attribute coefficients: unbounded
-            return (None, None)
+            # Attribute coefficients: [-10.0, 10.0]
+            # 확대된 범위로 속성 계수 추정 허용
+            return (-10.0, 10.0)
 
         elif param_name.startswith('theta_'):
             # LV main effects (multinomial): unbounded

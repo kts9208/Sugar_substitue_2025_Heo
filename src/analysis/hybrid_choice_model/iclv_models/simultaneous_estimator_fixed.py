@@ -1772,27 +1772,36 @@ class SimultaneousEstimator:
             if isinstance(user_params, dict):
                 self.logger.info("사용자 정의 초기값 (딕셔너리) 사용")
 
+                # ✅ 선택모델 파라미터 확인
+                user_choice_params = user_params.get('choice', {})
+
                 # 측정모델 + 구조모델 파라미터는 사용자 값 사용
-                # 선택모델 파라미터는 자동 초기화
                 partial_dict = {
                     'measurement': user_params.get('measurement', {}),
                     'structural': user_params.get('structural', {}),
-                    'choice': {}  # 빈 딕셔너리로 초기화
+                    'choice': {}  # 일단 빈 딕셔너리로 초기화
                 }
 
-                # 선택모델 초기값 자동 생성
-                # MultinomialLogitChoice는 data 인자 필요
-                if hasattr(choice_model, 'get_initial_params'):
-                    import inspect
-                    sig = inspect.signature(choice_model.get_initial_params)
-                    if 'data' in sig.parameters:
-                        choice_initial = choice_model.get_initial_params(data=self.data)
-                    else:
-                        choice_initial = choice_model.get_initial_params()
+                # ✅ 선택모델 초기값: 사용자 제공 값이 있으면 사용, 없으면 자동 생성
+                if user_choice_params and len(user_choice_params) > 0:
+                    # 사용자가 선택모델 파라미터를 제공한 경우
+                    self.logger.info(f"사용자 정의 선택모델 초기값 사용 ({len(user_choice_params)}개 파라미터)")
+                    partial_dict['choice'] = user_choice_params
                 else:
-                    choice_initial = {}
+                    # 선택모델 초기값 자동 생성
+                    self.logger.info("선택모델 초기값 자동 생성")
+                    # MultinomialLogitChoice는 data 인자 필요
+                    if hasattr(choice_model, 'get_initial_params'):
+                        import inspect
+                        sig = inspect.signature(choice_model.get_initial_params)
+                        if 'data' in sig.parameters:
+                            choice_initial = choice_model.get_initial_params(data=self.data)
+                        else:
+                            choice_initial = choice_model.get_initial_params()
+                    else:
+                        choice_initial = {}
 
-                partial_dict['choice'] = choice_initial
+                    partial_dict['choice'] = choice_initial
 
                 # 딕셔너리 → 배열 변환
                 initial_values = self.param_manager.dict_to_array(

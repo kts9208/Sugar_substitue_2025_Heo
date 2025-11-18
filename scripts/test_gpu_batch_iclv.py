@@ -37,7 +37,10 @@ sys.path.insert(0, str(project_root / 'examples'))
 from model_config_utils import (
     build_paths_from_config,
     build_choice_config_dict,
-    generate_simultaneous_filename
+    generate_simultaneous_filename,
+    parse_csv_filename,
+    parse_csv_content,
+    validate_csv_config_match
 )
 
 from src.analysis.hybrid_choice_model.iclv_models.iclv_config import (
@@ -60,41 +63,127 @@ from src.analysis.hybrid_choice_model.iclv_models.choice_equations import Multin
 # 🎯 사용자 설정 영역 - 여기만 수정하세요!
 # ============================================================================
 
-# 1. 경로 설정: True/False로 간단하게 켜고 끄기
-PATHS = {
-    'HC->PB': True,   # 건강관심도 → 건강유익성
-    'HC->PP': False,  # 건강관심도 → 가격수준
-    'HC->PI': False,  # 건강관심도 → 구매의도
-    'PB->PI': True,   # 건강유익성 → 구매의도
-    'PP->PI': False,  # 가격수준 → 구매의도
-    'NK->PI': False,  # 영양지식 → 구매의도
-}
+# ============================================================================
+# 설정 모드 선택
+# ============================================================================
+#
+# 모드 1: 자동 설정 (CSV 파일명에서 모든 설정 자동 추출) ✅ 권장
+#   - CSV 파일명만 지정하면 경로, 선택모델 설정이 자동으로 파싱됨
+#   - 설정 불일치 걱정 없음
+#
+# 모드 2: 수동 설정 (기존 방식)
+#   - PATHS, MAIN_LVS, LV_ATTRIBUTE_INTERACTIONS를 직접 설정
+#   - CSV 파일명과 일치 여부 자동 검증
+#
+# ============================================================================
 
-# 2. 선택모델 설정 (순차추정 2단계와 동일한 설정)
-# ✅ 순차추정 2단계(sequential_stage2_with_extended_model.py)와 동일하게 설정
-# ✅ 초기값 파일(INITIAL_PARAMS_FILE)과 일치해야 함!
+# 🔧 설정 모드 선택 (True: 자동, False: 수동)
+AUTO_CONFIG_FROM_CSV = True  # 권장: 자동 모드
 
-# 📌 잠재변수 주효과 (원하는 잠재변수만 추가)
-# 예시: [] = Base Model (잠재변수 없음)
-#      ['purchase_intention'] = Base + PI 주효과
-#      ['purchase_intention', 'nutrition_knowledge'] = Base + PI + NK 주효과
-MAIN_LVS = ['purchase_intention', 'nutrition_knowledge']  # Auto-generated
+# ============================================================================
+# 모드 1: 자동 설정 (CSV 파일명만 지정)
+# ============================================================================
+if AUTO_CONFIG_FROM_CSV:
+    # 📌 순차추정 2단계 CSV 파일명만 지정하세요!
+    # 파일명 형식: st2_{stage1_paths}1_{stage2_config}2_results.csv
+    #
+    # 예시:
+    # 1. st2_HC-PB_PB-PI1_NK_PI2_results.csv
+    #    → 경로: HC->PB, PB->PI
+    #    → 선택모델: NK, PI 주효과
+    #
+    # 2. st2_HC-PB_PB-PI1_PI_int_PIxhl_NKxpr2_results.csv
+    #    → 경로: HC->PB, PB->PI
+    #    → 선택모델: PI 주효과 + PI×health_label + NK×price 상호작용
+    #
+    INITIAL_PARAMS_CSV = 'st2_HC-PB_PB-PI1_PI2_results.csv'  # PI 주효과만
 
-# 📌 조절효과 (잠재변수 2개 세트)
-# 예시: [('perceived_price', 'nutrition_knowledge')] = PP와 NK의 조절효과
-MODERATION_LVS = []  # Auto-generated
+    # CSV 파일 경로
+    csv_path = project_root / 'results' / 'sequential_stage_wise' / INITIAL_PARAMS_CSV
 
-# 📌 LV-Attribute 상호작용 (잠재변수-속성 2개 세트)
-# 예시: [('purchase_intention', 'price')] = PI × price 상호작용
-#      [('purchase_intention', 'price'), ('nutrition_knowledge', 'health_label')]
-LV_ATTRIBUTE_INTERACTIONS = [('purchase_intention', 'health_label'), ('nutrition_knowledge', 'price')]  # Auto-generated
+    # CSV 파일명과 내용에서 설정 자동 파싱
+    print("\n" + "=" * 70)
+    print("[AUTO] 자동 설정 모드: CSV 파일에서 설정 추출")
+    print("=" * 70)
+    print(f"CSV 파일: {INITIAL_PARAMS_CSV}")
 
-# 3. 초기값 설정
-# 순차추정 결과를 초기값으로 사용 (파일명 지정)
-# None이면 자동 초기화 사용
-# ⚠️ 중요: 초기값 파일을 사용하는 경우, 위의 선택모델 설정(MAIN_LVS, LV_ATTRIBUTE_INTERACTIONS)이
-#          순차추정 2단계(sequential_stage2_with_extended_model.py)와 동일해야 합니다!
-INITIAL_PARAMS_FILE = None  # ✅ 일단 자동 초기화로 테스트 (파일 형식 문제로 인해)
+    # 1. 파일명에서 경로 정보 파싱
+    parsed_filename = parse_csv_filename(INITIAL_PARAMS_CSV)
+
+    # 2. 파일 내용에서 선택모델 설정 파싱 (더 정확함)
+    parsed_content = parse_csv_content(str(csv_path))
+
+    # 자동 설정 적용
+    PATHS = parsed_filename['stage1_paths']  # 파일명에서 추출
+    MAIN_LVS = parsed_content['main_lvs']  # 파일 내용에서 추출 (더 정확)
+    MODERATION_LVS = []  # 현재 미지원
+    LV_ATTRIBUTE_INTERACTIONS = parsed_content['lv_attribute_interactions']  # 파일 내용에서 추출
+
+    # 파싱 결과 출력
+    print(f"\n[파싱 결과]")
+    print(f"  1단계 경로 (파일명): {[k for k, v in PATHS.items() if v]}")
+    print(f"  주효과 LV (파일 내용): {MAIN_LVS}")
+    print(f"  조절효과: {MODERATION_LVS if MODERATION_LVS else '없음'}")
+    print(f"  LV-Attribute 상호작용 (파일 내용): {LV_ATTRIBUTE_INTERACTIONS if LV_ATTRIBUTE_INTERACTIONS else '없음'}")
+    print("=" * 70 + "\n")
+
+    # PKL 파일명도 자동 생성
+    from model_config_utils import build_paths_from_config
+    _, path_name, _ = build_paths_from_config(PATHS)
+    INITIAL_PARAMS_PKL = f'stage1_{path_name}_results.pkl'
+
+# ============================================================================
+# 모드 2: 수동 설정 (기존 방식)
+# ============================================================================
+else:
+    # 1. 경로 설정: True/False로 간단하게 켜고 끄기
+    PATHS = {
+        'HC->PB': True,   # 건강관심도 → 건강유익성
+        'HC->PP': False,  # 건강관심도 → 가격수준
+        'HC->PI': False,  # 건강관심도 → 구매의도
+        'PB->PI': True,   # 건강유익성 → 구매의도
+        'PP->PI': False,  # 가격수준 → 구매의도
+        'NK->PI': False,  # 영양지식 → 구매의도
+    }
+
+    # 2. 선택모델 설정 (순차추정 2단계와 동일한 설정)
+    # 📌 잠재변수 주효과 (원하는 잠재변수만 추가)
+    MAIN_LVS = ['purchase_intention', 'nutrition_knowledge']
+
+    # 📌 조절효과 (잠재변수 2개 세트)
+    MODERATION_LVS = []
+
+    # 📌 LV-Attribute 상호작용 (잠재변수-속성 2개 세트)
+    LV_ATTRIBUTE_INTERACTIONS = [('purchase_intention', 'health_label'), ('nutrition_knowledge', 'price')]
+
+    # 3. 초기값 파일 설정
+    INITIAL_PARAMS_PKL = 'stage1_HC-PB_PB-PI_results.pkl'
+    INITIAL_PARAMS_CSV = 'st2_HC-PB_PB-PI1_NK_PI2_results.csv'
+
+    # 설정 검증: CSV 파일명/내용과 현재 설정이 일치하는지 확인
+    csv_path = project_root / 'results' / 'sequential_stage_wise' / INITIAL_PARAMS_CSV
+
+    print("\n" + "=" * 70)
+    print("[VALIDATE] 설정 검증 중...")
+    print("=" * 70)
+    try:
+        validate_csv_config_match(
+            INITIAL_PARAMS_CSV,
+            str(csv_path),
+            PATHS,
+            MAIN_LVS,
+            LV_ATTRIBUTE_INTERACTIONS,
+            MODERATION_LVS
+        )
+        print("[OK] 검증 통과: CSV 파일과 설정이 일치합니다!")
+    except ValueError as e:
+        print(str(e))
+        print("\n[WARNING] 설정을 수정하거나 AUTO_CONFIG_FROM_CSV = True로 변경하세요.")
+        sys.exit(1)
+    print("=" * 70 + "\n")
+
+# 하위 호환성을 위한 변수
+INITIAL_PARAMS_FILE = None  # None이면 PKL+CSV 조합 사용
 
 # 4. GPU 메모리 설정
 CPU_MEMORY_THRESHOLD_MB = 2000  # CPU 메모리 임계값 (MB)
@@ -107,6 +196,103 @@ MAX_ITERATIONS = 1000  # 최대 반복 횟수
 # ============================================================================
 # 🤖 자동 처리 영역 - 수정 불필요
 # ============================================================================
+
+# ============================================================================
+# 유틸리티 함수
+# ============================================================================
+
+def parse_lavaan_params_to_dict(meas_df, struct_df, config):
+    """
+    lavaan 형식의 DataFrame을 동시추정용 딕셔너리로 변환
+
+    Args:
+        meas_df: 측정모델 파라미터 DataFrame (lavaan 형식)
+                 컬럼: lval, op, rval, Estimate, Est. Std, Std. Err, z-value, p-value
+        struct_df: 구조모델 파라미터 DataFrame (lavaan 형식)
+        config: MultiLatentConfig 객체
+
+    Returns:
+        {
+            'measurement': {
+                'lv_name': {
+                    'zeta': [...],
+                    'sigma_sq': [...]
+                }
+            },
+            'structural': {
+                'gamma_lv1_to_lv2': value,
+                ...
+            }
+        }
+    """
+    result = {
+        'measurement': {},
+        'structural': {}
+    }
+
+    # 1. 측정모델 파라미터 파싱
+    # lavaan 형식: lval(indicator) ~ rval(LV)
+    for lv_name, lv_config in config.measurement_configs.items():
+        indicators = lv_config.indicators
+
+        # zeta (요인적재량) 추출
+        zeta_values = []
+        for indicator in indicators:
+            # lval == indicator, op == '~', rval == lv_name
+            row = meas_df[(meas_df['lval'] == indicator) &
+                         (meas_df['op'] == '~') &
+                         (meas_df['rval'] == lv_name)]
+
+            if not row.empty:
+                # Estimate 또는 Est. Std 컬럼 사용
+                if 'Estimate' in row.columns:
+                    zeta_values.append(float(row['Estimate'].iloc[0]))
+                elif 'Est. Std' in row.columns:
+                    zeta_values.append(float(row['Est. Std'].iloc[0]))
+                else:
+                    print(f"    [WARNING] {indicator}의 zeta 값을 찾을 수 없습니다. 기본값 1.0 사용")
+                    zeta_values.append(1.0)
+            else:
+                print(f"    [WARNING] {indicator} ~ {lv_name} 파라미터를 찾을 수 없습니다. 기본값 1.0 사용")
+                zeta_values.append(1.0)
+
+        # sigma_sq (오차분산) - lavaan에는 없으므로 기본값 사용
+        # 또는 잔차분산에서 계산 가능하지만, 일단 기본값 사용
+        sigma_sq_values = [0.5] * len(indicators)
+
+        # ✅ numpy array로 변환 (ParameterManager.dict_to_array가 기대하는 형식)
+        result['measurement'][lv_name] = {
+            'zeta': np.array(zeta_values),
+            'sigma_sq': np.array(sigma_sq_values)
+        }
+
+    # 2. 구조모델 파라미터 파싱
+    # lavaan 형식: lval(종속LV) ~ rval(독립LV)
+    for path in config.structural.hierarchical_paths:
+        target_lv = path['target']
+        predictors = path['predictors']
+
+        for pred_lv in predictors:
+            # lval == target_lv, op == '~', rval == pred_lv
+            row = struct_df[(struct_df['lval'] == target_lv) &
+                           (struct_df['op'] == '~') &
+                           (struct_df['rval'] == pred_lv)]
+
+            if not row.empty:
+                param_name = f'gamma_{pred_lv}_to_{target_lv}'
+                if 'Estimate' in row.columns:
+                    result['structural'][param_name] = float(row['Estimate'].iloc[0])
+                elif 'Est. Std' in row.columns:
+                    result['structural'][param_name] = float(row['Est. Std'].iloc[0])
+                else:
+                    print(f"    [WARNING] {param_name} 값을 찾을 수 없습니다. 기본값 0.5 사용")
+                    result['structural'][param_name] = 0.5
+            else:
+                param_name = f'gamma_{pred_lv}_to_{target_lv}'
+                print(f"    [WARNING] {target_lv} ~ {pred_lv} 파라미터를 찾을 수 없습니다. 기본값 0.5 사용")
+                result['structural'][param_name] = 0.5
+
+    return result
 
 
 def main():
@@ -226,7 +412,77 @@ def main():
     print("\n[7] 초기값 로드:")
     initial_params = None
 
-    if INITIAL_PARAMS_FILE:
+    # ✅ PKL + CSV 조합 사용 (측정+구조+선택 모두)
+    if INITIAL_PARAMS_FILE is None and 'INITIAL_PARAMS_PKL' in globals() and 'INITIAL_PARAMS_CSV' in globals():
+        pkl_path = project_root / 'results' / 'sequential_stage_wise' / INITIAL_PARAMS_PKL
+        csv_path = project_root / 'results' / 'sequential_stage_wise' / INITIAL_PARAMS_CSV
+
+        if pkl_path.exists() and csv_path.exists():
+            print(f"    PKL + CSV 조합 사용:")
+            print(f"      - 측정+구조: {INITIAL_PARAMS_PKL}")
+            print(f"      - 선택모델: {INITIAL_PARAMS_CSV}")
+
+            # 1. PKL에서 측정+구조 로드
+            import pickle
+            with open(pkl_path, 'rb') as f:
+                stage1_results = pickle.load(f)
+
+            if 'measurement_results' in stage1_results and 'structural_results' in stage1_results:
+                meas_params = stage1_results['measurement_results'].get('params', {})
+                struct_params = stage1_results['structural_results'].get('params', {})
+
+                # lavaan DataFrame → 딕셔너리 변환
+                if hasattr(meas_params, 'empty'):
+                    print(f"    lavaan DataFrame 형식 감지 - 파싱 시작")
+                    param_dict = parse_lavaan_params_to_dict(meas_params, struct_params, config)
+                else:
+                    param_dict = {
+                        'measurement': meas_params,
+                        'structural': struct_params
+                    }
+
+                # 2. CSV에서 선택모델 파라미터 로드
+                df_choice = pd.read_csv(csv_path)
+                df_choice = df_choice[df_choice['section'] == 'Parameters']  # Parameters 섹션만
+
+                choice_params = {}
+                for _, row in df_choice.iterrows():
+                    param_name = row['parameter']
+                    param_value = float(row['estimate'])
+                    choice_params[param_name] = param_value
+
+                param_dict['choice'] = choice_params
+
+                # 결과 출력
+                print(f"    측정모델 파라미터: {len(param_dict['measurement'])} LVs")
+                for lv_name in list(param_dict['measurement'].keys())[:3]:
+                    lv_params = param_dict['measurement'][lv_name]
+                    n_zeta = len(lv_params['zeta'])
+                    print(f"      - {lv_name}: zeta={n_zeta}개")
+
+                print(f"    구조모델 파라미터: {len(param_dict['structural'])}개")
+                for key in list(param_dict['structural'].keys()):
+                    value = param_dict['structural'][key]
+                    print(f"      - {key}: {value:.6f}")
+
+                print(f"    선택모델 파라미터: {len(choice_params)}개")
+                for key in list(choice_params.keys())[:5]:
+                    print(f"      - {key}: {choice_params[key]:.6f}")
+                if len(choice_params) > 5:
+                    print(f"      ... (총 {len(choice_params)}개)")
+
+                initial_params = param_dict
+            else:
+                print(f"    [WARNING] PKL 파일 형식 오류")
+                print(f"    자동 초기화를 사용합니다.")
+        else:
+            if not pkl_path.exists():
+                print(f"    [WARNING] PKL 파일을 찾을 수 없습니다: {INITIAL_PARAMS_PKL}")
+            if not csv_path.exists():
+                print(f"    [WARNING] CSV 파일을 찾을 수 없습니다: {INITIAL_PARAMS_CSV}")
+            print(f"    자동 초기화를 사용합니다.")
+
+    elif INITIAL_PARAMS_FILE:
         # 순차추정 결과 파일에서 초기값 로드
         initial_params_path = project_root / 'results' / 'sequential_stage_wise' / INITIAL_PARAMS_FILE
 
@@ -254,34 +510,60 @@ def main():
                                    (hasattr(struct_params, 'empty') and not struct_params.empty)
 
                     if meas_valid and struct_valid:
-                        # 파라미터 딕셔너리 구성
-                        param_dict = {
-                            'measurement': meas_params,
-                            'structural': struct_params,
-                            'choice': None  # 선택모델은 자동 초기화
-                        }
+                        # ✅ lavaan DataFrame 형식인 경우 파싱
+                        if hasattr(meas_params, 'empty'):  # DataFrame
+                            print(f"    lavaan DataFrame 형식 감지 - 파싱 시작")
 
-                        print(f"    측정모델 파라미터: {len(meas_params)} LVs")
-                        if isinstance(meas_params, dict):
+                            # lavaan DataFrame → 딕셔너리 변환
+                            param_dict = parse_lavaan_params_to_dict(
+                                meas_params,
+                                struct_params,
+                                config
+                            )
+                            param_dict['choice'] = None  # 선택모델은 자동 초기화
+
+                            # 파싱 결과 출력
+                            print(f"    측정모델 파라미터: {len(param_dict['measurement'])} LVs")
+                            for lv_name, lv_params in param_dict['measurement'].items():
+                                n_zeta = len(lv_params['zeta'])
+                                zeta_sample = lv_params['zeta'][:3]  # 처음 3개만 표시
+                                print(f"      - {lv_name}: zeta={n_zeta}개 (예: {zeta_sample}...)")
+
+                            print(f"    구조모델 파라미터:")
+                            for key, value in param_dict['structural'].items():
+                                print(f"      - {key}: {value:.6f}")
+
+                            print(f"    선택모델 파라미터: 자동 초기화 사용")
+
+                            initial_params = param_dict
+
+                        # 딕셔너리 형식인 경우 (이미 변환된 경우)
+                        elif isinstance(meas_params, dict):
+                            param_dict = {
+                                'measurement': meas_params,
+                                'structural': struct_params,
+                                'choice': None  # 선택모델은 자동 초기화
+                            }
+
+                            print(f"    측정모델 파라미터: {len(meas_params)} LVs")
                             for lv_name, lv_params in meas_params.items():
                                 if isinstance(lv_params, dict):
                                     print(f"      - {lv_name}: zeta={len(lv_params.get('zeta', []))}, sigma_sq={len(lv_params.get('sigma_sq', []))}")
 
-                        print(f"    구조모델 파라미터:")
-                        if isinstance(struct_params, dict):
+                            print(f"    구조모델 파라미터:")
                             for key, value in struct_params.items():
                                 if isinstance(value, (int, float)):
                                     print(f"      - {key}: {value:.6f}")
                                 else:
                                     print(f"      - {key}: {value}")
+
+                            print(f"    선택모델 파라미터: 자동 초기화 사용")
+                            initial_params = param_dict
+
                         else:
-                            print(f"      (DataFrame 형식: {len(struct_params)} rows)")
-
-                        print(f"    선택모델 파라미터: 자동 초기화 사용")
-
-                        # ParameterManager를 사용하여 배열로 변환
-                        # 이 작업은 estimator 내부에서 수행되므로 여기서는 딕셔너리만 전달
-                        initial_params = param_dict
+                            print(f"    [WARNING] 알 수 없는 파라미터 형식입니다.")
+                            print(f"    자동 초기화를 사용합니다.")
+                            initial_params = None
                     else:
                         print(f"    [WARNING] 파라미터 정보가 불완전합니다.")
                         print(f"    자동 초기화를 사용합니다.")
@@ -428,7 +710,19 @@ def main():
             if 'choice' in stats:
                 choice = stats['choice']
 
-                # intercept
+                # ASC (Alternative-Specific Constants) - Multinomial Logit
+                if 'asc' in choice:
+                    asc_stats = choice['asc']
+                    # asc는 딕셔너리 형태: {'sugar': {...}, 'sugar_free': {...}}
+                    for alt_name, alt_stats in asc_stats.items():
+                        param_list.append({
+                            'Coefficient': f'asc_{alt_name}',
+                            'Estimate': alt_stats['estimate'],
+                            'Std. Err.': alt_stats['std_error'],
+                            'P. Value': alt_stats['p_value']
+                        })
+
+                # intercept (Binary Logit - 하위 호환성)
                 if 'intercept' in choice:
                     param_list.append({
                         'Coefficient': 'β_Intercept',
@@ -437,7 +731,7 @@ def main():
                         'P. Value': choice['intercept']['p_value']
                     })
 
-                # beta
+                # beta (속성 계수)
                 if 'beta' in choice:
                     beta_stats = choice['beta']
                     for i, attr in enumerate(config.choice.choice_attributes):
@@ -448,7 +742,19 @@ def main():
                             'P. Value': beta_stats['p_value'][i]
                         })
 
-                # lambda (주효과 LV)
+                # theta (LV 주효과 - Multinomial Logit)
+                if 'theta' in choice:
+                    theta_stats = choice['theta']
+                    # theta는 딕셔너리 형태: {'sugar_PI': {...}, 'sugar_free_PI': {...}}
+                    for theta_name, theta_stat in theta_stats.items():
+                        param_list.append({
+                            'Coefficient': f'theta_{theta_name}',
+                            'Estimate': theta_stat['estimate'],
+                            'Std. Err.': theta_stat['std_error'],
+                            'P. Value': theta_stat['p_value']
+                        })
+
+                # lambda (주효과 LV - Binary Logit, 하위 호환성)
                 if 'lambda' in choice:
                     for lv_name, lv_stats in choice['lambda'].items():
                         param_list.append({
@@ -458,7 +764,19 @@ def main():
                             'P. Value': lv_stats['p_value']
                         })
 
-                # lambda_interaction (LV-속성 상호작용)
+                # gamma (LV-속성 상호작용 - Multinomial Logit)
+                if 'gamma' in choice:
+                    gamma_stats = choice['gamma']
+                    # gamma는 딕셔너리 형태: {'sugar_PI_health_label': {...}, ...}
+                    for gamma_name, gamma_stat in gamma_stats.items():
+                        param_list.append({
+                            'Coefficient': f'gamma_{gamma_name}',
+                            'Estimate': gamma_stat['estimate'],
+                            'Std. Err.': gamma_stat['std_error'],
+                            'P. Value': gamma_stat['p_value']
+                        })
+
+                # lambda_interaction (LV-속성 상호작용 - Binary Logit, 하위 호환성)
                 if 'lambda_interaction' in choice:
                     for interaction_name, interaction_stats in choice['lambda_interaction'].items():
                         param_list.append({
