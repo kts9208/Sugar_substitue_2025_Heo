@@ -142,6 +142,13 @@ class SEMEstimator:
             (~params['lval'].isin(latent_vars))
         ].copy()
 
+        # 측정 오차분산 (indicator ~~ indicator)
+        measurement_errors = params[
+            (params['op'] == '~~') &
+            (params['lval'] == params['rval']) &
+            (~params['lval'].isin(latent_vars))
+        ].copy()
+
         # 잠재변수 간 상관관계 (공분산)
         correlations = params[
             (params['op'] == '~~') &
@@ -150,6 +157,8 @@ class SEMEstimator:
             (params['lval'] != params['rval'])  # 자기 자신 제외
         ].copy()
 
+        logger.info(f"요인적재량: {len(loadings)}개")
+        logger.info(f"측정 오차분산: {len(measurement_errors)}개")
         logger.info(f"잠재변수 간 상관관계: {len(correlations)}개")
 
         # 6. 적합도 지수
@@ -163,6 +172,7 @@ class SEMEstimator:
             'factor_scores': factor_scores,
             'params': params,
             'loadings': loadings,
+            'measurement_errors': measurement_errors,
             'correlations': correlations,
             'fit_indices': fit_indices,
             'log_likelihood': log_likelihood

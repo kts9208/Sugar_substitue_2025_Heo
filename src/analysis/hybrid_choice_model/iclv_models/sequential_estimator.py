@@ -138,6 +138,7 @@ class SequentialEstimator(BaseEstimator):
                 'cfa_results': cfa_results,
                 'factor_scores': self.factor_scores,
                 'loadings': cfa_results['loadings'],
+                'measurement_errors': cfa_results.get('measurement_errors'),
                 'correlations': cfa_results['correlations'],
                 'fit_indices': cfa_results['fit_indices'],
                 'log_likelihood': cfa_results['log_likelihood']
@@ -172,6 +173,7 @@ class SequentialEstimator(BaseEstimator):
         save_data = {
             'factor_scores': results['factor_scores'],
             'loadings': results['loadings'],
+            'measurement_errors': results.get('measurement_errors'),
             'correlations': results['correlations'],
             'fit_indices': results['fit_indices'],
             'log_likelihood': results['log_likelihood']
@@ -184,11 +186,32 @@ class SequentialEstimator(BaseEstimator):
         # 2. CSV 저장
         base_path = save_path.with_suffix('')
 
-        # 2-1. 요인적재량
+        # 2-1. 측정모델 파라미터 통합 저장 (요인적재량 + 오차분산)
         if 'loadings' in results and results['loadings'] is not None:
+            measurement_params_list = []
+
+            # 요인적재량 추가
+            loadings_df = results['loadings'].copy()
+            loadings_df['param_type'] = 'loading'
+            measurement_params_list.append(loadings_df)
+
+            # 오차분산 추가
+            if 'measurement_errors' in results and results['measurement_errors'] is not None:
+                errors_df = results['measurement_errors'].copy()
+                errors_df['param_type'] = 'error_variance'
+                measurement_params_list.append(errors_df)
+
+            # 통합 DataFrame 생성
+            if measurement_params_list:
+                measurement_params_df = pd.concat(measurement_params_list, ignore_index=True)
+                measurement_params_csv = f"{base_path}_measurement_params.csv"
+                measurement_params_df.to_csv(measurement_params_csv, index=False, encoding='utf-8-sig')
+                self.logger.info(f"측정모델 파라미터 저장 (요인적재량 + 오차분산): {measurement_params_csv}")
+
+            # 하위 호환성: 요인적재량만 별도 저장
             loadings_csv = f"{base_path}_loadings.csv"
             results['loadings'].to_csv(loadings_csv, index=False, encoding='utf-8-sig')
-            self.logger.info(f"요인적재량 저장: {loadings_csv}")
+            self.logger.info(f"요인적재량 저장 (하위 호환): {loadings_csv}")
 
         # 2-2. 상관관계 (pairwise)
         if 'correlations' in results and results['correlations'] is not None:
@@ -1430,11 +1453,39 @@ class SequentialEstimator(BaseEstimator):
             results['paths'].to_csv(paths_csv, index=False, encoding='utf-8-sig')
             logger.info(f"경로계수 저장: {paths_csv}")
 
-        # 2-2. 요인적재량 저장
+        # 2-2. 측정모델 파라미터 저장 (요인적재량 + 오차분산 통합)
         if 'loadings' in results and results['loadings'] is not None:
+            # 요인적재량과 오차분산을 하나의 DataFrame으로 통합
+            measurement_params_list = []
+
+            # 요인적재량 추가
+            if results['loadings'] is not None and len(results['loadings']) > 0:
+                loadings_df = results['loadings'].copy()
+                loadings_df['param_type'] = 'loading'
+                measurement_params_list.append(loadings_df)
+
+            # 오차분산 추가
+            if 'sem_results' in results and 'measurement_errors' in results['sem_results']:
+                measurement_errors = results['sem_results']['measurement_errors']
+                if measurement_errors is not None and len(measurement_errors) > 0:
+                    errors_df = measurement_errors.copy()
+                    errors_df['param_type'] = 'error_variance'
+                    measurement_params_list.append(errors_df)
+
+            # 통합 DataFrame 생성
+            if measurement_params_list:
+                measurement_params_df = pd.concat(measurement_params_list, ignore_index=True)
+                measurement_params_csv = f"{base_path}_measurement_params.csv"
+                measurement_params_df.to_csv(measurement_params_csv, index=False, encoding='utf-8-sig')
+                logger.info(f"측정모델 파라미터 저장 (요인적재량 + 오차분산): {measurement_params_csv}")
+                logger.info(f"  - 요인적재량: {len(results['loadings'])}개")
+                if 'sem_results' in results and 'measurement_errors' in results['sem_results']:
+                    logger.info(f"  - 오차분산: {len(results['sem_results']['measurement_errors'])}개")
+
+            # 하위 호환성: 요인적재량만 별도 저장
             loadings_csv = f"{base_path}_loadings.csv"
             results['loadings'].to_csv(loadings_csv, index=False, encoding='utf-8-sig')
-            logger.info(f"요인적재량 저장: {loadings_csv}")
+            logger.info(f"요인적재량 (하위 호환성): {loadings_csv}")
 
         # 2-3. 적합도 지수 저장
         if 'fit_indices' in results and results['fit_indices']:

@@ -432,6 +432,13 @@ class SimultaneousEstimator:
                 # ✅ iteration_logger와 config 전달
                 self.joint_grad.iteration_logger = self.iteration_logger
                 self.joint_grad.config = self.config
+
+                # ✅ 측정모델 파라미터 고정 여부 전달
+                if hasattr(self, '_measurement_params_fixed'):
+                    self.joint_grad.measurement_params_fixed = self._measurement_params_fixed
+                    if self._measurement_params_fixed:
+                        self.iteration_logger.info("✅ 측정모델 파라미터 고정: 그래디언트 계산 스킵")
+
                 self.iteration_logger.info("다중 잠재변수 JointGradient 초기화 완료")
             else:
                 # 단일 잠재변수

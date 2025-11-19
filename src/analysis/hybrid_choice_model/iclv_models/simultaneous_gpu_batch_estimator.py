@@ -110,6 +110,10 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
         # 사용자 정의 초기값 저장
         self.user_initial_params = None
 
+        # ✅ 측정모델 우도 캐싱 (파라미터 고정 시 최적화)
+        self._cached_measurement_ll = None
+        self._measurement_params_fixed = False
+
         if self.use_gpu:
             if self.use_full_parallel:
                 logger.info("✨ GPU 완전 병렬 처리 활성화 (Advanced Indexing)")
@@ -140,6 +144,13 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
         """
         # 사용자 정의 초기값 저장
         self.user_initial_params = initial_params
+
+        # ✅ 측정모델 파라미터 고정 여부 확인
+        if initial_params is not None and 'measurement' in initial_params:
+            self._measurement_params_fixed = True
+            logger.info("✅ 측정모델 파라미터 고정 모드: 우도를 최초 1회만 계산하고 캐싱합니다.")
+        else:
+            self._measurement_params_fixed = False
         # GPU 측정모델 생성
         if self.use_gpu:
             if hasattr(self.config, 'measurement_configs'):
@@ -357,6 +368,8 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
         개인별 우도 계산 (GPU 배치 가속 버전)
 
         SimultaneousEstimator의 메서드를 오버라이드하여 GPU 배치 처리를 사용합니다.
+
+        ✅ 측정모델 파라미터 고정 시 우도 캐싱 최적화 적용
         """
         n_draws = len(ind_draws)
 
@@ -403,10 +416,28 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
                     # 단일 잠재변수
                     lv = structural_model.predict(ind_data, param_dict['structural'], draw)
 
-                # 측정모델 우도
-                ll_measurement = measurement_model.log_likelihood(
-                    ind_data, lv, param_dict['measurement']
-                )
+                # ✅ 측정모델 우도: 파라미터 고정 시 캐싱
+                if self._measurement_params_fixed:
+                    # 캐시 키: (개인 ID, draw 인덱스)
+                    cache_key = (ind_id, j)
+
+                    if self._cached_measurement_ll is None:
+                        self._cached_measurement_ll = {}
+
+                    if cache_key not in self._cached_measurement_ll:
+                        # 최초 1회만 계산
+                        ll_measurement = measurement_model.log_likelihood(
+                            ind_data, lv, param_dict['measurement']
+                        )
+                        self._cached_measurement_ll[cache_key] = ll_measurement
+                    else:
+                        # 캐시에서 가져오기
+                        ll_measurement = self._cached_measurement_ll[cache_key]
+                else:
+                    # 파라미터가 변하므로 매번 계산
+                    ll_measurement = measurement_model.log_likelihood(
+                        ind_data, lv, param_dict['measurement']
+                    )
 
                 # 선택모델 우도 (Panel Product)
                 choice_set_lls = []

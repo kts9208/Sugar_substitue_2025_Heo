@@ -395,6 +395,9 @@ class MultiLatentJointGradient:
         self.gpu_measurement_model = gpu_measurement_model
         self.use_full_parallel = use_full_parallel
 
+        # ✅ 측정모델 파라미터 고정 여부
+        self.measurement_params_fixed = False
+
         if self.use_gpu:
             try:
                 from . import gpu_gradient_batch
@@ -691,9 +694,27 @@ class MultiLatentJointGradient:
             draw_likelihoods.append(likelihood)
             
             # 각 모델의 gradient 계산
-            grad_meas = self.measurement_grad.compute_gradient(
-                ind_data, latent_vars, params_dict['measurement']
-            )
+            # ✅ 측정모델 파라미터 고정 시 그래디언트 계산 스킵
+            if self.measurement_params_fixed:
+                # 측정모델 그래디언트를 0으로 설정 (파라미터 고정)
+                grad_meas = {}
+                for lv_name in self.measurement_grad.lv_names:
+                    config = self.measurement_grad.measurement_configs[lv_name]
+                    measurement_method = getattr(config, 'measurement_method', 'ordered_probit')
+
+                    n_ind = len(config.indicators)
+                    grad_meas[lv_name] = {'grad_zeta': np.zeros(n_ind)}
+
+                    if measurement_method == 'continuous_linear':
+                        grad_meas[lv_name]['grad_sigma_sq'] = np.zeros(n_ind)
+                    else:
+                        n_thresh = config.n_categories - 1
+                        grad_meas[lv_name]['grad_tau'] = np.zeros((n_ind, n_thresh))
+            else:
+                # 파라미터가 변하므로 그래디언트 계산
+                grad_meas = self.measurement_grad.compute_gradient(
+                    ind_data, latent_vars, params_dict['measurement']
+                )
             
             # ✅ 계층적 경로 전달
             hierarchical_paths = getattr(structural_model, 'hierarchical_paths', None)
