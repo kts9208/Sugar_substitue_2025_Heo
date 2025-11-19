@@ -519,13 +519,63 @@ def main():
 
         # 파라미터 통계 추출
         print(f"    파라미터 통계 추출 중...")
+        print(f"    [DEBUG] result 딕셔너리 키: {list(result.keys())}")
+        print(f"    [DEBUG] 'parameters' in result: {'parameters' in result}")
+        print(f"    [DEBUG] 'parameter_statistics' in result: {'parameter_statistics' in result}")
+        if 'parameters' in result:
+            print(f"    [DEBUG] parameters 키: {list(result['parameters'].keys())}")
+        if 'parameter_statistics' in result:
+            print(f"    [DEBUG] parameter_statistics 키: {list(result['parameter_statistics'].keys())}")
+
         param_list = []
 
-        if 'parameter_statistics' in result:
-            stats = result['parameter_statistics']
+        # ✅ 측정모델 파라미터는 이미 로드된 CFA 결과에서 가져오기
+        print(f"    측정모델 파라미터를 CFA 결과에서 추출 중...")
 
-            # 측정모델 파라미터 (다중 잠재변수)
-            if 'measurement' in stats:
+        if 'loadings' in cfa_results and 'measurement_errors' in cfa_results:
+            loadings_df = cfa_results['loadings']
+            errors_df = cfa_results['measurement_errors']
+
+            # 요인적재량 (loading)
+            for _, row in loadings_df.iterrows():
+                indicator = row['lval']
+                lv_name = row['rval']
+                param_list.append({
+                    'Coefficient': f'ζ_{lv_name}_{indicator}',
+                    'Estimate': row['Estimate'],
+                    'Std. Err.': row['Std. Err'] if pd.notna(row['Std. Err']) else '-',
+                    'P. Value': row['p-value'] if pd.notna(row['p-value']) else '-'
+                })
+
+            # 오차분산 (error_variance)
+            for _, row in errors_df.iterrows():
+                indicator = row['lval']
+                # lval 형식: "q10~~q10" -> "q10"으로 변환
+                indicator_clean = indicator.split('~~')[0]
+
+                # 해당 지표가 어느 잠재변수에 속하는지 찾기
+                lv_name = None
+                for lv, lv_config in config.measurement_configs.items():
+                    if indicator_clean in lv_config.indicators:
+                        lv_name = lv
+                        break
+
+                if lv_name:
+                    param_list.append({
+                        'Coefficient': f'σ²_{lv_name}_{indicator_clean}',
+                        'Estimate': row['Estimate'],
+                        'Std. Err.': row['Std. Err'] if pd.notna(row['Std. Err']) else '-',
+                        'P. Value': row['p-value'] if pd.notna(row['p-value']) else '-'
+                    })
+
+            print(f"    ✓ 측정모델 파라미터 {len(param_list)}개 추출 완료")
+        else:
+            print(f"    [WARNING] CFA 결과에 loadings 또는 measurement_errors가 없습니다.")
+            print(f"    동시추정 결과에서 추출을 시도합니다...")
+
+            # 대체: 동시추정 결과에서 추출 (표준오차 없음)
+            if 'parameter_statistics' in result and 'measurement' in result['parameter_statistics']:
+                stats = result['parameter_statistics']
                 for lv_name, lv_stats in stats['measurement'].items():
                     # zeta (요인적재량)
                     if 'zeta' in lv_stats:
@@ -535,11 +585,11 @@ def main():
                             param_list.append({
                                 'Coefficient': f'ζ_{lv_name}_{indicator_name}',
                                 'Estimate': zeta_stats['estimate'][i],
-                                'Std. Err.': zeta_stats['std_error'][i],
-                                'P. Value': zeta_stats['p_value'][i]
+                                'Std. Err.': zeta_stats.get('std_error', ['-'] * len(zeta_stats['estimate']))[i],
+                                'P. Value': zeta_stats.get('p_value', ['-'] * len(zeta_stats['estimate']))[i]
                             })
 
-                    # sigma_sq (오차분산) - continuous_linear 방식
+                    # sigma_sq (오차분산)
                     if 'sigma_sq' in lv_stats:
                         sigma_sq_stats = lv_stats['sigma_sq']
                         for i in range(len(sigma_sq_stats['estimate'])):
@@ -547,107 +597,116 @@ def main():
                             param_list.append({
                                 'Coefficient': f'σ²_{lv_name}_{indicator_name}',
                                 'Estimate': sigma_sq_stats['estimate'][i],
-                                'Std. Err.': sigma_sq_stats['std_error'][i],
-                                'P. Value': sigma_sq_stats['p_value'][i]
+                                'Std. Err.': sigma_sq_stats.get('std_error', ['-'] * len(sigma_sq_stats['estimate']))[i],
+                                'P. Value': sigma_sq_stats.get('p_value', ['-'] * len(sigma_sq_stats['estimate']))[i]
                             })
+
+        # ✅ 구조모델 및 선택모델 파라미터는 동시추정 결과에서 추출
+        # parameter_statistics가 있으면 사용, 없으면 parameters에서 직접 추출
+        if 'parameter_statistics' in result and result['parameter_statistics']:
+            print(f"    parameter_statistics에서 구조모델/선택모델 파라미터 추출 중...")
+            stats = result['parameter_statistics']
 
             # 구조모델 파라미터 (계층적 구조)
             if 'structural' in stats:
                 struct = stats['structural']
-
-                # 계층적 파라미터 (gamma_pred_to_target)
                 for key, value in struct.items():
                     if key.startswith('gamma_'):
                         param_list.append({
                             'Coefficient': f'γ_{key.replace("gamma_", "")}',
                             'Estimate': value['estimate'],
-                            'Std. Err.': value['std_error'],
-                            'P. Value': value['p_value']
+                            'Std. Err.': value.get('std_error', '-'),
+                            'P. Value': value.get('p_value', '-')
                         })
 
             # 선택모델 파라미터
             if 'choice' in stats:
                 choice = stats['choice']
 
-                # ASC (Alternative-Specific Constants) - Multinomial Logit
-                if 'asc' in choice:
-                    asc_stats = choice['asc']
-                    # asc는 딕셔너리 형태: {'sugar': {...}, 'sugar_free': {...}}
-                    for alt_name, alt_stats in asc_stats.items():
+                # ✅ 평탄화된 구조: 각 파라미터가 직접 키로 있음
+                # 예: {'asc_sugar': {...}, 'asc_sugar_free': {...}, 'beta_health_label': {...}, ...}
+                for param_name, param_stats in choice.items():
+                    # 파라미터 이름 변환 (그리스 문자 사용)
+                    if param_name.startswith('beta_'):
+                        display_name = f'β_{param_name.replace("beta_", "")}'
+                    elif param_name.startswith('theta_'):
+                        display_name = param_name  # theta는 그대로 사용
+                    else:
+                        display_name = param_name  # asc, gamma 등은 그대로 사용
+
+                    param_list.append({
+                        'Coefficient': display_name,
+                        'Estimate': param_stats['estimate'],
+                        'Std. Err.': param_stats.get('std_error', '-'),
+                        'P. Value': param_stats.get('p_value', '-')
+                    })
+
+        # parameter_statistics가 없으면 parameters에서 직접 추출 (표준오차 없음)
+        elif 'parameters' in result:
+            print(f"    [WARNING] parameter_statistics가 없습니다. parameters에서 직접 추출합니다 (표준오차 없음).")
+            params = result['parameters']
+
+            # 구조모델 파라미터
+            if 'structural' in params:
+                struct = params['structural']
+                for key, value in struct.items():
+                    if key.startswith('gamma_'):
                         param_list.append({
-                            'Coefficient': f'asc_{alt_name}',
-                            'Estimate': alt_stats['estimate'],
-                            'Std. Err.': alt_stats['std_error'],
-                            'P. Value': alt_stats['p_value']
+                            'Coefficient': f'γ_{key.replace("gamma_", "")}',
+                            'Estimate': value,
+                            'Std. Err.': '-',
+                            'P. Value': '-'
                         })
 
-                # intercept (Binary Logit - 하위 호환성)
-                if 'intercept' in choice:
-                    param_list.append({
-                        'Coefficient': 'β_Intercept',
-                        'Estimate': choice['intercept']['estimate'],
-                        'Std. Err.': choice['intercept']['std_error'],
-                        'P. Value': choice['intercept']['p_value']
-                    })
+            # 선택모델 파라미터
+            if 'choice' in params:
+                choice = params['choice']
+
+                # ASC
+                if 'asc' in choice:
+                    for alt_name, alt_value in choice['asc'].items():
+                        param_list.append({
+                            'Coefficient': f'asc_{alt_name}',
+                            'Estimate': alt_value,
+                            'Std. Err.': '-',
+                            'P. Value': '-'
+                        })
 
                 # beta (속성 계수)
                 if 'beta' in choice:
-                    beta_stats = choice['beta']
-                    for i, attr in enumerate(config.choice.choice_attributes):
-                        param_list.append({
-                            'Coefficient': f'β_{attr}',
-                            'Estimate': beta_stats['estimate'][i],
-                            'Std. Err.': beta_stats['std_error'][i],
-                            'P. Value': beta_stats['p_value'][i]
-                        })
+                    beta_values = choice['beta']
+                    if isinstance(beta_values, (list, np.ndarray)):
+                        for i, attr in enumerate(config.choice.choice_attributes):
+                            param_list.append({
+                                'Coefficient': f'β_{attr}',
+                                'Estimate': beta_values[i],
+                                'Std. Err.': '-',
+                                'P. Value': '-'
+                            })
 
-                # theta (LV 주효과 - Multinomial Logit)
+                # theta (LV 주효과)
                 if 'theta' in choice:
-                    theta_stats = choice['theta']
-                    # theta는 딕셔너리 형태: {'sugar_PI': {...}, 'sugar_free_PI': {...}}
-                    for theta_name, theta_stat in theta_stats.items():
+                    for theta_name, theta_value in choice['theta'].items():
                         param_list.append({
                             'Coefficient': f'theta_{theta_name}',
-                            'Estimate': theta_stat['estimate'],
-                            'Std. Err.': theta_stat['std_error'],
-                            'P. Value': theta_stat['p_value']
+                            'Estimate': theta_value,
+                            'Std. Err.': '-',
+                            'P. Value': '-'
                         })
 
-                # lambda (주효과 LV - Binary Logit, 하위 호환성)
-                if 'lambda' in choice:
-                    for lv_name, lv_stats in choice['lambda'].items():
-                        param_list.append({
-                            'Coefficient': f'λ_{lv_name}',
-                            'Estimate': lv_stats['estimate'],
-                            'Std. Err.': lv_stats['std_error'],
-                            'P. Value': lv_stats['p_value']
-                        })
-
-                # gamma (LV-속성 상호작용 - Multinomial Logit)
+                # gamma (LV-속성 상호작용)
                 if 'gamma' in choice:
-                    gamma_stats = choice['gamma']
-                    # gamma는 딕셔너리 형태: {'sugar_PI_health_label': {...}, ...}
-                    for gamma_name, gamma_stat in gamma_stats.items():
+                    for gamma_name, gamma_value in choice['gamma'].items():
                         param_list.append({
                             'Coefficient': f'gamma_{gamma_name}',
-                            'Estimate': gamma_stat['estimate'],
-                            'Std. Err.': gamma_stat['std_error'],
-                            'P. Value': gamma_stat['p_value']
+                            'Estimate': gamma_value,
+                            'Std. Err.': '-',
+                            'P. Value': '-'
                         })
-
-                # lambda_interaction (LV-속성 상호작용 - Binary Logit, 하위 호환성)
-                if 'lambda_interaction' in choice:
-                    for interaction_name, interaction_stats in choice['lambda_interaction'].items():
-                        param_list.append({
-                            'Coefficient': f'λ_int_{interaction_name}',
-                            'Estimate': interaction_stats['estimate'],
-                            'Std. Err.': interaction_stats['std_error'],
-                            'P. Value': interaction_stats['p_value']
-                        })
-
-            print(f"    ✓ {len(param_list)}개 파라미터 추출 완료")
         else:
-            print(f"    [WARNING] parameter_statistics가 없습니다. 표준오차 없이 저장합니다.")
+            print(f"    [ERROR] parameters와 parameter_statistics 모두 없습니다!")
+
+        print(f"    ✓ 총 {len(param_list)}개 파라미터 추출 완료")
 
         # DataFrame 생성
         df_params = pd.DataFrame(param_list)

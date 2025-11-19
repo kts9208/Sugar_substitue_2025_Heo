@@ -333,7 +333,7 @@ class SimultaneousEstimator:
         self._setup_iteration_logger(str(log_file))
 
         self.iteration_logger.info("SimultaneousEstimator.estimate() 시작")
-        self.logger.info("ICLV 모델 동시 추정 시작")
+        self.iteration_logger.info("ICLV 모델 동시 추정 시작")
 
         # 메모리 모니터의 logger를 iteration_logger로 업데이트
         if hasattr(self, 'memory_monitor') and self.memory_monitor is not None:
@@ -931,8 +931,6 @@ class SimultaneousEstimator:
                 if self.no_improvement_count >= self.patience:
                     self.early_stopped = True
                     msg = f"조기 종료: {self.patience}회 연속 함수 호출에서 LL 개선 없음 (Best LL={self.best_ll:.4f})"
-                    if self.logger:
-                        self.logger.info(msg)
                     if self.iteration_logger:
                         self.iteration_logger.info(msg)
                     # StopIteration 대신 매우 큰 값 반환
@@ -1120,13 +1118,10 @@ class SimultaneousEstimator:
                     xk[:] = self.best_x
 
         if use_gradient:
-            self.logger.info(f"최적화 시작: {self.config.estimation.optimizer} (gradient-based)")
             self.iteration_logger.info(f"최적화 시작: {self.config.estimation.optimizer} (gradient-based)")
             if self.use_analytic_gradient:
-                self.logger.info("Analytic gradient 사용 (Apollo 방식)")
                 self.iteration_logger.info("Analytic gradient 사용 (Apollo 방식)")
             else:
-                self.logger.info("수치적 그래디언트 사용 (2-point finite difference)")
                 self.iteration_logger.info("수치적 그래디언트 사용 (2-point finite difference)")
 
             # 조기 종료 설정 확인
@@ -1151,10 +1146,8 @@ class SimultaneousEstimator:
             current_major_iter_start_call[0] = func_call_count[0]
 
             if use_early_stopping:
-                self.logger.info(f"조기 종료 활성화: {early_stopping_patience}회 연속 함수 호출에서 LL 개선 없으면 종료 (tol={early_stopping_tol})")
                 self.iteration_logger.info(f"조기 종료 활성화: {early_stopping_patience}회 연속 함수 호출에서 LL 개선 없으면 종료 (tol={early_stopping_tol})")
             else:
-                self.logger.info("조기 종료 비활성화 (정상 종료만 사용)")
                 self.iteration_logger.info("조기 종료 비활성화 (정상 종료만 사용)")
 
             # BFGS 또는 L-BFGS-B (정상 종료로 처리)
@@ -1193,11 +1186,8 @@ class SimultaneousEstimator:
                 }
 
                 # BHHH Hessian 함수 생성
-                self.logger.info("BHHH 최적화 알고리즘 초기화...")
                 self.iteration_logger.info("BHHH 최적화 알고리즘 초기화...")
-                self.logger.info("  - 방법: Newton-CG with OPG (Outer Product of Gradients)")
                 self.iteration_logger.info("  - 방법: Newton-CG with OPG (Outer Product of Gradients)")
-                self.logger.info("  - Hessian 계산: 각 iteration마다 개인별 gradient로 OPG 계산")
                 self.iteration_logger.info("  - Hessian 계산: 각 iteration마다 개인별 gradient로 OPG 계산")
 
                 bhhh_hess_func = self._create_bhhh_hessian_function(
@@ -1208,7 +1198,6 @@ class SimultaneousEstimator:
                     gradient_function
                 )
 
-                self.logger.info(f"BHHH 옵션: xtol={optimizer_options['xtol']}")
                 self.iteration_logger.info(f"BHHH 옵션: xtol={optimizer_options['xtol']}")
 
                 result = optimize.minimize(
@@ -1230,7 +1219,6 @@ class SimultaneousEstimator:
                     'c2': 0.9,       # Curvature 조건 파라미터 (scipy 기본값)
                     'disp': True
                 }
-                self.logger.info(f"BFGS 옵션: c1={optimizer_options['c1']}, c2={optimizer_options['c2']} (scipy 기본값)")
                 self.iteration_logger.info(f"BFGS 옵션: c1={optimizer_options['c1']}, c2={optimizer_options['c2']} (scipy 기본값)")
 
                 result = optimize.minimize(
@@ -1250,15 +1238,6 @@ class SimultaneousEstimator:
                     'maxls': 10,     # Line search 최대 횟수 (기본값: 20)
                     'disp': True
                 }
-                self.logger.info(
-                    f"L-BFGS-B 옵션: maxls={optimizer_options['maxls']}\n"
-                    f"  ✅ L-BFGS-B 수렴 조건 (ftol AND gtol 모두 만족 필요):\n"
-                    f"    - ftol: (f^k - f^{{k+1}})/max{{|f^k|,|f^{{k+1}}|,1}} <= ftol * eps_mach\n"
-                    f"    - gtol: max|proj g_i| <= gtol (projected gradient, bound 고려)\n"
-                    f"  ⚠️  주의: gtol은 전체 그래디언트가 아닌 projected gradient 사용\n"
-                    f"     → 고정된 파라미터(측정모델 76개)는 제외, 활성 파라미터만 고려\n"
-                    f"     → callback 로그에서 '활성 파라미터' 그래디언트 확인"
-                )
                 self.iteration_logger.info(
                     f"L-BFGS-B 옵션: maxls={optimizer_options['maxls']}\n"
                     f"  ✅ L-BFGS-B 수렴 조건 (ftol AND gtol 모두 만족 필요):\n"
@@ -1295,18 +1274,14 @@ class SimultaneousEstimator:
                 )
 
             # 최적화 결과 로깅
-            self.logger.info(f"최적화 종료: {result.message}")
             self.iteration_logger.info(f"최적화 종료: {result.message}")
-            self.logger.info(f"  성공 여부: {result.success}")
             self.iteration_logger.info(f"  성공 여부: {result.success}")
-            self.logger.info(f"  Major iterations: {major_iter_count[0]}")
             self.iteration_logger.info(f"  Major iterations: {major_iter_count[0]}")
-            self.logger.info(f"  함수 호출: {result.nfev}회")
             self.iteration_logger.info(f"  함수 호출: {result.nfev}회")
 
             # Line search 실패 경고
             if not result.success and 'ABNORMAL_TERMINATION_IN_LNSRCH' in result.message:
-                self.logger.warning(
+                self.iteration_logger.warning(
                     "\n⚠️  Line Search 실패로 종료되었습니다.\n"
                     "  가능한 원인:\n"
                     "    1. Gradient 계산 오류\n"
@@ -1349,7 +1324,7 @@ class SimultaneousEstimator:
             if self.config.estimation.calculate_se:
                 # BFGS의 hess_inv가 있으면 사용 (추가 계산 0회!)
                 if hasattr(result, 'hess_inv') and result.hess_inv is not None:
-                    self.logger.info("Hessian 역행렬: BFGS에서 자동 제공 (추가 계산 0회)")
+                    self.iteration_logger.info("Hessian 역행렬: BFGS에서 자동 제공 (추가 계산 0회)")
                     self.iteration_logger.info("Hessian 역행렬: BFGS에서 자동 제공 (추가 계산 0회)")
 
                     # ✅ Hessian 역행렬 통계 로깅
@@ -1402,9 +1377,9 @@ class SimultaneousEstimator:
 
                 else:
                     # BFGS hess_inv가 없으면 BHHH 방법으로 계산 (L-BFGS-B의 경우)
-                    self.logger.warning("Hessian 역행렬 없음 (L-BFGS-B는 hess_inv 제공 안 함)")
                     self.iteration_logger.warning("Hessian 역행렬 없음 (L-BFGS-B는 hess_inv 제공 안 함)")
-                    self.logger.info("BHHH 방법으로 Hessian 계산 시작...")
+                    self.iteration_logger.warning("Hessian 역행렬 없음 (L-BFGS-B는 hess_inv 제공 안 함)")
+                    self.iteration_logger.info("BHHH 방법으로 Hessian 계산 시작...")
                     self.iteration_logger.info("BHHH 방법으로 Hessian 계산 시작...")
 
                     try:
@@ -1418,7 +1393,7 @@ class SimultaneousEstimator:
 
                         if hess_inv_bhhh is not None:
                             self.hessian_inv_matrix = hess_inv_bhhh
-                            self.logger.info("BHHH Hessian 계산 성공")
+                            self.iteration_logger.info("BHHH Hessian 계산 성공")
                             self.iteration_logger.info("BHHH Hessian 계산 성공")
 
                             # BHHH Hessian 통계 로깅 (BFGS와 동일한 형식)
@@ -1453,28 +1428,28 @@ class SimultaneousEstimator:
 
                             self.iteration_logger.info(f"{'='*80}\n")
                         else:
-                            self.logger.warning("BHHH Hessian 계산 실패")
+                            self.iteration_logger.warning("BHHH Hessian 계산 실패")
                             self.iteration_logger.warning("BHHH Hessian 계산 실패")
                             self.hessian_inv_matrix = None
 
                     except Exception as e:
-                        self.logger.error(f"BHHH Hessian 계산 중 오류: {e}")
+                        self.iteration_logger.error(f"BHHH Hessian 계산 중 오류: {e}")
                         self.iteration_logger.error(f"BHHH Hessian 계산 중 오류: {e}")
                         import traceback
-                        self.logger.debug(traceback.format_exc())
+                        self.iteration_logger.debug(traceback.format_exc())
                         self.hessian_inv_matrix = None
             else:
                 self.hessian_inv_matrix = None
 
             # 최종 로그
             if early_stopping_wrapper.early_stopped:
-                self.logger.info(f"조기 종료 완료: 함수 호출 {early_stopping_wrapper.func_call_count}회, LL={-early_stopping_wrapper.best_ll:.4f}")
+                self.iteration_logger.info(f"조기 종료 완료: 함수 호출 {early_stopping_wrapper.func_call_count}회, LL={-early_stopping_wrapper.best_ll:.4f}")
                 self.iteration_logger.info(f"조기 종료 완료: 함수 호출 {early_stopping_wrapper.func_call_count}회, LL={-early_stopping_wrapper.best_ll:.4f}")
             else:
-                self.logger.info(f"정상 종료: 함수 호출 {early_stopping_wrapper.func_call_count}회")
+                self.iteration_logger.info(f"정상 종료: 함수 호출 {early_stopping_wrapper.func_call_count}회")
                 self.iteration_logger.info(f"정상 종료: 함수 호출 {early_stopping_wrapper.func_call_count}회")
         else:
-            self.logger.info(f"최적화 시작: Nelder-Mead (gradient-free)")
+            self.iteration_logger.info(f"최적화 시작: Nelder-Mead (gradient-free)")
             self.iteration_logger.info(f"최적화 시작: Nelder-Mead (gradient-free)")
 
             result = optimize.minimize(
@@ -1490,10 +1465,10 @@ class SimultaneousEstimator:
             )
 
         if result.success:
-            self.logger.info("최적화 성공")
+            self.iteration_logger.info("최적화 성공")
             self.iteration_logger.info("최적화 성공")
         else:
-            self.logger.warning(f"최적화 실패: {result.message}")
+            self.iteration_logger.warning(f"최적화 실패: {result.message}")
             self.iteration_logger.warning(f"최적화 실패: {result.message}")
 
         self.iteration_logger.info("=" * 70)
@@ -1525,12 +1500,12 @@ class SimultaneousEstimator:
         # result.x를 전체 external parameters로 교체
         result.x = optimal_params_full
 
-        # 결과 처리
+        # 결과 처리 (로거 종료 전에 수행)
         self.results = self._process_results(
             result, measurement_model, structural_model, choice_model
         )
 
-        # 로거 종료
+        # 로거 종료 (결과 처리 후)
         self._close_iteration_logger()
 
         return self.results
@@ -1935,7 +1910,7 @@ class SimultaneousEstimator:
 
             # 딕셔너리 형태인 경우 (순차추정 결과)
             if isinstance(user_params, dict):
-                self.logger.info("사용자 정의 초기값 (딕셔너리) 사용")
+                self.iteration_logger.info("사용자 정의 초기값 (딕셔너리) 사용")
 
                 # ✅ 선택모델 파라미터 확인
                 user_choice_params = user_params.get('choice', {})
@@ -1950,11 +1925,11 @@ class SimultaneousEstimator:
                 # ✅ 선택모델 초기값: 사용자 제공 값이 있으면 사용, 없으면 자동 생성
                 if user_choice_params and len(user_choice_params) > 0:
                     # 사용자가 선택모델 파라미터를 제공한 경우
-                    self.logger.info(f"사용자 정의 선택모델 초기값 사용 ({len(user_choice_params)}개 파라미터)")
+                    self.iteration_logger.info(f"사용자 정의 선택모델 초기값 사용 ({len(user_choice_params)}개 파라미터)")
                     partial_dict['choice'] = user_choice_params
                 else:
                     # 선택모델 초기값 자동 생성
-                    self.logger.info("선택모델 초기값 자동 생성")
+                    self.iteration_logger.info("선택모델 초기값 자동 생성")
                     # MultinomialLogitChoice는 data 인자 필요
                     if hasattr(choice_model, 'get_initial_params'):
                         import inspect
@@ -1973,15 +1948,15 @@ class SimultaneousEstimator:
                     partial_dict, param_names_full, measurement_model
                 )
 
-                self.logger.info(f"사용자 정의 초기값 변환 완료: {len(initial_values)}개")
+                self.iteration_logger.info(f"사용자 정의 초기값 변환 완료: {len(initial_values)}개")
 
             # 배열 형태인 경우 (이전 동시추정 결과)
             elif isinstance(user_params, np.ndarray):
-                self.logger.info(f"사용자 정의 초기값 (배열) 사용: {len(user_params)}개")
+                self.iteration_logger.info(f"사용자 정의 초기값 (배열) 사용: {len(user_params)}개")
                 initial_values = user_params
             else:
-                self.logger.warning(f"사용자 정의 초기값 형식 오류: {type(user_params)}")
-                self.logger.warning("자동 초기화를 사용합니다.")
+                self.iteration_logger.warning(f"사용자 정의 초기값 형식 오류: {type(user_params)}")
+                self.iteration_logger.warning("자동 초기화를 사용합니다.")
                 initial_values = self.param_manager.get_initial_values(
                     param_names_full, measurement_model, structural_model, choice_model
                 )
@@ -1991,7 +1966,7 @@ class SimultaneousEstimator:
                 param_names_full, measurement_model, structural_model, choice_model
             )
 
-            self.logger.info(f"자동 초기 파라미터 생성 완료: {len(initial_values)}개")
+            self.iteration_logger.info(f"자동 초기 파라미터 생성 완료: {len(initial_values)}개")
 
         return initial_values
 
@@ -2073,7 +2048,7 @@ class SimultaneousEstimator:
 
             # 개인 데이터 준비
             individual_ids = self.data[self.config.individual_id_column].unique()
-            self.logger.info(f"처리할 개인 수: {len(individual_ids)}")
+            self.iteration_logger.info(f"처리할 개인 수: {len(individual_ids)}")
 
             all_ind_data = []
             all_ind_draws = []
@@ -2292,9 +2267,9 @@ class SimultaneousEstimator:
         mode_msg = f"{prefix}Gradient 계산 모드: {gpu_state.get_mode_name()}"
 
         # 콘솔과 파일 모두에 기록
-        self.logger.info(separator)
-        self.logger.info(mode_msg)
-        self.logger.info(separator)
+        self.iteration_logger.info(separator)
+        self.iteration_logger.info(mode_msg)
+        self.iteration_logger.info(separator)
 
         self.iteration_logger.info(separator)
         self.iteration_logger.info(mode_msg)
@@ -2372,22 +2347,22 @@ class SimultaneousEstimator:
                     results['p_values'] = 2 * (1 - norm.cdf(np.abs(results['t_statistics'])))
 
                     # 파라미터별로 구조화
-                    self.logger.info("파라미터별 통계량 구조화 중...")
+                    self.iteration_logger.info("파라미터별 통계량 구조화 중...")
                     results['parameter_statistics'] = self._structure_statistics(
                         optimization_result.x, se,
                         results['t_statistics'], results['p_values'],
                         measurement_model, structural_model, choice_model
                     )
-                    self.logger.info("파라미터별 통계량 구조화 완료")
+                    self.iteration_logger.info("파라미터별 통계량 구조화 완료")
 
                 else:
-                    self.logger.warning("Hessian 정보가 없어 표준오차를 계산할 수 없습니다.")
+                    self.iteration_logger.warning("Hessian 정보가 없어 표준오차를 계산할 수 없습니다.")
                     results['hessian_inv'] = None
 
             except Exception as e:
-                self.logger.warning(f"표준오차 계산 실패: {e}")
+                self.iteration_logger.warning(f"표준오차 계산 실패: {e}")
                 import traceback
-                self.logger.debug(traceback.format_exc())
+                self.iteration_logger.debug(traceback.format_exc())
                 results['hessian_inv'] = None
         else:
             results['hessian_inv'] = None
@@ -2395,7 +2370,7 @@ class SimultaneousEstimator:
         # CSV 로그 파일 닫기
         if hasattr(self, 'csv_log_file') and self.csv_log_file:
             self.csv_log_file.close()
-            self.logger.info(f"CSV 로그 파일 저장 완료: {self.csv_log_path}")
+            self.iteration_logger.info(f"CSV 로그 파일 저장 완료: {self.csv_log_path}")
 
         return results
 
@@ -2821,7 +2796,7 @@ class SimultaneousEstimator:
             )
 
             # 개인별 gradient 계산
-            self.logger.info("개인별 gradient 계산 시작...")
+            self.iteration_logger.info("개인별 gradient 계산 시작...")
             individual_gradients = []
 
             # 개인 ID 목록
@@ -2838,7 +2813,7 @@ class SimultaneousEstimator:
                 step = max(1, n_total_individuals // n_individuals)
                 sampled_ids = individual_ids[::step][:n_individuals]
 
-            self.logger.info(
+            self.iteration_logger.info(
                 f"BHHH 계산: {n_individuals}명 사용 "
                 f"(전체 {n_total_individuals}명 중)"
             )
@@ -2853,7 +2828,7 @@ class SimultaneousEstimator:
 
                 for i, ind_id in enumerate(sampled_ids):
                     if i % 10 == 0:
-                        self.logger.info(f"  진행: {i}/{n_individuals}")
+                        self.iteration_logger.info(f"  진행: {i}/{n_individuals}")
 
                     # 개인 데이터
                     ind_data = self.data[
@@ -2885,7 +2860,7 @@ class SimultaneousEstimator:
 
                     # 처음 3명의 gradient 상세 로깅
                     if i < 3:
-                        self.logger.info(
+                        self.iteration_logger.info(
                             f"\n개인 {i} (ID={ind_id}) Gradient 벡터:\n"
                             f"  Shape: {grad_vector.shape}\n"
                             f"  Norm: {np.linalg.norm(grad_vector):.6e}\n"
@@ -2897,12 +2872,12 @@ class SimultaneousEstimator:
 
             else:
                 # 단일 잠재변수 (기존 방식)
-                self.logger.warning(
+                self.iteration_logger.warning(
                     "단일 잠재변수 모델의 BHHH는 아직 구현되지 않았습니다."
                 )
                 return None
 
-            self.logger.info(
+            self.iteration_logger.info(
                 f"\n{'='*80}\n"
                 f"개인별 gradient 계산 완료\n"
                 f"{'='*80}\n"
@@ -2912,16 +2887,16 @@ class SimultaneousEstimator:
             )
 
             # BHHH Hessian 계산
-            self.logger.info("\n" + "="*80)
-            self.logger.info("BHHH Hessian 계산 시작 (OPG 방식)")
-            self.logger.info("="*80)
+            self.iteration_logger.info("\n" + "="*80)
+            self.iteration_logger.info("BHHH Hessian 계산 시작 (OPG 방식)")
+            self.iteration_logger.info("="*80)
             hessian_bhhh = bhhh_calc.compute_bhhh_hessian(
                 individual_gradients,
                 for_minimization=True  # scipy.optimize.minimize는 최소화 문제
             )
 
             # Hessian 역행렬 계산
-            self.logger.info("Hessian 역행렬 계산 중...")
+            self.iteration_logger.info("Hessian 역행렬 계산 중...")
             hess_inv = bhhh_calc.compute_hessian_inverse(
                 hessian_bhhh,
                 regularization=1e-8
@@ -2929,7 +2904,7 @@ class SimultaneousEstimator:
 
             # 표준오차 계산 (검증용)
             se = bhhh_calc.compute_standard_errors(hess_inv)
-            self.logger.info(
+            self.iteration_logger.info(
                 f"BHHH 표준오차 범위: "
                 f"[{np.min(se):.6e}, {np.max(se):.6e}]"
             )
@@ -2937,9 +2912,9 @@ class SimultaneousEstimator:
             return hess_inv
 
         except Exception as e:
-            self.logger.error(f"BHHH Hessian 계산 실패: {e}")
+            self.iteration_logger.error(f"BHHH Hessian 계산 실패: {e}")
             import traceback
-            self.logger.debug(traceback.format_exc())
+            self.iteration_logger.debug(traceback.format_exc())
             return None
 
 
