@@ -43,19 +43,20 @@ class ParameterManager:
         self.config = config
         self.logger = logging.getLogger(__name__)
     
-    def get_parameter_names(self, measurement_model, structural_model, 
-                           choice_model) -> List[str]:
+    def get_parameter_names(self, measurement_model, structural_model,
+                           choice_model, exclude_measurement: bool = False) -> List[str]:
         """
         전체 파라미터 이름 리스트 생성 (순서 보장)
-        
+
         이 메서드가 파라미터 순서를 결정합니다.
         파라미터 추가/제거 시 이 메서드만 수정하면 됩니다.
-        
+
         Args:
             measurement_model: 측정모델 객체
             structural_model: 구조모델 객체
             choice_model: 선택모델 객체
-        
+            exclude_measurement: True이면 측정모델 파라미터 제외 (고정 시)
+
         Returns:
             파라미터 이름 리스트
             예: ['zeta_health_concern_0', 'zeta_health_concern_1', ...,
@@ -64,20 +65,61 @@ class ParameterManager:
                  'lambda_health_concern', 'lambda_perceived_benefit', ...]
         """
         names = []
-        
-        # 1. 측정모델 파라미터
-        names.extend(self._get_measurement_param_names(measurement_model))
-        
+
+        # 1. 측정모델 파라미터 (exclude_measurement=True이면 제외)
+        if not exclude_measurement:
+            names.extend(self._get_measurement_param_names(measurement_model))
+
         # 2. 구조모델 파라미터
         names.extend(self._get_structural_param_names(structural_model))
-        
+
         # 3. 선택모델 파라미터
         names.extend(self._get_choice_param_names(choice_model))
-        
-        self.logger.info(f"파라미터 이름 리스트 생성 완료: {len(names)}개")
-        
+
+        if exclude_measurement:
+            self.logger.info(f"파라미터 이름 리스트 생성 완료: {len(names)}개 (측정모델 제외)")
+        else:
+            self.logger.info(f"파라미터 이름 리스트 생성 완료: {len(names)}개")
+
         return names
     
+    def get_measurement_param_names(self, measurement_model) -> List[str]:
+        """
+        측정모델 파라미터 이름만 반환 (public 메서드)
+
+        Args:
+            measurement_model: 측정모델 객체
+
+        Returns:
+            측정모델 파라미터 이름 리스트
+        """
+        return self._get_measurement_param_names(measurement_model)
+
+    def get_optimized_parameter_names(self, structural_model, choice_model) -> List[str]:
+        """
+        동시추정용: 구조모델 + 선택모델 파라미터 이름만 반환
+
+        측정모델 파라미터는 항상 제외됩니다 (CFA 결과로 고정).
+
+        Args:
+            structural_model: 구조모델 객체
+            choice_model: 선택모델 객체
+
+        Returns:
+            최적화 파라미터 이름 리스트 (측정모델 제외)
+        """
+        names = []
+
+        # 구조모델 파라미터
+        names.extend(self._get_structural_param_names(structural_model))
+
+        # 선택모델 파라미터
+        names.extend(self._get_choice_param_names(choice_model))
+
+        self.logger.info(f"최적화 파라미터 이름 리스트 생성 완료: {len(names)}개 (측정모델 제외)")
+
+        return names
+
     def _get_measurement_param_names(self, measurement_model) -> List[str]:
         """측정모델 파라미터 이름 생성"""
         names = []
@@ -177,6 +219,90 @@ class ParameterManager:
                 names.append(f'gamma_{lv_name}_{attr_name}')
 
         return names
+
+    def array_to_dict_optimized(self, param_array: np.ndarray, param_names: List[str],
+                                measurement_model, structural_model, choice_model) -> Dict:
+        """
+        동시추정 전용: 최적화 파라미터 배열을 딕셔너리로 변환
+
+        ✅ 측정모델 파라미터는 처리하지 않음
+        ✅ 구조모델 + 선택모델만 변환
+
+        Args:
+            param_array: 최적화 파라미터 배열 (8개, 측정모델 제외)
+            param_names: 최적화 파라미터 이름 리스트
+            measurement_model: 측정모델 (측정모델 파라미터 추출용)
+            structural_model: 구조모델
+            choice_model: 선택모델
+
+        Returns:
+            파라미터 딕셔너리
+            {
+                'measurement': {lv_name: {'zeta': array, 'sigma_sq': array}},  # CFA 결과
+                'structural': {param_name: float},
+                'choice': {param_name: float, ...}
+            }
+        """
+        param_dict = {
+            'measurement': {},
+            'structural': {},
+            'choice': {}
+        }
+
+        # ✅ 측정모델 파라미터: measurement_model 객체에서 직접 추출 (CFA 결과)
+        if hasattr(measurement_model, 'models'):
+            for lv_name, model in measurement_model.models.items():
+                # ✅ 모델 객체에서 직접 파라미터 추출 (config가 아님!)
+                # test_gpu_batch_iclv.py에서 model.config.zeta/sigma_sq로 설정했으므로
+                # config에서 추출
+                if hasattr(model, 'config'):
+                    zeta = getattr(model.config, 'zeta', np.array([]))
+                    sigma_sq = getattr(model.config, 'sigma_sq', np.array([]))
+                else:
+                    # config가 없으면 모델 객체에서 직접
+                    zeta = getattr(model, 'zeta', np.array([]))
+                    sigma_sq = getattr(model, 'sigma_sq', np.array([]))
+
+                # 디버깅: 추출된 파라미터 로깅
+                if len(zeta) == 0 or len(sigma_sq) == 0:
+                    self.logger.warning(f"[array_to_dict_optimized] {lv_name}: zeta={len(zeta)}개, sigma_sq={len(sigma_sq)}개 (빈 배열!)")
+                else:
+                    self.logger.debug(f"[array_to_dict_optimized] {lv_name}: zeta={len(zeta)}개, sigma_sq={len(sigma_sq)}개")
+
+                param_dict['measurement'][lv_name] = {
+                    'zeta': zeta,
+                    'sigma_sq': sigma_sq
+                }
+
+        # ✅ 구조모델 + 선택모델 파라미터: 배열에서 추출
+        for i, name in enumerate(param_names):
+            value = param_array[i]
+
+            if name.startswith('gamma_') and '_to_' in name:
+                # 구조모델
+                param_dict['structural'][name] = value
+
+            elif name.startswith('asc_'):
+                # ASC
+                param_dict['choice'][name] = value
+
+            elif name.startswith('theta_'):
+                # Theta
+                param_dict['choice'][name] = value
+
+            elif name.startswith('beta_'):
+                # Beta (개별 키로 저장)
+                param_dict['choice'][name] = value
+
+            elif name.startswith('gamma_') and ('_sugar_' in name or '_sugar_free_' in name):
+                # Gamma 상호작용
+                param_dict['choice'][name] = value
+
+            elif name.startswith('lambda_'):
+                # Lambda
+                param_dict['choice'][name] = value
+
+        return param_dict
 
     def array_to_dict(self, param_array: np.ndarray, param_names: List[str],
                      measurement_model, structural_model, choice_model) -> Dict:
@@ -305,6 +431,47 @@ class ParameterManager:
                 param_dict['choice'][name] = value
 
         return param_dict
+
+    def dict_to_array_optimized(self, param_dict: Dict, param_names: List[str],
+                                structural_model, choice_model) -> np.ndarray:
+        """
+        동시추정 전용: 구조모델 + 선택모델만 배열로 변환
+
+        ✅ 단순화된 로직: 파라미터 이름 순서대로 값을 추출
+        ✅ 구조모델 파라미터는 'structural'에서, 나머지는 'choice'에서 추출
+
+        Args:
+            param_dict: 파라미터 딕셔너리
+                {'structural': {...}, 'choice': {...}}
+            param_names: 최적화 파라미터 이름 리스트 (get_optimized_parameter_names()로 생성)
+            structural_model: 구조모델 객체
+            choice_model: 선택모델 객체
+
+        Returns:
+            파라미터 배열 (측정모델 제외)
+        """
+        param_array = []
+
+        for i, name in enumerate(param_names):
+            # ✅ 단순화된 로직: gamma_*_to_*는 structural, 나머지는 choice
+            if name.startswith('gamma_') and '_to_' in name:
+                # 구조모델 파라미터
+                if name in param_dict['structural']:
+                    value = param_dict['structural'][name]
+                else:
+                    self.logger.warning(f"구조모델 파라미터 '{name}'를 찾을 수 없음, 0.1 사용")
+                    value = 0.1
+            else:
+                # 선택모델 파라미터 (asc, beta, theta, gamma, lambda 등)
+                if name in param_dict['choice']:
+                    value = param_dict['choice'][name]
+                else:
+                    self.logger.warning(f"선택모델 파라미터 '{name}'를 찾을 수 없음, 0.1 사용")
+                    value = 0.1
+
+            param_array.append(value)
+
+        return np.array(param_array)
 
     def dict_to_array(self, param_dict: Dict, param_names: List[str], measurement_model=None) -> np.ndarray:
         """
@@ -525,33 +692,99 @@ class ParameterManager:
 
         return np.array(initial_values)
 
+    def split_measurement_params(self, params_full: np.ndarray,
+                                 measurement_model, structural_model,
+                                 choice_model) -> tuple:
+        """
+        전체 파라미터 배열을 측정모델 파라미터와 나머지로 분리
+
+        Args:
+            params_full: 전체 파라미터 배열
+            measurement_model: 측정모델 객체
+            structural_model: 구조모델 객체
+            choice_model: 선택모델 객체
+
+        Returns:
+            (measurement_params, other_params) 튜플
+        """
+        measurement_names = self._get_measurement_param_names(measurement_model)
+        n_measurement = len(measurement_names)
+
+        measurement_params = params_full[:n_measurement]
+        other_params = params_full[n_measurement:]
+
+        return measurement_params, other_params
+
+    def combine_params(self, measurement_params: np.ndarray,
+                      other_params: np.ndarray) -> np.ndarray:
+        """
+        측정모델 파라미터와 나머지 파라미터를 결합
+
+        Args:
+            measurement_params: 측정모델 파라미터 배열
+            other_params: 구조모델 + 선택모델 파라미터 배열
+
+        Returns:
+            전체 파라미터 배열
+        """
+        return np.concatenate([measurement_params, other_params])
+
+    def get_optimized_parameter_bounds(self, structural_model, choice_model) -> List[tuple]:
+        """
+        동시추정용: 구조모델 + 선택모델 파라미터 bounds만 반환
+
+        측정모델 파라미터는 항상 제외됩니다 (CFA 결과로 고정).
+
+        Args:
+            structural_model: 구조모델 객체
+            choice_model: 선택모델 객체
+
+        Returns:
+            최적화 파라미터 bounds 리스트 (측정모델 제외)
+        """
+        param_names = self.get_optimized_parameter_names(structural_model, choice_model)
+
+        bounds = []
+        for name in param_names:
+            bounds.append(self._get_bound_for_param(name))
+
+        self.logger.info(f"최적화 파라미터 bounds 생성 완료: {len(bounds)}개 (측정모델 제외)")
+
+        return bounds
+
     def get_parameter_bounds(self, measurement_model, structural_model,
-                            choice_model) -> List[tuple]:
+                            choice_model, exclude_measurement: bool = False) -> List[tuple]:
         """
         전체 파라미터 bounds 리스트 생성 (L-BFGS-B용)
 
         ✅ 파라미터 이름 순서와 동일한 순서로 bounds 생성
         ✅ 파라미터 구조 변경 시 이 메서드만 수정하면 됨
         ✅ Optimizer 종류와 무관하게 동일한 로직 사용
+        ✅ exclude_measurement=True이면 측정모델 파라미터 제외
 
         Args:
             measurement_model: 측정모델 객체
             structural_model: 구조모델 객체
             choice_model: 선택모델 객체
+            exclude_measurement: True이면 측정모델 파라미터 제외
 
         Returns:
             bounds 리스트: [(lower, upper), ...]
             예: [(0.1, 10.0), (0.01, 100.0), ..., (None, None), ...]
         """
         param_names = self.get_parameter_names(
-            measurement_model, structural_model, choice_model
+            measurement_model, structural_model, choice_model,
+            exclude_measurement=exclude_measurement
         )
 
         bounds = []
         for name in param_names:
             bounds.append(self._get_bound_for_param(name))
 
-        self.logger.info(f"파라미터 bounds 생성 완료: {len(bounds)}개")
+        if exclude_measurement:
+            self.logger.info(f"파라미터 bounds 생성 완료: {len(bounds)}개 (측정모델 제외)")
+        else:
+            self.logger.info(f"파라미터 bounds 생성 완료: {len(bounds)}개")
 
         return bounds
 

@@ -109,10 +109,12 @@ print(f"  조절효과: {MODERATION_LVS if MODERATION_LVS else '없음'}")
 print(f"  LV-Attribute 상호작용 (파일 내용): {LV_ATTRIBUTE_INTERACTIONS if LV_ATTRIBUTE_INTERACTIONS else '없음'}")
 print("=" * 70 + "\n")
 
+# ✅ CFA 결과 파일 사용 (측정모델만 추정된 결과)
 # PKL 파일명도 자동 생성
 from model_config_utils import build_paths_from_config
 _, path_name, _ = build_paths_from_config(PATHS)
-INITIAL_PARAMS_PKL = f'stage1_{path_name}_results.pkl'
+# INITIAL_PARAMS_PKL = f'stage1_{path_name}_results.pkl'  # SEM 결과 (구조모델 포함)
+INITIAL_PARAMS_PKL = 'cfa_results.pkl'  # ✅ CFA 결과 (측정모델만)
 
 # 4. GPU 메모리 설정
 CPU_MEMORY_THRESHOLD_MB = 2000  # CPU 메모리 임계값 (MB)
@@ -226,6 +228,61 @@ def main():
         traceback.print_exc()
         return
 
+    # ✅ 측정모델에 CFA 결과 로드 (동시추정 전용)
+    # 이 단계는 초기값 설정 전에 수행되어야 함
+    pkl_path = project_root / 'results' / 'sequential_stage_wise' / INITIAL_PARAMS_PKL
+
+    if pkl_path.exists():
+        print(f"\n    [INFO] 측정모델에 CFA 결과 로드 중...")
+        import pickle
+        with open(pkl_path, 'rb') as f:
+            cfa_results = pickle.load(f)
+
+        if 'loadings' in cfa_results and 'measurement_errors' in cfa_results:
+            loadings_df = cfa_results['loadings']
+            errors_df = cfa_results['measurement_errors']
+
+            # 각 잠재변수의 측정모델에 CFA 결과 설정
+            for lv_name, model in measurement_model.models.items():
+                lv_config = config.measurement_configs[lv_name]
+                indicators = lv_config.indicators
+
+                # zeta (요인적재량)
+                zeta_values = []
+                for indicator in indicators:
+                    row = loadings_df[(loadings_df['lval'] == indicator) &
+                                     (loadings_df['op'] == '~') &
+                                     (loadings_df['rval'] == lv_name)]
+
+                    if not row.empty:
+                        zeta_values.append(float(row['Estimate'].iloc[0]))
+                    else:
+                        print(f"    [WARNING] {indicator} ~ {lv_name} 요인적재량을 찾을 수 없습니다. 기본값 1.0 사용")
+                        zeta_values.append(1.0)
+
+                # sigma_sq (오차분산)
+                sigma_sq_values = []
+                for indicator in indicators:
+                    row = errors_df[(errors_df['lval'] == indicator) &
+                                   (errors_df['op'] == '~~') &
+                                   (errors_df['rval'] == indicator)]
+
+                    if not row.empty:
+                        sigma_sq_values.append(float(row['Estimate'].iloc[0]))
+                    else:
+                        print(f"    [WARNING] {indicator}의 오차분산을 찾을 수 없습니다. 기본값 0.5 사용")
+                        sigma_sq_values.append(0.5)
+
+                # 측정모델 config에 CFA 결과 설정
+                model.config.zeta = np.array(zeta_values)
+                model.config.sigma_sq = np.array(sigma_sq_values)
+
+                print(f"    [INFO] {lv_name}: zeta={len(zeta_values)}개, sigma_sq={len(sigma_sq_values)}개 로드 완료")
+
+            print(f"    [SUCCESS] 측정모델에 CFA 결과 로드 완료")
+        else:
+            print(f"    [WARNING] CFA 결과 형식이 올바르지 않습니다.")
+
     # 6. Estimator 생성
     print("\n[6] Estimator 생성:")
     try:
@@ -245,173 +302,143 @@ def main():
 
     # 7. 초기값 설정
     print("\n[7] 초기값 설정:")
-    print("    [INFO] 측정모델 (zeta, sigma_sq): PKL 파일에서 로드")
+    print("    [INFO] 측정모델 (zeta, sigma_sq): CFA 결과에서 로드 (이미 완료)")
     print("    [INFO] 구조모델 & 선택모델: 0.1로 초기화")
 
     initial_params = None
-    pkl_path = project_root / 'results' / 'sequential_stage_wise' / INITIAL_PARAMS_PKL
 
     if pkl_path.exists():
-        print(f"\n    PKL 파일 로드: {INITIAL_PARAMS_PKL}")
+        print(f"\n    CFA 결과 로드: {INITIAL_PARAMS_PKL}")
 
-        # 1. PKL에서 측정모델 파라미터만 로드
+        # 1. CFA 결과에서 측정모델 파라미터 로드
         import pickle
         with open(pkl_path, 'rb') as f:
-            stage1_results = pickle.load(f)
+            cfa_results = pickle.load(f)
 
-        if 'measurement_results' in stage1_results:
-            meas_params = stage1_results['measurement_results'].get('params', {})
+        # CFA 결과는 직접 loadings와 measurement_errors를 포함
+        if 'loadings' in cfa_results and 'measurement_errors' in cfa_results:
+            print(f"    [INFO] CFA 결과에서 측정모델 파라미터 추출")
 
-            # lavaan DataFrame → 딕셔너리 변환
-            if hasattr(meas_params, 'empty'):
-                print(f"    [INFO] lavaan DataFrame 형식 감지 - 측정모델 파라미터 파싱 시작")
+            loadings_df = cfa_results['loadings']
+            errors_df = cfa_results['measurement_errors']
 
-                # 측정모델 파라미터만 추출
-                measurement_dict = {}
-                for lv_name, lv_config in config.measurement_configs.items():
-                    indicators = lv_config.indicators
+            # 측정모델 파라미터 딕셔너리 생성
+            measurement_dict = {}
+            for lv_name, lv_config in config.measurement_configs.items():
+                indicators = lv_config.indicators
 
-                    # zeta (요인적재량) 추출
-                    zeta_values = []
-                    for indicator in indicators:
-                        row = meas_params[(meas_params['lval'] == indicator) &
-                                         (meas_params['op'] == '~') &
-                                         (meas_params['rval'] == lv_name)]
+                # ✅ zeta (요인적재량) - CFA loadings에서 추출
+                zeta_values = []
+                for indicator in indicators:
+                    row = loadings_df[(loadings_df['lval'] == indicator) &
+                                     (loadings_df['op'] == '~') &
+                                     (loadings_df['rval'] == lv_name)]
 
-                        if not row.empty:
-                            if 'Estimate' in row.columns:
-                                zeta_values.append(float(row['Estimate'].iloc[0]))
-                            elif 'Est. Std' in row.columns:
-                                zeta_values.append(float(row['Est. Std'].iloc[0]))
-                            else:
-                                print(f"    [WARNING] {indicator}의 zeta 값을 찾을 수 없습니다. 기본값 1.0 사용")
-                                zeta_values.append(1.0)
-                        else:
-                            print(f"    [WARNING] {indicator} ~ {lv_name} 파라미터를 찾을 수 없습니다. 기본값 1.0 사용")
-                            zeta_values.append(1.0)
-
-                    # ✅ sigma_sq (오차분산) - 통합 measurement_params CSV에서 로드
-                    # semopy는 inspect()에서 ~~ 연산자로 오차분산 반환
-                    measurement_params_csv = pkl_path.parent / f"{INITIAL_PARAMS_PKL.replace('.pkl', '_measurement_params.csv')}"
-
-                    sigma_sq_values = []
-                    if measurement_params_csv.exists():
-                        # 통합 CSV 파일에서 로드
-                        meas_all_params = pd.read_csv(measurement_params_csv)
-                        print(f"    [INFO] {lv_name} 오차분산: {measurement_params_csv.name}에서 로드")
-
-                        for indicator in indicators:
-                            # indicator ~~ indicator 형식으로 저장됨
-                            row = meas_all_params[(meas_all_params['lval'] == indicator) &
-                                                 (meas_all_params['op'] == '~~') &
-                                                 (meas_all_params['rval'] == indicator) &
-                                                 (meas_all_params['param_type'] == 'error_variance')]
-
-                            if not row.empty:
-                                sigma_sq_values.append(float(row['Estimate'].iloc[0]))
-                            else:
-                                print(f"    [WARNING] {indicator}의 오차분산을 찾을 수 없습니다. 기본값 0.5 사용")
-                                sigma_sq_values.append(0.5)
+                    if not row.empty:
+                        zeta_values.append(float(row['Estimate'].iloc[0]))
                     else:
-                        # CSV 파일이 없으면 initial_values_final.py에서 로드
-                        print(f"    [WARNING] measurement_params CSV 파일을 찾을 수 없습니다: {measurement_params_csv}")
-                        print(f"    [INFO] {lv_name} 오차분산: initial_values_final.py에서 로드")
-                        from src.analysis.hybrid_choice_model.iclv_models.initial_values_final import SIGMA_SQ_INITIAL_VALUES
+                        print(f"    [WARNING] {indicator} ~ {lv_name} 요인적재량을 찾을 수 없습니다. 기본값 1.0 사용")
+                        zeta_values.append(1.0)
 
-                        if lv_name in SIGMA_SQ_INITIAL_VALUES:
-                            sigma_sq_values = SIGMA_SQ_INITIAL_VALUES[lv_name]['values']
-                        else:
-                            # 기본값 사용
-                            sigma_sq_values = [0.5] * len(indicators)
-                            print(f"    [WARNING] {lv_name} 오차분산을 찾을 수 없습니다. 기본값 0.5 사용")
+                # ✅ sigma_sq (오차분산) - CFA measurement_errors에서 추출
+                sigma_sq_values = []
+                for indicator in indicators:
+                    row = errors_df[(errors_df['lval'] == indicator) &
+                                   (errors_df['op'] == '~~') &
+                                   (errors_df['rval'] == indicator)]
 
-                    measurement_dict[lv_name] = {
-                        'zeta': np.array(zeta_values),
-                        'sigma_sq': np.array(sigma_sq_values)
-                    }
+                    if not row.empty:
+                        sigma_sq_values.append(float(row['Estimate'].iloc[0]))
+                    else:
+                        print(f"    [WARNING] {indicator}의 오차분산을 찾을 수 없습니다. 기본값 0.5 사용")
+                        sigma_sq_values.append(0.5)
 
-                    # ✅ 로드된 값 출력
-                    print(f"    [INFO] {lv_name} 측정모델 파라미터 로드:")
-                    print(f"      - zeta (요인적재량): {zeta_values}")
-                    print(f"      - sigma_sq (오차분산): {sigma_sq_values}")
-
-                # 2. 구조모델 파라미터: 0.1로 초기화
-                print(f"    [INFO] 구조모델 파라미터: 0.1로 초기화")
-                structural_dict = {}
-                for path in config.structural.hierarchical_paths:
-                    target_lv = path['target']
-                    predictors = path['predictors']
-
-                    for pred_lv in predictors:
-                        param_name = f'gamma_{pred_lv}_to_{target_lv}'
-                        structural_dict[param_name] = 0.1
-                        print(f"      - {param_name}: 0.1")
-
-                # 3. 선택모델 파라미터: 0.1로 초기화
-                print(f"    [INFO] 선택모델 파라미터: 0.1로 초기화")
-                choice_dict = {}
-
-                # Multinomial Logit의 대안 이름 (하드코딩)
-                # opt-out은 기준 대안이므로 제외
-                alternatives = ['sugar', 'sugar_free']  # opt-out 제외
-
-                # ASC (Alternative-Specific Constants)
-                for alt in alternatives:
-                    param_name = f'asc_{alt}'
-                    choice_dict[param_name] = 0.1
-                    print(f"      - {param_name}: 0.1")
-
-                # beta (속성 계수) - 모든 대안에 공통 적용
-                for attr in config.choice.choice_attributes:
-                    param_name = f'beta_{attr}'
-                    choice_dict[param_name] = 0.1
-                    print(f"      - {param_name}: 0.1")
-
-                # theta (LV 주효과) - 각 대안별로
-                if config.choice.main_lvs:
-                    for lv in config.choice.main_lvs:
-                        for alt in alternatives:
-                            param_name = f'theta_{alt}_{lv}'
-                            choice_dict[param_name] = 0.1
-                            print(f"      - {param_name}: 0.1")
-
-                # gamma (LV-속성 상호작용) - 각 대안별로
-                if config.choice.lv_attribute_interactions:
-                    for interaction in config.choice.lv_attribute_interactions:
-                        lv = interaction['lv']
-                        attr = interaction['attribute']
-                        for alt in alternatives:
-                            param_name = f'gamma_{alt}_{lv}_{attr}'
-                            choice_dict[param_name] = 0.1
-                            print(f"      - {param_name}: 0.1")
-
-                # 최종 초기값 딕셔너리 구성
-                initial_params = {
-                    'measurement': measurement_dict,
-                    'structural': structural_dict,
-                    'choice': choice_dict
+                measurement_dict[lv_name] = {
+                    'zeta': np.array(zeta_values),
+                    'sigma_sq': np.array(sigma_sq_values)
                 }
 
-                # 결과 출력
-                print(f"\n    [SUCCESS] 초기값 설정 완료:")
-                print(f"      - 측정모델: {len(measurement_dict)} LVs (PKL에서 로드)")
-                for lv_name in list(measurement_dict.keys())[:3]:
-                    lv_params = measurement_dict[lv_name]
-                    n_zeta = len(lv_params['zeta'])
-                    print(f"        * {lv_name}: zeta={n_zeta}개")
+                # ✅ 로드된 값 출력
+                print(f"    [INFO] {lv_name} 측정모델 파라미터 로드:")
+                print(f"      - zeta (요인적재량): {zeta_values}")
+                print(f"      - sigma_sq (오차분산): {sigma_sq_values}")
 
-                print(f"      - 구조모델: {len(structural_dict)}개 파라미터 (0.1로 초기화)")
-                print(f"      - 선택모델: {len(choice_dict)}개 파라미터 (0.1로 초기화)")
+            # 2. 구조모델 파라미터: 0.1로 초기화
+            print(f"    [INFO] 구조모델 파라미터: 0.1로 초기화")
+            structural_dict = {}
+            for path in config.structural.hierarchical_paths:
+                target_lv = path['target']
+                predictors = path['predictors']
 
-            else:
-                print(f"    [ERROR] 측정모델 파라미터 형식 오류")
-                print(f"    자동 초기화를 사용합니다.")
+                for pred_lv in predictors:
+                    param_name = f'gamma_{pred_lv}_to_{target_lv}'
+                    structural_dict[param_name] = 0.1
+                    print(f"      - {param_name}: 0.1")
+
+            # 3. 선택모델 파라미터: 0.1로 초기화
+            print(f"    [INFO] 선택모델 파라미터: 0.1로 초기화")
+            choice_dict = {}
+
+            # Multinomial Logit의 대안 이름 (하드코딩)
+            # opt-out은 기준 대안이므로 제외
+            alternatives = ['sugar', 'sugar_free']  # opt-out 제외
+
+            # ASC (Alternative-Specific Constants)
+            for alt in alternatives:
+                param_name = f'asc_{alt}'
+                choice_dict[param_name] = 0.1
+                print(f"      - {param_name}: 0.1")
+
+            # beta (속성 계수) - 모든 대안에 공통 적용
+            for attr in config.choice.choice_attributes:
+                param_name = f'beta_{attr}'
+                choice_dict[param_name] = 0.1
+                print(f"      - {param_name}: 0.1")
+
+            # theta (LV 주효과) - 각 대안별로
+            if config.choice.main_lvs:
+                for lv in config.choice.main_lvs:
+                    for alt in alternatives:
+                        param_name = f'theta_{alt}_{lv}'
+                        choice_dict[param_name] = 0.1
+                        print(f"      - {param_name}: 0.1")
+
+            # gamma (LV-속성 상호작용) - 각 대안별로
+            if config.choice.lv_attribute_interactions:
+                for interaction in config.choice.lv_attribute_interactions:
+                    lv = interaction['lv']
+                    attr = interaction['attribute']
+                    for alt in alternatives:
+                        param_name = f'gamma_{alt}_{lv}_{attr}'
+                        choice_dict[param_name] = 0.1
+                        print(f"      - {param_name}: 0.1")
+
+            # ✅ 최종 초기값 딕셔너리 구성 (측정모델 제외)
+            # 측정모델 파라미터는 이미 measurement_model 객체에 로드되어 있음
+            initial_params = {
+                'structural': structural_dict,
+                'choice': choice_dict
+                # ❌ 'measurement' 키 제거: 동시추정에서는 불필요
+                #    측정모델 파라미터는 measurement_model.models[lv_name].config에 이미 로드됨
+            }
+
+            # 결과 출력
+            print(f"\n    [SUCCESS] 초기값 설정 완료:")
+            print(f"      - 측정모델: {len(measurement_dict)} LVs (measurement_model 객체에 로드됨)")
+            for lv_name in list(measurement_dict.keys())[:3]:
+                lv_params = measurement_dict[lv_name]
+                n_zeta = len(lv_params['zeta'])
+                print(f"        * {lv_name}: zeta={n_zeta}개")
+
+            print(f"      - 구조모델: {len(structural_dict)}개 파라미터 (0.1로 초기화)")
+            print(f"      - 선택모델: {len(choice_dict)}개 파라미터 (0.1로 초기화)")
+
         else:
-            print(f"    [ERROR] PKL 파일에 measurement_results가 없습니다.")
-            print(f"    자동 초기화를 사용합니다.")
+            print(f"    [ERROR] CFA 결과에 loadings 또는 measurement_errors가 없습니다.")
+            raise ValueError("CFA 결과 형식이 올바르지 않습니다. loadings와 measurement_errors가 필요합니다.")
     else:
-        print(f"    [WARNING] PKL 파일을 찾을 수 없습니다: {INITIAL_PARAMS_PKL}")
-        print(f"    자동 초기화를 사용합니다.")
+        print(f"    [WARNING] CFA 결과 파일을 찾을 수 없습니다: {INITIAL_PARAMS_PKL}")
+        raise FileNotFoundError(f"CFA 결과 파일을 찾을 수 없습니다: {pkl_path}")
 
     # 8. 추정 실행
     print("\n[8] 동시추정 실행:")
@@ -444,6 +471,7 @@ def main():
             choice_model=choice_model,
             log_file=str(log_file),
             initial_params=initial_params
+            # ✅ 동시추정은 항상 측정모델 고정 (설정 불필요)
         )
 
         print(f"    [SUCCESS] 추정 완료!")

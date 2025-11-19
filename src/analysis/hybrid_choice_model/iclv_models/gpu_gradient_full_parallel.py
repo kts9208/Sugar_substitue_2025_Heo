@@ -30,13 +30,17 @@ def compute_measurement_full_parallel_gpu(
     all_weights_gpu,  # CuPy array (326, 100)
     lv_names: List[str],
     iteration_logger=None,
-    log_level: str = 'MINIMAL'
+    log_level: str = 'MINIMAL',
+    measurement_params_fixed: bool = False
 ) -> Dict:
     """
     측정모델 Gradient - 완전 병렬 (모든 지표 한 번에)
-    
+
+    ⚠️ 주의: 동시추정에서는 이 함수를 호출하지 않습니다 (측정모델 고정)
+    이 함수는 순차추정 또는 CFA에서만 사용됩니다.
+
     Advanced Indexing을 사용하여 38개 지표를 1번의 GPU 커널 호출로 계산
-    
+
     Args:
         gpu_measurement_model: GPU 측정모델
         all_ind_data: 모든 개인 데이터 (326개)
@@ -46,12 +50,35 @@ def compute_measurement_full_parallel_gpu(
         lv_names: LV 이름 리스트
         iteration_logger: 로거
         log_level: 로깅 레벨
-    
+        measurement_params_fixed: 측정모델 파라미터 고정 여부 (순차추정용)
+
     Returns:
         {lv_name: {'zeta': (326, n_indicators), 'sigma_sq': (326, n_indicators)}}
     """
     if not CUPY_AVAILABLE:
         raise RuntimeError("CuPy not available for full parallel computation")
+
+    # ✅ 측정모델 파라미터 고정 시 그래디언트를 0으로 반환 (순차추정용)
+    if measurement_params_fixed:
+        gradients = {}
+        for lv_name in lv_names:
+            config = gpu_measurement_model.models[lv_name].config
+            n_ind = len(config.indicators)
+            n_individuals = len(all_ind_data)
+
+            # fix_first_loading 고려
+            fix_first_loading = getattr(config, 'fix_first_loading', True)
+            n_zeta = n_ind - 1 if fix_first_loading else n_ind
+
+            gradients[lv_name] = {
+                'zeta': np.zeros((n_individuals, n_zeta)),
+                'sigma_sq': np.zeros((n_individuals, n_ind))
+            }
+
+        if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+            iteration_logger.info("  ✅ 측정모델 파라미터 고정: 그래디언트 = 0")
+
+        return gradients
     
     start_time = time.time()
     
@@ -218,11 +245,12 @@ def compute_all_individuals_gradients_full_parallel_gpu(
 ) -> List[Dict]:
     """
     모든 개인의 gradient를 완전 병렬로 계산 (Advanced Indexing 사용)
-    
-    측정모델: 38개 지표를 1번의 GPU 커널로 계산
+
+    ✅ 동시추정 전용: 측정모델 그래디언트는 계산하지 않음 (고정 파라미터)
+
     구조모델: 기존 방식 사용
     선택모델: 기존 방식 사용
-    
+
     Args:
         gpu_measurement_model: GPU 측정모델
         all_ind_data: 모든 개인의 데이터 리스트
@@ -233,7 +261,7 @@ def compute_all_individuals_gradients_full_parallel_gpu(
         choice_model: 선택모델
         iteration_logger: 로거
         log_level: 로깅 레벨
-    
+
     Returns:
         개인별 gradient 딕셔너리 리스트
     """
@@ -260,47 +288,65 @@ def compute_all_individuals_gradients_full_parallel_gpu(
     # 1. 모든 개인의 LV 값 계산 (326, 100, 5)
     lv_start = time.time()
     all_lvs_list = []
-    
+
+    is_hierarchical = hasattr(structural_model, 'is_hierarchical') and structural_model.is_hierarchical
+
     for ind_idx, ind_data in enumerate(all_ind_data):
         ind_draws = all_ind_draws[ind_idx]  # (100, 6)
-        
+
         # 각 draw에 대한 LV 값 계산
         lvs_for_draws = []
         for draw_idx in range(n_draws):
-            exo_draws = ind_draws[draw_idx]
-            lv_values = structural_model.predict(ind_data, exo_draws, params_dict['structural'])
+            draw = ind_draws[draw_idx]
+
+            if is_hierarchical:
+                # 계층적 구조: exo_draws와 higher_order_draws 분리
+                n_first_order = len(structural_model.exogenous_lvs)
+                exo_draws = draw[:n_first_order]
+
+                # 2차+ LV 오차항
+                higher_order_draws = {}
+                higher_order_lvs = structural_model.get_higher_order_lvs()
+                for i, lv_name in enumerate(higher_order_lvs):
+                    higher_order_draws[lv_name] = draw[n_first_order + i]
+
+                lv_values = structural_model.predict(
+                    ind_data, exo_draws, params_dict['structural'],
+                    higher_order_draws=higher_order_draws
+                )
+            else:
+                # 병렬 구조 (하위 호환)
+                lv_values = structural_model.predict(ind_data, draw, params_dict['structural'])
+
             lvs_for_draws.append([lv_values[lv_name] for lv_name in lv_names])
-        
+
         all_lvs_list.append(lvs_for_draws)
-    
+
     all_lvs_array = np.array(all_lvs_list)  # (326, 100, 5)
     all_lvs_gpu = cp.asarray(all_lvs_array)
-    
+
     lv_time = time.time() - lv_start
-    
+
     if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
         iteration_logger.info(
             f"  LV 계산 완료 ({lv_time:.3f}초)\n"
             f"    - all_lvs shape: {all_lvs_array.shape}"
         )
+        # 첫 번째 개인의 첫 번째 draw LV 값 출력 (디버깅)
+        if len(all_lvs_list) > 0 and len(all_lvs_list[0]) > 0:
+            first_lv_values = all_lvs_list[0][0]
+            iteration_logger.info(f"  [디버깅] 첫 번째 개인, 첫 번째 draw LV 값:")
+            for lv_idx, lv_name in enumerate(lv_names):
+                iteration_logger.info(f"    {lv_name}: {first_lv_values[lv_idx]:.6f}")
     
     # 2. 가중치 계산 (균등 가중치)
     all_weights = np.ones((n_individuals, n_draws)) / n_draws
     all_weights_gpu = cp.asarray(all_weights)
     
-    # 3. ✨ 측정모델 Gradient - 완전 병렬 (Advanced Indexing)
-    meas_start = time.time()
-    meas_grads = compute_measurement_full_parallel_gpu(
-        gpu_measurement_model,
-        all_ind_data,
-        all_lvs_gpu,
-        params_dict,
-        all_weights_gpu,
-        lv_names,
-        iteration_logger,
-        log_level
-    )
-    meas_time = time.time() - meas_start
+    # ✅ 동시추정: 측정모델 그래디언트 계산 제외 (고정 파라미터)
+    # 측정모델 그래디언트는 빈 딕셔너리로 설정
+    meas_grads = {}
+    meas_time = 0.0
     
     # 4. 구조모델 Gradient (기존 방식)
     from .gpu_gradient_batch import compute_structural_full_batch_gpu

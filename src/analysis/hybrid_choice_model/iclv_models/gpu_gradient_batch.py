@@ -618,7 +618,18 @@ def compute_choice_gradient_batch_gpu(
         iteration_logger.info(f"  선택 상황 수: {n_choice_situations}")
 
     intercept = params['intercept']
-    beta = params['beta']
+
+    # ✅ Beta 파라미터 (배열 또는 개별 키)
+    if 'beta' in params:
+        beta = params['beta']
+    else:
+        # 개별 beta 키에서 배열 생성 (choice_attributes 순서대로)
+        if hasattr(choice_model, 'choice_attributes'):
+            beta = np.array([params.get(f'beta_{attr}', 0.0) for attr in choice_model.choice_attributes])
+        else:
+            # choice_attributes가 없으면 알파벳 순서로
+            beta_keys = sorted([k for k in params.keys() if k.startswith('beta_')])
+            beta = np.array([params[k] for k in beta_keys])
 
     # ✅ 유연한 리스트 기반: lambda_ 파라미터 자동 추출
     lambda_lvs = {}
@@ -1274,11 +1285,30 @@ def compute_all_individuals_gradients_full_batch_gpu(
             draw = ind_draws[draw_idx]
 
             # LV 계산 (CPU - structural_model.predict)
-            latent_vars = structural_model.predict(
-                ind_data.iloc[0],
-                draw,
-                params_dict['structural']
-            )
+            if is_hierarchical:
+                # 계층적 구조: exo_draws와 higher_order_draws 분리
+                n_first_order = len(structural_model.exogenous_lvs)
+                exo_draws = draw[:n_first_order]
+
+                # 2차+ LV 오차항
+                higher_order_draws = {}
+                higher_order_lvs = structural_model.get_higher_order_lvs()
+                for i, lv_name in enumerate(higher_order_lvs):
+                    higher_order_draws[lv_name] = draw[n_first_order + i]
+
+                latent_vars = structural_model.predict(
+                    ind_data.iloc[0],
+                    exo_draws,
+                    params_dict['structural'],
+                    higher_order_draws=higher_order_draws
+                )
+            else:
+                # 병렬 구조 (하위 호환)
+                latent_vars = structural_model.predict(
+                    ind_data.iloc[0],
+                    draw,
+                    params_dict['structural']
+                )
 
             ind_lvs_list.append(latent_vars)
 
@@ -1290,6 +1320,10 @@ def compute_all_individuals_gradients_full_batch_gpu(
         iteration_logger.info(
             f"  LV 계산 완료 ({lv_time:.3f}초)"
         )
+        # 첫 번째 개인의 첫 번째 draw LV 값 출력 (디버깅)
+        if len(all_lvs_list) > 0 and len(all_lvs_list[0]) > 0:
+            first_lv = all_lvs_list[0][0]
+            iteration_logger.info(f"  [디버깅] 첫 번째 개인, 첫 번째 draw LV 값: {first_lv}")
 
     # Step 4: LV를 3D 배열로 변환 (326, 100, 5)
     if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
@@ -1407,19 +1441,11 @@ def compute_full_batch_gradients_gpu(
     all_lvs_gpu = cp.asarray(all_lvs_array)  # (326, 100, 5)
     all_weights_gpu = cp.asarray(all_weights)  # (326, 100)
 
-    # 1. 측정모델 Gradient (완전 Batch)
-    meas_grads = compute_measurement_full_batch_gpu(
-        gpu_measurement_model,
-        all_ind_data,
-        all_lvs_gpu,
-        params_dict['measurement'],
-        all_weights_gpu,
-        lv_names,
-        iteration_logger,
-        log_level
-    )
+    # ✅ 동시추정: 측정모델 그래디언트 계산 제외 (고정 파라미터)
+    # 측정모델 그래디언트는 빈 딕셔너리로 설정
+    meas_grads = {}
 
-    # 2. 구조모델 Gradient (완전 Batch)
+    # 1. 구조모델 Gradient (완전 Batch)
     struct_grads = compute_structural_full_batch_gpu(
         all_lvs_gpu,
         params_dict['structural'],
@@ -1490,6 +1516,9 @@ def compute_measurement_full_batch_gpu(
 ) -> Dict:
     """
     측정모델 Gradient - 완전 GPU Batch
+
+    ⚠️ 주의: 동시추정에서는 이 함수를 호출하지 않습니다 (측정모델 고정)
+    이 함수는 순차추정 또는 CFA에서만 사용됩니다.
 
     Returns:
         {lv_name: {'grad_zeta': (326, n_indicators), 'grad_sigma_sq': (326, n_indicators)}}
@@ -1633,7 +1662,18 @@ def compute_choice_full_batch_gpu(
     use_alternative_specific = 'asc_sugar' in params or 'asc_A' in params
 
     # 파라미터 추출
-    beta = params['beta']
+    # ✅ Beta 파라미터 (배열 또는 개별 키)
+    if 'beta' in params:
+        beta = params['beta']
+    else:
+        # 개별 beta 키에서 배열 생성 (choice_attributes 순서대로)
+        if hasattr(choice_model, 'choice_attributes'):
+            beta = np.array([params.get(f'beta_{attr}', 0.0) for attr in choice_model.choice_attributes])
+        else:
+            # choice_attributes가 없으면 알파벳 순서로
+            beta_keys = sorted([k for k in params.keys() if k.startswith('beta_')])
+            beta = np.array([params[k] for k in beta_keys])
+
     n_attributes = len(beta)
 
     if use_alternative_specific:
@@ -2017,7 +2057,8 @@ def _compute_multinomial_logit_gradient_gpu(
                 sc = sc_values[alt_idx]
 
                 # ASC
-                if sc == '일반당':
+                # ✅ 데이터에는 '알반당'으로 저장됨 ('일반당' 아님!)
+                if sc == '알반당' or sc == '일반당':
                     asc = asc_sugar
                     alt_name = 'sugar'
                 elif sc == '무설탕':
@@ -2091,7 +2132,8 @@ def _compute_multinomial_logit_gradient_gpu(
             sc_values = sugar_contents_list[ind_idx][cs_idx]
             for alt_idx in range(3):
                 sc = sc_values[alt_idx]
-                if sc == '일반당':
+                # ✅ 데이터에는 '알반당'으로 저장됨 ('일반당' 아님!)
+                if sc == '알반당' or sc == '일반당':
                     grad_asc_sugar[ind_idx] += cp.sum(weighted_diff[ind_idx, :, cs_idx, alt_idx])
                 elif sc == '무설탕':
                     grad_asc_sugar_free[ind_idx] += cp.sum(weighted_diff[ind_idx, :, cs_idx, alt_idx])
@@ -2121,7 +2163,8 @@ def _compute_multinomial_logit_gradient_gpu(
                 sc_values = sugar_contents_list[ind_idx][cs_idx]
                 for alt_idx in range(3):
                     sc = sc_values[alt_idx]
-                    if (sc == '일반당' and alt_name == 'sugar') or \
+                    # ✅ 데이터에는 '알반당'으로 저장됨 ('일반당' 아님!)
+                    if ((sc == '알반당' or sc == '일반당') and alt_name == 'sugar') or \
                        (sc == '무설탕' and alt_name == 'sugar_free'):
                         lv_values = all_lvs_gpu[ind_idx, :, lv_idx]  # (R,)
                         grad_theta[ind_idx] += cp.sum(
@@ -2141,7 +2184,8 @@ def _compute_multinomial_logit_gradient_gpu(
                 sc_values = sugar_contents_list[ind_idx][cs_idx]
                 for alt_idx in range(3):
                     sc = sc_values[alt_idx]
-                    if (sc == '일반당' and alt_name == 'sugar') or \
+                    # ✅ 데이터에는 '알반당'으로 저장됨 ('일반당' 아님!)
+                    if ((sc == '알반당' or sc == '일반당') and alt_name == 'sugar') or \
                        (sc == '무설탕' and alt_name == 'sugar_free'):
                         lv_values = all_lvs_gpu[ind_idx, :, lv_idx]  # (R,)
                         attr_value = attributes_gpu[ind_idx, cs_idx, alt_idx, attr_idx]

@@ -129,15 +129,28 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
                 log_file: Optional[str] = None,
                 initial_params: Optional[np.ndarray] = None) -> Dict:
         """
-        ICLV 모델 추정 (GPU 배치 가속)
+        ICLV 모델 동시추정 (GPU 배치 가속)
+
+        ✅ 동시추정의 정의:
+           - 측정모델 파라미터: measurement_model 객체에 이미 로드됨 (고정, 추정 안 함)
+           - 구조모델 + 선택모델: 동시 추정
+
+        ✅ initial_params 구조:
+           {
+               'structural': {...},   # 초기값 (추정 대상)
+               'choice': {...}        # 초기값 (추정 대상)
+           }
+           ❌ 'measurement' 키는 불필요 (measurement_model 객체에 이미 로드됨)
 
         Args:
             data: 전체 데이터
-            measurement_model: 측정모델 인스턴스
+            measurement_model: 측정모델 인스턴스 (CFA 결과 포함)
             structural_model: 구조모델 인스턴스
             choice_model: 선택모델 인스턴스
             log_file: 로그 파일 경로
-            initial_params: 사용자 정의 초기 파라미터 (선택사항)
+            initial_params: 초기 파라미터 딕셔너리
+                - 'structural', 'choice' 키: 초기값 (추정 대상)
+                - ❌ 'measurement' 키 불필요
 
         Returns:
             추정 결과 딕셔너리
@@ -145,12 +158,20 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
         # 사용자 정의 초기값 저장
         self.user_initial_params = initial_params
 
-        # ✅ 측정모델 파라미터 고정 여부 확인
-        if initial_params is not None and 'measurement' in initial_params:
-            self._measurement_params_fixed = True
-            logger.info("✅ 측정모델 파라미터 고정 모드: 우도를 최초 1회만 계산하고 캐싱합니다.")
-        else:
-            self._measurement_params_fixed = False
+        # ✅ 동시추정은 초기값 필수 (측정모델은 measurement_model 객체에 이미 로드됨)
+        if initial_params is None:
+            raise ValueError(
+                "동시추정은 초기값이 필수입니다!\n"
+                "initial_params 딕셔너리를 제공해야 합니다.\n"
+                "예: initial_params = {'structural': {...}, 'choice': {...}}\n"
+                "측정모델 파라미터는 measurement_model 객체에 이미 로드되어 있어야 합니다."
+            )
+
+        logger.info("=" * 80)
+        logger.info("✅ 동시추정 모드")
+        logger.info("  - 측정모델 파라미터: CFA 결과로 고정 (추정 안 함)")
+        logger.info("  - 구조모델 + 선택모델: 동시 추정")
+        logger.info("=" * 80)
         # GPU 측정모델 생성
         if self.use_gpu:
             if hasattr(self.config, 'measurement_configs'):
@@ -213,8 +234,12 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
 
             logger.info("다차원 Halton draws 생성 완료")
 
-        # 부모 클래스의 estimate 호출
-        return super().estimate(data, measurement_model, structural_model, choice_model, log_file)
+        # ✅ 부모 클래스의 estimate 호출
+        # 동시추정은 항상 측정모델 고정
+        return super().estimate(
+            data, measurement_model, structural_model, choice_model, log_file,
+            initial_params=initial_params  # ✅ initial_params 전달
+        )
     
     def _log_parameters(self, param_dict: Dict, iteration: int):
         """
@@ -280,7 +305,14 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
             # Binary Logit with intercept
             self.iteration_logger.info(f"  intercept: {choice_params['intercept']:.6f}")
 
-        self.iteration_logger.info(f"  beta: {choice_params['beta']}")
+        # ✅ Beta 파라미터 (배열 또는 개별 키)
+        if 'beta' in choice_params:
+            self.iteration_logger.info(f"  beta: {choice_params['beta']}")
+        else:
+            # 개별 beta 키 출력
+            for key in sorted(choice_params.keys()):
+                if key.startswith('beta_'):
+                    self.iteration_logger.info(f"  {key}: {choice_params[key]:.6f}")
 
         # ✅ 대안별 LV 계수 (theta_*) 또는 일반 LV 계수 (lambda_*)
         for key in sorted(choice_params.keys()):

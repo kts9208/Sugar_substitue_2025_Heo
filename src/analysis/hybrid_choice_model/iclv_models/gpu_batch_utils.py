@@ -83,7 +83,18 @@ def compute_choice_batch_gpu(ind_data: pd.DataFrame,
         # Multinomial Logit with ASC
         asc_sugar = params.get('asc_sugar', params.get('asc_A', 0.0))
         asc_sugar_free = params.get('asc_sugar_free', params.get('asc_B', 0.0))
-        beta = params['beta']
+
+        # ✅ Beta 파라미터 (배열 또는 개별 키)
+        if 'beta' in params:
+            beta = params['beta']
+        else:
+            # 개별 beta 키에서 배열 생성 (choice_attributes 순서대로)
+            if hasattr(choice_model, 'choice_attributes'):
+                beta = np.array([params.get(f'beta_{attr}', 0.0) for attr in choice_model.choice_attributes])
+            else:
+                # choice_attributes가 없으면 알파벳 순서로
+                beta_keys = sorted([k for k in params.keys() if k.startswith('beta_')])
+                beta = np.array([params[k] for k in beta_keys])
 
         # ✅ 대안별 LV 계수 (theta_*)
         theta_params = {}  # {(alt, lv_name): theta_value}

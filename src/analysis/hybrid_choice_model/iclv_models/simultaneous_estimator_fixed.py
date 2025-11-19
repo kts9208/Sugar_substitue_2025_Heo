@@ -27,6 +27,7 @@ from .gradient_calculator import (
     JointGradient
 )
 from .parameter_scaler import ParameterScaler
+from .parameter_context import ParameterContext
 from .bhhh_calculator import BHHHCalculator
 from .parameter_manager import ParameterManager
 from .gpu_compute_state import GPUComputeState
@@ -298,16 +299,21 @@ class SimultaneousEstimator:
                 measurement_model,
                 structural_model,
                 choice_model,
-                log_file: Optional[str] = None) -> Dict:
+                log_file: Optional[str] = None,
+                initial_params: Optional[Dict] = None) -> Dict:
         """
-        ICLV 모델 동시 추정
+        ICLV 모델 동시 추정 (측정모델 고정)
+
+        ✅ 측정모델 파라미터는 항상 고정 (CFA 결과 사용)
+        ✅ 구조모델 + 선택모델 파라미터만 추정
 
         Args:
             data: 통합 데이터
-            measurement_model: 측정모델 객체
+            measurement_model: 측정모델 객체 (CFA 결과 포함)
             structural_model: 구조모델 객체
             choice_model: 선택모델 객체
             log_file: 로그 파일 경로 (None이면 자동 생성)
+            initial_params: 초기 파라미터 딕셔너리 (선택, 구조모델 + 선택모델만)
 
         Returns:
             추정 결과 딕셔너리
@@ -433,13 +439,8 @@ class SimultaneousEstimator:
                 self.joint_grad.iteration_logger = self.iteration_logger
                 self.joint_grad.config = self.config
 
-                # ✅ 측정모델 파라미터 고정 여부 전달
-                if hasattr(self, '_measurement_params_fixed'):
-                    self.joint_grad.measurement_params_fixed = self._measurement_params_fixed
-                    if self._measurement_params_fixed:
-                        self.iteration_logger.info("✅ 측정모델 파라미터 고정: 그래디언트 계산 스킵")
-
                 self.iteration_logger.info("다중 잠재변수 JointGradient 초기화 완료")
+                self.iteration_logger.info("✅ 동시추정: 측정모델 그래디언트 계산 제외 (고정 파라미터)")
             else:
                 # 단일 잠재변수
                 self.joint_grad = JointGradient(
@@ -449,16 +450,25 @@ class SimultaneousEstimator:
                 )
                 self.iteration_logger.info("단일 잠재변수 JointGradient 초기화 완료")
 
-        # 초기 파라미터 설정
+        # ✅ 동시추정 전용 초기 파라미터 설정 (측정모델 제외)
         self.iteration_logger.info("초기 파라미터 설정 시작...")
-        initial_params = self._get_initial_parameters(
-            measurement_model, structural_model, choice_model
+        initial_params_opt = self._get_initial_parameters_simultaneous(
+            measurement_model, structural_model, choice_model,
+            user_initial_params=initial_params
         )
-        self.iteration_logger.info(f"초기 파라미터 설정 완료 (총 {len(initial_params)}개)")
+        self.iteration_logger.info(f"✅ 초기 파라미터 설정 완료: {len(initial_params_opt)}개 (측정모델 제외)")
 
-        # ✅ 파라미터 이름은 _get_initial_parameters에서 이미 self.param_names에 저장됨
-        # (ParameterManager 사용)
-        param_names = self.param_names
+        # 최적화할 파라미터 이름 (측정모델 제외)
+        param_names_opt = self.param_manager.get_optimized_parameter_names(
+            structural_model, choice_model
+        )
+
+        # ✅ self.param_names를 최적화 파라미터로 업데이트
+        self.param_names = param_names_opt
+
+        # 최적화에 사용할 파라미터
+        initial_params = initial_params_opt
+        param_names = param_names_opt
 
         # 파라미터 스케일링 설정 확인
         use_parameter_scaling = getattr(self.config.estimation, 'use_parameter_scaling', True)
@@ -496,6 +506,18 @@ class SimultaneousEstimator:
             )
             initial_params_scaled = initial_params  # 스케일링 없음
 
+        # ✅ ParameterContext 생성 (파라미터 변환 로직 단일화)
+        self.iteration_logger.info("=" * 80)
+        self.iteration_logger.info("ParameterContext 초기화 (동시추정 전용)")
+        self.iteration_logger.info("=" * 80)
+        param_context = ParameterContext(
+            param_manager=self.param_manager,
+            param_scaler=self.param_scaler,
+            measurement_model=measurement_model,
+            logger=self.iteration_logger
+        )
+        self.iteration_logger.info("=" * 80)
+
         # 결합 우도함수 정의 (단계별 로깅 추가)
         iteration_count = [0]  # Mutable counter
         best_ll = [-np.inf]  # Track best log-likelihood
@@ -518,14 +540,16 @@ class SimultaneousEstimator:
 
             Args:
                 params_scaled: 스케일된 (internal) 파라미터
+                              (측정모델 고정 시 구조모델+선택모델만 포함)
 
             Returns:
                 Negative log-likelihood
             """
             func_call_count[0] += 1
 
-            # 파라미터 언스케일링 (Internal → External)
-            params = self.param_scaler.unscale_parameters(params_scaled)
+            # ✅ ParameterContext를 사용한 파라미터 변환
+            # ✅ 동시추정: params_scaled는 이미 최적화 파라미터만 포함 (8개)
+            params_opt = param_context.to_full_external(params_scaled)
 
             # Line search 중인지 판단
             # Major iteration 시작 직후 첫 호출이 아니면 line search 중
@@ -536,7 +560,7 @@ class SimultaneousEstimator:
                 context = f"Major Iteration #{major_iter_count[0] + 1} 시작"
                 line_search_call_count[0] = 0
                 line_search_func_values.clear()
-                line_search_start_params[0] = params_scaled.copy()
+                line_search_start_params[0] = params_scaled.copy()  # ✅ 최적화 파라미터만 (8개)
             elif calls_since_major_start > 1:
                 # Line search 중
                 line_search_call_count[0] += 1
@@ -544,12 +568,13 @@ class SimultaneousEstimator:
             else:
                 # 초기 호출
                 context = "초기 함수값 계산"
+                line_search_start_params[0] = params_scaled.copy()  # ✅ 초기 호출 시에도 저장
 
             # 단계 로그: 우도 계산 시작
             self.iteration_logger.info(f"[{context}] [단계 1/2] 전체 우도 계산")
 
             ll = self._joint_log_likelihood(
-                params, measurement_model, structural_model, choice_model
+                params_opt, measurement_model, structural_model, choice_model
             )
 
             # Track best value
@@ -567,13 +592,15 @@ class SimultaneousEstimator:
             # Line search 중이면 함수값 변화 로깅
             if calls_since_major_start == 1:
                 line_search_start_func_value[0] = neg_ll
-                line_search_start_params[0] = params.copy()
+                # ✅ params_scaled 저장 (최적화 파라미터만, 8개)
+                # (이미 위에서 line_search_start_params[0] = params_scaled.copy() 실행됨)
             elif calls_since_major_start > 1:
                 line_search_func_values.append(neg_ll)
 
                 # 파라미터 변화량과 함수값 변화 로깅
                 if line_search_start_params[0] is not None:
-                    param_diff = params - line_search_start_params[0]
+                    # ✅ 같은 타입끼리 비교 (params_scaled vs params_scaled)
+                    param_diff = params_scaled - line_search_start_params[0]
                     param_change_norm = np.linalg.norm(param_diff)
 
                     f_start = line_search_start_func_value[0]
@@ -597,10 +624,10 @@ class SimultaneousEstimator:
 
             return neg_ll
 
-        # Get parameter bounds
+        # Get parameter bounds (측정모델 제외)
         self.iteration_logger.info("파라미터 bounds 계산 시작...")
-        bounds = self._get_parameter_bounds(
-            measurement_model, structural_model, choice_model
+        bounds = self.param_manager.get_optimized_parameter_bounds(
+            structural_model, choice_model
         )
         self.iteration_logger.info(f"파라미터 bounds 계산 완료 (총 {len(bounds)}개)")
 
@@ -616,6 +643,7 @@ class SimultaneousEstimator:
 
             Args:
                 params_scaled: 스케일된 (internal) 파라미터
+                              (측정모델 고정 시 구조모델+선택모델만 포함)
 
             Returns:
                 Gradient w.r.t. scaled parameters
@@ -625,8 +653,9 @@ class SimultaneousEstimator:
 
             grad_call_count[0] += 1
 
-            # 파라미터 언스케일링 (Internal → External)
-            params = self.param_scaler.unscale_parameters(params_scaled)
+            # ✅ ParameterContext를 사용한 파라미터 변환
+            # ✅ 동시추정: params_scaled는 이미 최적화 파라미터만 포함 (8개)
+            params_opt = param_context.to_full_external(params_scaled)
 
             # Line search 중인지 판단 (gradient_function에서도 계산 필요)
             calls_since_major_start = func_call_count[0] - current_major_iter_start_call[0]
@@ -646,27 +675,27 @@ class SimultaneousEstimator:
             #     mem_info = self.memory_monitor.check_and_cleanup(f"Gradient 계산 #{grad_call_count[0]}")
 
             # ✅ 리팩토링: 순수한 gradient 계산은 _compute_gradient 메서드로 위임
-            neg_grad_external = self._compute_gradient(
-                params, measurement_model, structural_model, choice_model
+            # ✅ 동시추정: _compute_gradient는 이미 최적화 파라미터 그래디언트만 반환 (측정모델 제외)
+            neg_grad_opt = self._compute_gradient(
+                params_opt, measurement_model, structural_model, choice_model
             )
 
-            # Gradient 스케일링 (External → Internal)
-            # ∂LL/∂θ_internal = ∂LL/∂θ_external * scale
-            neg_grad_scaled = self.param_scaler.scale_gradient(neg_grad_external)
+            # ✅ ParameterContext를 사용한 그래디언트 스케일링
+            neg_grad_scaled = param_context.scale_gradient(neg_grad_opt)
 
             # Line search 중인지 판단
             calls_since_major_start = func_call_count[0] - current_major_iter_start_call[0]
 
             # Gradient 방향 검증 (첫 번째 호출 시)
             if grad_call_count[0] == 1:
-                grad_norm_external = np.linalg.norm(neg_grad_external)
+                grad_norm_opt = np.linalg.norm(neg_grad_opt)
                 grad_norm_scaled = np.linalg.norm(neg_grad_scaled)
                 self.iteration_logger.info(
                     f"\n[Gradient 방향 검증 - External (원본)]\n"
-                    f"  Gradient norm: {grad_norm_external:.6e}\n"
-                    f"  Gradient max: {np.max(np.abs(neg_grad_external)):.6e}\n"
-                    f"  Gradient (처음 5개): {neg_grad_external[:5]}\n"
-                    f"  Gradient (마지막 5개): {neg_grad_external[-5:]}\n"
+                    f"  Gradient norm: {grad_norm_opt:.6e}\n"
+                    f"  Gradient max: {np.max(np.abs(neg_grad_opt)):.6e}\n"
+                    f"  Gradient (처음 5개): {neg_grad_opt[:5]}\n"
+                    f"  Gradient (마지막 5개): {neg_grad_opt[-5:]}\n"
                 )
                 self.iteration_logger.info(
                     f"\n[Gradient 방향 검증 - Internal (스케일됨)]\n"
@@ -679,7 +708,7 @@ class SimultaneousEstimator:
                 )
 
                 # 스케일링 비교 로깅
-                self.param_scaler.log_gradient_comparison(neg_grad_external, neg_grad_scaled)
+                self.param_scaler.log_gradient_comparison(neg_grad_opt, neg_grad_scaled)
 
             # Line search 시작 시 방향 미분 저장
             if calls_since_major_start == 1:
@@ -952,11 +981,11 @@ class SimultaneousEstimator:
                         f_decrease = f_start - f_final
 
                         if f_decrease > 0:
-                            ls_status = f"✓ 성공 (함수값 감소: {f_decrease:.4f})"
+                            ls_status = f"[OK] 성공 (함수값 감소: {f_decrease:.4f})"
                         elif f_decrease == 0:
-                            ls_status = f"⚠️  정체 (함수값 변화 없음)"
+                            ls_status = f"[WARN] 정체 (함수값 변화 없음)"
                         else:
-                            ls_status = f"❌ 실패 (함수값 증가: {-f_decrease:.4f})"
+                            ls_status = f"[FAIL] 실패 (함수값 증가: {-f_decrease:.4f})"
                     else:
                         ls_status = "N/A (첫 iteration)"
 
@@ -975,7 +1004,7 @@ class SimultaneousEstimator:
                             ftol_status = f"ftol = {rel_change:.6e} (기준: 1e-3)"
 
                         if rel_change <= 1e-3:
-                            ftol_status += " ✓ 수렴 조건 만족"
+                            ftol_status += " [OK] 수렴 조건 만족"
 
                         last_major_iter_ftol[0] = rel_change
                     else:
@@ -986,16 +1015,25 @@ class SimultaneousEstimator:
                         grad = self.grad_func(xk)
                         grad_norm = np.linalg.norm(grad, ord=np.inf)
 
+                        # ✅ 고정되지 않은 파라미터의 그래디언트만 계산 (L-BFGS-B의 projected gradient와 유사)
+                        non_zero_grad = grad[np.abs(grad) > 1e-10]
+                        if len(non_zero_grad) > 0:
+                            grad_norm_active = np.linalg.norm(non_zero_grad, ord=np.inf)
+                            n_active = len(non_zero_grad)
+                        else:
+                            grad_norm_active = 0.0
+                            n_active = 0
+
                         # 이전 gtol 대비 변화량 계산
                         if last_major_iter_gtol[0] is not None:
                             gtol_change = grad_norm - last_major_iter_gtol[0]
                             gtol_change_pct = (gtol_change / last_major_iter_gtol[0]) * 100 if last_major_iter_gtol[0] != 0 else 0
-                            gtol_status = f"gtol = {grad_norm:.6e} (기준: 1e-3, 변화: {gtol_change:+.2e} [{gtol_change_pct:+.1f}%])"
+                            gtol_status = f"gtol = {grad_norm:.6e} (전체), {grad_norm_active:.6e} (활성 {n_active}개) (기준: 1e-3, 변화: {gtol_change:+.2e} [{gtol_change_pct:+.1f}%])"
                         else:
-                            gtol_status = f"gtol = {grad_norm:.6e} (기준: 1e-3)"
+                            gtol_status = f"gtol = {grad_norm:.6e} (전체), {grad_norm_active:.6e} (활성 {n_active}개) (기준: 1e-3)"
 
-                        if grad_norm <= 1e-3:
-                            gtol_status += " ✓ 수렴 조건 만족"
+                        if grad_norm_active <= 1e-3:
+                            gtol_status += " [OK] 활성 파라미터 수렴"
 
                         last_major_iter_gtol[0] = grad_norm
 
@@ -1036,7 +1074,7 @@ class SimultaneousEstimator:
                                 f"\n  Hessian 업데이트 정보:\n"
                                 f"    - s_k (파라미터 변화) norm: {s_norm:.6e}\n"
                                 f"    - y_k (gradient 변화) norm: {y_norm:.6e}\n"
-                                f"    - s_k^T · y_k: {s_y_dot:.6e} (양수 ✓)\n"
+                                f"    - s_k^T · y_k: {s_y_dot:.6e} (양수 OK)\n"
                                 f"    - ρ = 1/(s_k^T · y_k): {rho:.6e}\n"
                                 f"    - s_k 상위 5개: {s_k[:5]}\n"
                                 f"    - y_k 상위 5개: {y_k[:5]}\n"
@@ -1207,13 +1245,29 @@ class SimultaneousEstimator:
             elif self.config.estimation.optimizer == 'L-BFGS-B':
                 optimizer_options = {
                     'maxiter': 200,  # Major iteration 최대 횟수
-                    'ftol': 1e-3,    # 함수값 상대적 변화 0.1% 이하면 종료
-                    'gtol': 1e-3,    # 그래디언트 norm 허용 오차
+                    'ftol': 1e-3,    # 함수값 상대적 변화 0.1% 이하면 종료 (factr로 변환됨)
+                    'gtol': 1e-3,    # Projected gradient norm 허용 오차
                     'maxls': 10,     # Line search 최대 횟수 (기본값: 20)
                     'disp': True
                 }
-                self.logger.info(f"L-BFGS-B 옵션: maxls={optimizer_options['maxls']}")
-                self.iteration_logger.info(f"L-BFGS-B 옵션: maxls={optimizer_options['maxls']}")
+                self.logger.info(
+                    f"L-BFGS-B 옵션: maxls={optimizer_options['maxls']}\n"
+                    f"  ✅ L-BFGS-B 수렴 조건 (ftol AND gtol 모두 만족 필요):\n"
+                    f"    - ftol: (f^k - f^{{k+1}})/max{{|f^k|,|f^{{k+1}}|,1}} <= ftol * eps_mach\n"
+                    f"    - gtol: max|proj g_i| <= gtol (projected gradient, bound 고려)\n"
+                    f"  ⚠️  주의: gtol은 전체 그래디언트가 아닌 projected gradient 사용\n"
+                    f"     → 고정된 파라미터(측정모델 76개)는 제외, 활성 파라미터만 고려\n"
+                    f"     → callback 로그에서 '활성 파라미터' 그래디언트 확인"
+                )
+                self.iteration_logger.info(
+                    f"L-BFGS-B 옵션: maxls={optimizer_options['maxls']}\n"
+                    f"  ✅ L-BFGS-B 수렴 조건 (ftol AND gtol 모두 만족 필요):\n"
+                    f"    - ftol: (f^k - f^{{k+1}})/max{{|f^k|,|f^{{k+1}}|,1}} <= ftol * eps_mach\n"
+                    f"    - gtol: max|proj g_i| <= gtol (projected gradient, bound 고려)\n"
+                    f"  ⚠️  주의: gtol은 전체 그래디언트가 아닌 projected gradient 사용\n"
+                    f"     → 고정된 파라미터(측정모델 76개)는 제외, 활성 파라미터만 고려\n"
+                    f"     → callback 로그에서 '활성 파라미터' 그래디언트 확인"
+                )
 
                 result = optimize.minimize(
                     early_stopping_wrapper.objective,  # Wrapper의 objective 사용
@@ -1335,32 +1389,16 @@ class SimultaneousEstimator:
                     # 상위 10개 대각 원소
                     top_10_indices = np.argsort(np.abs(diag_elements))[-10:][::-1]
                     for idx in top_10_indices:
-                        param_name = self.param_names[idx] if hasattr(self, 'param_names') and idx < len(self.param_names) else f"param_{idx}"
+                        # ✅ 측정모델 파라미터 고정 시 param_names는 최적화된 파라미터만 포함
+                        param_name = param_names[idx] if idx < len(param_names) else f"param_{idx}"
                         self.iteration_logger.info(
                             f"    [{idx:2d}] {param_name:40s}: {diag_elements[idx]:+.6e}"
                         )
 
                     self.iteration_logger.info(f"{'='*80}\n")
 
-                    # ✅ 전체 Hessian 역행렬을 로그 파일에 저장 (CSV 형식)
-                    self.iteration_logger.info("=" * 80)
-                    self.iteration_logger.info("Hessian 역행렬 (H^(-1)) - 전체 행렬")
-                    self.iteration_logger.info("=" * 80)
-                    self.iteration_logger.info("(CSV 형식으로 저장 - 별도 파일로 추출 가능)")
-                    self.iteration_logger.info("")
-
-                    # 헤더 (파라미터 이름)
-                    param_names_str = ",".join(self.param_names if hasattr(self, 'param_names') else [f"param_{i}" for i in range(hess_inv_array.shape[0])])
-                    self.iteration_logger.info(f"HESSIAN_HEADER,{param_names_str}")
-
-                    # 각 행 출력
-                    for i in range(hess_inv_array.shape[0]):
-                        param_name = self.param_names[i] if hasattr(self, 'param_names') and i < len(self.param_names) else f"param_{i}"
-                        row_values = ",".join([f"{hess_inv_array[i, j]:.10e}" for j in range(hess_inv_array.shape[1])])
-                        self.iteration_logger.info(f"HESSIAN_ROW,{param_name},{row_values}")
-
-                    self.iteration_logger.info("=" * 80)
-                    self.iteration_logger.info("")
+                    # ✅ Hessian 역행렬은 별도 파일로 저장 (로그에는 출력하지 않음)
+                    # (HESSIAN_ROW 로그 삭제 - 로그 파일 크기 절약)
 
                 else:
                     # BFGS hess_inv가 없으면 BHHH 방법으로 계산 (L-BFGS-B의 경우)
@@ -1466,17 +1504,26 @@ class SimultaneousEstimator:
         # 최적 파라미터 언스케일링 (Internal → External)
         # self.iteration_logger.info("")  # ✅ 빈 로그 비활성화
         self.iteration_logger.info("=" * 80)
-        self.iteration_logger.info("최적 파라미터 언스케일링 (Internal → External)")
+        self.iteration_logger.info("최적 파라미터 변환 (Scaled → Full External)")
         self.iteration_logger.info("=" * 80)
 
         optimal_params_scaled = result.x
-        optimal_params_external = self.param_scaler.unscale_parameters(optimal_params_scaled)
 
-        # 스케일링 비교 로깅
-        self.param_scaler.log_parameter_comparison(optimal_params_external, optimal_params_scaled)
+        # ✅ ParameterContext를 사용한 파라미터 변환 (한 줄로 간소화)
+        optimal_params_full = param_context.to_full_external(optimal_params_scaled)
+        optimal_params_opt = param_context.to_optimized_external(optimal_params_scaled)
 
-        # result.x를 external parameters로 교체
-        result.x = optimal_params_external
+        self.iteration_logger.info(
+            f"✅ 파라미터 변환 완료:\n"
+            f"  - 최적화 파라미터: {len(optimal_params_opt)}개\n"
+            f"  - 전체 파라미터: {len(optimal_params_full)}개"
+        )
+
+        # 스케일링 비교 로깅 (최적화된 파라미터만)
+        self.param_scaler.log_parameter_comparison(optimal_params_opt, optimal_params_scaled)
+
+        # result.x를 전체 external parameters로 교체
+        result.x = optimal_params_full
 
         # 결과 처리
         self.results = self._process_results(
@@ -1631,20 +1678,29 @@ class SimultaneousEstimator:
         return total_ll
 
     def _get_parameter_bounds(self, measurement_model,
-                              structural_model, choice_model) -> list:
+                              structural_model, choice_model,
+                              exclude_measurement: bool = False) -> list:
         """
         Parameter bounds for L-BFGS-B
 
         ✅ ParameterManager에 위임 (단일 진실 공급원)
         ✅ Optimizer 종류와 무관하게 동일한 로직 사용
         ✅ 파라미터 구조 변경 시 ParameterManager만 수정
+        ✅ exclude_measurement=True이면 측정모델 파라미터 제외
+
+        Args:
+            measurement_model: 측정모델 객체
+            structural_model: 구조모델 객체
+            choice_model: 선택모델 객체
+            exclude_measurement: True이면 측정모델 파라미터 제외
 
         Returns:
             bounds: [(lower, upper), ...] list
         """
         # ✅ ParameterManager에 완전히 위임
         return self.param_manager.get_parameter_bounds(
-            measurement_model, structural_model, choice_model
+            measurement_model, structural_model, choice_model,
+            exclude_measurement=exclude_measurement
         )
 
     # ❌ 제거됨: _get_parameter_names
@@ -1746,6 +1802,108 @@ class SimultaneousEstimator:
 
         return custom_scales
 
+    def _get_initial_parameters_simultaneous(self, measurement_model, structural_model,
+                                            choice_model, user_initial_params: Dict = None) -> np.ndarray:
+        """
+        동시추정 전용 초기값 설정
+
+        ✅ 측정모델 파라미터는 완전히 제외
+        ✅ 구조모델 + 선택모델만 처리 (8개 파라미터)
+        ✅ 간소화된 로직으로 파라미터 이름-값 매칭 보장
+
+        Args:
+            measurement_model: 측정모델 (파라미터 이름 생성에는 사용 안 함)
+            structural_model: 구조모델
+            choice_model: 선택모델
+            user_initial_params: 사용자 정의 초기값 딕셔너리
+                {'measurement': {...}, 'structural': {...}, 'choice': {...}}
+
+        Returns:
+            초기 파라미터 배열 (8개, 측정모델 제외)
+        """
+        # ✅ 최적화 파라미터 이름만 생성 (구조모델 + 선택모델)
+        param_names_opt = self.param_manager.get_optimized_parameter_names(
+            structural_model, choice_model
+        )
+
+        self.iteration_logger.info(f"✅ 동시추정 초기값 설정: {len(param_names_opt)}개 파라미터 (측정모델 제외)")
+        self.iteration_logger.info(f"   파라미터 이름: {param_names_opt}")
+
+        # ✅ 사용자 정의 초기값 필수 검증
+        if user_initial_params is None:
+            raise ValueError(
+                "동시추정은 초기값이 필수입니다!\n"
+                "initial_params 딕셔너리를 제공해야 합니다.\n"
+                "예: initial_params = {'structural': {...}, 'choice': {...}}\n"
+                "측정모델 파라미터는 measurement_model 객체에 이미 로드되어 있어야 합니다."
+            )
+
+        if not isinstance(user_initial_params, dict):
+            raise TypeError(
+                f"initial_params는 딕셔너리여야 합니다. 현재 타입: {type(user_initial_params)}"
+            )
+
+        self.iteration_logger.info("사용자 정의 초기값 사용")
+        self.iteration_logger.info(f"   제공된 키: {list(user_initial_params.keys())}")
+
+        # 구조모델 + 선택모델만 추출
+        opt_dict = {
+            'structural': user_initial_params.get('structural', {}),
+            'choice': user_initial_params.get('choice', {})
+        }
+
+        self.iteration_logger.info(f"   구조모델 파라미터: {list(opt_dict['structural'].keys())}")
+        self.iteration_logger.info(f"   선택모델 파라미터: {list(opt_dict['choice'].keys())}")
+
+        # ✅ 동시추정 전용 변환 함수 사용
+        initial_values = self.param_manager.dict_to_array_optimized(
+            opt_dict, param_names_opt, structural_model, choice_model
+        )
+
+        self.iteration_logger.info(f"✅ 초기값 변환 완료: {len(initial_values)}개")
+
+        # ✅ 초기값 검증: 이름-값 매칭 확인
+        self.iteration_logger.info("=" * 80)
+        self.iteration_logger.info("초기값 검증: 파라미터 이름-값 매칭 확인")
+        self.iteration_logger.info("=" * 80)
+
+        mismatch_found = False
+        for i, (name, value) in enumerate(zip(param_names_opt, initial_values)):
+            # 딕셔너리에서 직접 값 추출
+            if name.startswith('gamma_') and '_to_' in name:
+                expected_value = opt_dict['structural'].get(name, None)
+                source = 'structural'
+            else:
+                expected_value = opt_dict['choice'].get(name, None)
+                source = 'choice'
+
+            # 매칭 확인
+            if expected_value is not None:
+                if abs(value - expected_value) > 1e-6:
+                    self.iteration_logger.error(
+                        f"[{i:2d}] {name:50s} = {value:10.6f} (MISMATCH! Expected: {expected_value:10.6f}, Source: {source})"
+                    )
+                    mismatch_found = True
+                else:
+                    self.iteration_logger.info(f"[{i:2d}] {name:50s} = {value:10.6f} ✓")
+            else:
+                self.iteration_logger.warning(f"[{i:2d}] {name:50s} = {value:10.6f} (NOT FOUND in {source}, using default)")
+
+        if mismatch_found:
+            self.iteration_logger.error("=" * 80)
+            self.iteration_logger.error("파라미터 이름-값 매칭 오류 발견!")
+            self.iteration_logger.error("=" * 80)
+            raise ValueError(
+                "파라미터 이름-값 매칭 오류!\n"
+                "위 로그에서 MISMATCH 표시된 파라미터를 확인하세요."
+            )
+
+        self.iteration_logger.info("=" * 80)
+        self.iteration_logger.info("✅ 모든 파라미터 이름-값 매칭 검증 완료")
+        self.iteration_logger.info("=" * 80)
+
+        return initial_values
+
     def _get_initial_parameters(self, measurement_model,
                                 structural_model, choice_model) -> np.ndarray:
         """
@@ -1757,18 +1915,18 @@ class SimultaneousEstimator:
         Returns:
             초기 파라미터 벡터
         """
-        # ✅ 파라미터 이름 리스트 생성 (한 번만)
+        # ✅ 전체 파라미터 이름 리스트 생성 (초기값 생성용)
         # 🔍 디버깅: choice_model 설정 확인
         self.iteration_logger.info(f"[DEBUG _get_initial_parameters] choice_model.all_lvs_as_main = {getattr(choice_model, 'all_lvs_as_main', None)}")
         self.iteration_logger.info(f"[DEBUG _get_initial_parameters] choice_model.main_lvs = {getattr(choice_model, 'main_lvs', None)}")
 
-        self.param_names = self.param_manager.get_parameter_names(
+        param_names_full = self.param_manager.get_parameter_names(
             measurement_model, structural_model, choice_model
         )
 
-        self.iteration_logger.info(f"파라미터 이름 리스트 생성 완료: {len(self.param_names)}개")
+        self.iteration_logger.info(f"전체 파라미터 이름 리스트 생성 완료: {len(param_names_full)}개")
         # 🔍 디버깅: 선택모델 파라미터 이름 확인
-        choice_param_names = [name for name in self.param_names if name.startswith(('beta_', 'lambda_', 'gamma_')) and '_to_' not in name]
+        choice_param_names = [name for name in param_names_full if name.startswith(('beta_', 'lambda_', 'gamma_')) and '_to_' not in name]
         self.iteration_logger.info(f"[DEBUG _get_initial_parameters] 선택모델 파라미터 이름: {choice_param_names}")
 
         # ✅ 사용자 정의 초기값 확인
@@ -1812,7 +1970,7 @@ class SimultaneousEstimator:
 
                 # 딕셔너리 → 배열 변환
                 initial_values = self.param_manager.dict_to_array(
-                    partial_dict, self.param_names
+                    partial_dict, param_names_full, measurement_model
                 )
 
                 self.logger.info(f"사용자 정의 초기값 변환 완료: {len(initial_values)}개")
@@ -1825,12 +1983,12 @@ class SimultaneousEstimator:
                 self.logger.warning(f"사용자 정의 초기값 형식 오류: {type(user_params)}")
                 self.logger.warning("자동 초기화를 사용합니다.")
                 initial_values = self.param_manager.get_initial_values(
-                    self.param_names, measurement_model, structural_model, choice_model
+                    param_names_full, measurement_model, structural_model, choice_model
                 )
         else:
             # ✅ 자동 초기값 생성 (이름 기반)
             initial_values = self.param_manager.get_initial_values(
-                self.param_names, measurement_model, structural_model, choice_model
+                param_names_full, measurement_model, structural_model, choice_model
             )
 
             self.logger.info(f"자동 초기 파라미터 생성 완료: {len(initial_values)}개")
@@ -1845,19 +2003,22 @@ class SimultaneousEstimator:
                           structural_model,
                           choice_model) -> Dict[str, Dict]:
         """
-        파라미터 벡터를 딕셔너리로 변환 (ParameterManager 사용)
+        파라미터 벡터를 딕셔너리로 변환 (동시추정 전용)
+
+        ✅ params는 최적화 파라미터만 포함 (8개, 측정모델 제외)
+        ✅ 측정모델 파라미터는 CFA 결과에서 자동으로 추가됨
 
         Args:
-            params: 파라미터 배열
+            params: 최적화 파라미터 배열 (8개, 측정모델 제외)
             measurement_model: 측정모델 객체
             structural_model: 구조모델 객체
             choice_model: 선택모델 객체
 
         Returns:
-            파라미터 딕셔너리
+            파라미터 딕셔너리 (측정모델 포함)
         """
-        # ✅ ParameterManager를 사용하여 배열 → 딕셔너리 변환
-        param_dict = self.param_manager.array_to_dict(
+        # ✅ 동시추정 전용 변환 함수 사용
+        param_dict = self.param_manager.array_to_dict_optimized(
             params, self.param_names,
             measurement_model, structural_model, choice_model
         )
@@ -1995,14 +2156,20 @@ class SimultaneousEstimator:
             choice_model: 선택모델
 
         Returns:
-            gradient_vector: 그래디언트 벡터
+            gradient_vector: 그래디언트 벡터 (최적화 파라미터만, 측정모델 제외)
         """
-        # ✅ Gradient 딕셔너리 검증
-        self._validate_gradient_dict(grad_dict, self.param_names, measurement_model)
+        # ✅ 동시추정: 측정모델 그래디언트 제거 (고정 파라미터)
+        grad_dict_opt = {
+            'structural': grad_dict.get('structural', {}),
+            'choice': grad_dict.get('choice', {})
+        }
 
-        # ✅ ParameterManager를 사용하여 배열로 변환
+        # ✅ Gradient 딕셔너리 검증 (최적화 파라미터만)
+        self._validate_gradient_dict(grad_dict_opt, self.param_names, measurement_model)
+
+        # ✅ ParameterManager를 사용하여 배열로 변환 (최적화 파라미터만)
         gradient_vector = self.param_manager.dict_to_array(
-            grad_dict, self.param_names, measurement_model
+            grad_dict_opt, self.param_names, measurement_model
         )
 
         return gradient_vector
