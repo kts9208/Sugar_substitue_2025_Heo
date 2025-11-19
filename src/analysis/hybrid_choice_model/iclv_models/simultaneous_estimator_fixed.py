@@ -129,39 +129,46 @@ class HaltonDrawGenerator:
     참조: Apollo 패키지의 Halton draws
     """
     
-    def __init__(self, n_draws: int, n_individuals: int, 
+    def __init__(self, n_draws: int, n_individuals: int, n_dimensions: int = 1,
                  scramble: bool = True, seed: Optional[int] = None):
         """
         Args:
             n_draws: 개인당 draw 수
             n_individuals: 개인 수
+            n_dimensions: 차원 수 (1차 LV 개수 + 2차+ LV 개수)
             scramble: 스크램블 여부 (권장)
             seed: 난수 시드
         """
         self.n_draws = n_draws
         self.n_individuals = n_individuals
+        self.n_dimensions = n_dimensions
         self.scramble = scramble
         self.seed = seed
-        
+
         self.draws = None
         self._generate_draws()
-    
+
     def _generate_draws(self):
         """Halton 시퀀스 생성"""
-        logger.info(f"Halton draws 생성: {self.n_individuals} 개인 × {self.n_draws} draws")
-        
+        logger.info(f"Halton draws 생성: {self.n_individuals} 개인 × {self.n_draws} draws × {self.n_dimensions} 차원")
+
         # scipy의 Halton 시퀀스 생성기 사용
-        sampler = qmc.Halton(d=1, scramble=self.scramble, seed=self.seed)
-        
+        sampler = qmc.Halton(d=self.n_dimensions, scramble=self.scramble, seed=self.seed)
+
         # 균등분포 [0,1] 샘플 생성
         uniform_draws = sampler.random(n=self.n_individuals * self.n_draws)
-        
+
         # 표준정규분포로 변환 (역누적분포함수)
         normal_draws = norm.ppf(uniform_draws)
-        
-        # (n_individuals, n_draws) 형태로 재구성
-        self.draws = normal_draws.reshape(self.n_individuals, self.n_draws)
-        
+
+        # 형태 재구성
+        if self.n_dimensions == 1:
+            # 단일 차원: (n_individuals, n_draws)
+            self.draws = normal_draws.reshape(self.n_individuals, self.n_draws)
+        else:
+            # 다차원: (n_individuals, n_draws, n_dimensions)
+            self.draws = normal_draws.reshape(self.n_individuals, self.n_draws, self.n_dimensions)
+
         logger.info(f"Halton draws 생성 완료: shape={self.draws.shape}")
     
     def get_draws(self) -> np.ndarray:
@@ -347,13 +354,38 @@ class SimultaneousEstimator:
 
         # Halton draws 생성 (이미 설정되어 있으면 건너뛰기)
         if not hasattr(self, 'halton_generator') or self.halton_generator is None:
-            self.iteration_logger.info(f"Halton draws 생성 시작... (n_draws={self.config.estimation.n_draws}, n_individuals={n_individuals})")
+            # ✅ 다차원 Halton draws: 1차 LV + 2차+ LV
+            n_exo = len(structural_model.exogenous_lvs)
+            higher_order_lvs = structural_model.get_higher_order_lvs()
+            n_higher_order = len(higher_order_lvs)
+            n_dimensions = n_exo + n_higher_order
+
+            self.iteration_logger.info(
+                f"\n{'='*70}\n"
+                f"Halton draws 생성 시작\n"
+                f"{'='*70}\n"
+                f"  n_draws: {self.config.estimation.n_draws}\n"
+                f"  n_individuals: {n_individuals}\n"
+                f"  n_dimensions: {n_dimensions}\n"
+                f"    - 1차 LV ({n_exo}개): {structural_model.exogenous_lvs}\n"
+                f"    - 고차 LV ({n_higher_order}개): {higher_order_lvs}\n"
+                f"{'='*70}"
+            )
             self.halton_generator = HaltonDrawGenerator(
                 n_draws=self.config.estimation.n_draws,
                 n_individuals=n_individuals,
+                n_dimensions=n_dimensions,
                 scramble=self.config.estimation.scramble_halton
             )
-            self.iteration_logger.info("Halton draws 생성 완료")
+
+            # 🔍 디버깅: 첫 번째 개인의 첫 번째 draw 출력
+            draws = self.halton_generator.get_draws()
+            self.iteration_logger.info(
+                f"\nHalton draws 생성 완료\n"
+                f"  Shape: {draws.shape}\n"
+                f"  첫 번째 개인의 첫 번째 draw: {draws[0, 0] if draws.ndim > 1 else draws[0]}\n"
+                f"{'='*70}\n"
+            )
         else:
             self.iteration_logger.info("Halton draws 이미 설정됨 (건너뛰기)")
 
@@ -953,6 +985,7 @@ class SimultaneousEstimator:
                 """
                 BFGS callback - 매 Major iteration마다 호출됨
                 조기 종료 시 최적 파라미터로 복원
+                ftol AND gtol 조건을 모두 체크하여 조기 종료
                 """
                 self.bfgs_iteration_count += 1
                 major_iter_count[0] = self.bfgs_iteration_count
@@ -962,6 +995,12 @@ class SimultaneousEstimator:
                     self.prev_xk = None
                 if not hasattr(self, 'prev_grad'):
                     self.prev_grad = None
+
+                # ✅ ftol AND gtol 조건 체크를 위한 변수
+                if not hasattr(self, 'ftol_threshold'):
+                    self.ftol_threshold = 1e-6  # ftol 기준
+                if not hasattr(self, 'gtol_threshold'):
+                    self.gtol_threshold = 1e-5  # gtol 기준
 
                 # Major iteration 완료 로깅
                 if self.iteration_logger:
@@ -1106,6 +1145,39 @@ class SimultaneousEstimator:
                         f"{'='*80}"
                     )
 
+                    # ✅ ftol AND gtol 조건 체크 (둘 다 만족해야 조기 종료)
+                    ftol_satisfied = False
+                    gtol_satisfied = False
+
+                    if last_major_iter_func_value[0] is not None:
+                        f_prev = last_major_iter_func_value[0]
+                        f_curr = current_f
+                        rel_change = abs(f_prev - f_curr) / max(abs(f_prev), abs(f_curr), 1.0)
+                        ftol_satisfied = (rel_change <= self.ftol_threshold)
+
+                    if self.grad_func:
+                        grad = self.grad_func(xk)
+                        grad_norm_active = np.linalg.norm(grad[np.abs(grad) > 1e-10], ord=np.inf) if np.any(np.abs(grad) > 1e-10) else 0.0
+                        gtol_satisfied = (grad_norm_active <= self.gtol_threshold)
+
+                    # ftol AND gtol 모두 만족하면 조기 종료
+                    if ftol_satisfied and gtol_satisfied:
+                        self.early_stopped = True
+                        self.best_x = xk.copy()
+                        msg = (
+                            f"\n{'='*80}\n"
+                            f"✅ 수렴 완료: ftol AND gtol 조건 모두 만족\n"
+                            f"  - ftol: {rel_change:.6e} <= {self.ftol_threshold:.6e} ✓\n"
+                            f"  - gtol: {grad_norm_active:.6e} <= {self.gtol_threshold:.6e} ✓\n"
+                            f"  - Major iteration: {self.bfgs_iteration_count}\n"
+                            f"  - 최종 LL: {current_ll:.4f}\n"
+                            f"{'='*80}"
+                        )
+                        if self.iteration_logger:
+                            self.iteration_logger.info(msg)
+                        # StopIteration 대신 early_stopped 플래그 설정
+                        # 다음 objective/gradient 호출 시 큰 값/0 벡터 반환하여 종료 유도
+
                     # 다음 major iteration을 위한 준비
                     last_major_iter_func_value[0] = current_f
                     current_major_iter_start_call[0] = func_call_count[0]
@@ -1233,19 +1305,24 @@ class SimultaneousEstimator:
             elif self.config.estimation.optimizer == 'L-BFGS-B':
                 optimizer_options = {
                     'maxiter': 200,  # Major iteration 최대 횟수
-                    'ftol': 1e-3,    # 함수값 상대적 변화 0.1% 이하면 종료 (factr로 변환됨)
-                    'gtol': 1e-3,    # Projected gradient norm 허용 오차
-                    'maxls': 10,     # Line search 최대 횟수 (기본값: 20)
+                    'maxls': 20,     # Line search 최대 횟수 (기본값: 20)
                     'disp': True
+                    # ftol, gtol을 설정하지 않음 → scipy 기본값 사용
+                    # 기본값: ftol=2.220446049250313e-09, pgtol=1e-05
                 }
                 self.iteration_logger.info(
-                    f"L-BFGS-B 옵션: maxls={optimizer_options['maxls']}\n"
-                    f"  ✅ L-BFGS-B 수렴 조건 (ftol AND gtol 모두 만족 필요):\n"
-                    f"    - ftol: (f^k - f^{{k+1}})/max{{|f^k|,|f^{{k+1}}|,1}} <= ftol * eps_mach\n"
-                    f"    - gtol: max|proj g_i| <= gtol (projected gradient, bound 고려)\n"
-                    f"  ⚠️  주의: gtol은 전체 그래디언트가 아닌 projected gradient 사용\n"
-                    f"     → 고정된 파라미터(측정모델 76개)는 제외, 활성 파라미터만 고려\n"
-                    f"     → callback 로그에서 '활성 파라미터' 그래디언트 확인"
+                    f"L-BFGS-B 옵션:\n"
+                    f"  - maxiter: {optimizer_options['maxiter']}\n"
+                    f"  - ftol: 기본값 (2.22e-09 * factr, factr=1e7)\n"
+                    f"  - pgtol: 기본값 (1e-05)\n"
+                    f"  - maxls: {optimizer_options['maxls']} (line search 최대 횟수)\n"
+                    f"\n"
+                    f"  ✅ 커스텀 수렴 조건 (callback에서 ftol AND gtol 모두 체크):\n"
+                    f"    1. ftol 조건: (f^k - f^{{k+1}})/max{{|f^k|,|f^{{k+1}}|,1}} <= 1e-6\n"
+                    f"    2. gtol 조건: max{{|proj g_i|}} <= 1e-5\n"
+                    f"    → 두 조건을 모두 만족해야 조기 종료\n"
+                    f"\n"
+                    f"  💡 scipy의 기본 수렴 조건과 병행하여 사용합니다."
                 )
 
                 result = optimize.minimize(
@@ -1519,7 +1596,7 @@ class SimultaneousEstimator:
         Args:
             ind_id: 개인 ID
             ind_data: 개인 데이터
-            ind_draws: 개인의 Halton draws
+            ind_draws: 개인의 Halton draws (n_draws, n_dimensions)
             param_dict: 파라미터 딕셔너리
             measurement_model: 측정모델
             structural_model: 구조모델
@@ -1530,9 +1607,60 @@ class SimultaneousEstimator:
         """
         draw_lls = []
 
+        # ✅ 차원 정보 추출
+        n_exo = len(structural_model.exogenous_lvs)
+        higher_order_lvs = structural_model.get_higher_order_lvs()
+        n_higher_order = len(higher_order_lvs)
+
+        # 🔍 디버깅: 첫 번째 개인의 첫 번째 draw만 로깅
+        log_debug = (ind_id == ind_data[self.config.individual_id_column].iloc[0])
+
         for j, draw in enumerate(ind_draws):
-            # 구조모델: LV = γ*X + η
-            lv = structural_model.predict(ind_data, param_dict['structural'], draw)
+            # ✅ draws 분리: 1차 LV + 2차+ LV
+            if ind_draws.ndim == 1:
+                # 1차원 (하위 호환)
+                exo_draws = np.array([draw])
+                higher_order_draws = {}
+
+                if log_debug and j == 0:
+                    self.iteration_logger.info(
+                        f"[개인 {ind_id}, Draw #0] 1차원 draws (하위 호환 모드)\n"
+                        f"  exo_draws: {exo_draws}\n"
+                        f"  higher_order_draws: {higher_order_draws}"
+                    )
+            else:
+                # 다차원
+                exo_draws = draw[:n_exo]  # 처음 n_exo개: 1차 LV
+                higher_order_draws_array = draw[n_exo:]  # 나머지: 2차+ LV
+
+                # 딕셔너리로 변환
+                higher_order_draws = {}
+                for i, lv_name in enumerate(higher_order_lvs):
+                    higher_order_draws[lv_name] = higher_order_draws_array[i]
+
+                if log_debug and j == 0:
+                    self.iteration_logger.info(
+                        f"[개인 {ind_id}, Draw #0] 다차원 draws 분리\n"
+                        f"  ind_draws.shape: {ind_draws.shape}\n"
+                        f"  draw.shape: {draw.shape}\n"
+                        f"  n_exo: {n_exo}, n_higher_order: {n_higher_order}\n"
+                        f"  exo_draws ({len(exo_draws)}개): {exo_draws}\n"
+                        f"  higher_order_draws ({len(higher_order_draws)}개): {higher_order_draws}"
+                    )
+
+            # ✅ 구조모델: LV = γ*X + η (올바른 인자 전달)
+            lv = structural_model.predict(
+                data=ind_data,
+                exo_draws=exo_draws,
+                params=param_dict['structural'],
+                higher_order_draws=higher_order_draws
+            )
+
+            if log_debug and j == 0:
+                self.iteration_logger.info(
+                    f"[개인 {ind_id}, Draw #0] 예측된 잠재변수\n"
+                    f"  lv: {lv}"
+                )
 
             # 측정모델 우도: P(Indicators|LV)
             ll_measurement = measurement_model.log_likelihood(
@@ -1552,13 +1680,26 @@ class SimultaneousEstimator:
             # Panel product: log(P1 * P2 * ... * PT) = log(P1) + log(P2) + ... + log(PT)
             ll_choice = sum(choice_set_lls)
 
-            # 구조모델 우도: P(LV|X) - 정규분포 가정
+            # ✅ 구조모델 우도: P(LV|X) - 정규분포 가정 (올바른 인자 전달)
             ll_structural = structural_model.log_likelihood(
-                ind_data, lv, param_dict['structural'], draw
+                data=ind_data,
+                latent_vars=lv,
+                exo_draws=exo_draws,
+                params=param_dict['structural'],
+                higher_order_draws=higher_order_draws
             )
 
             # 결합 로그우도
             draw_ll = ll_measurement + ll_choice + ll_structural
+
+            if log_debug and j == 0:
+                self.iteration_logger.info(
+                    f"[개인 {ind_id}, Draw #0] 우도 성분\n"
+                    f"  ll_measurement: {ll_measurement:.4f}\n"
+                    f"  ll_choice: {ll_choice:.4f}\n"
+                    f"  ll_structural: {ll_structural:.4f}\n"
+                    f"  draw_ll (합계): {draw_ll:.4f}"
+                )
 
             # 🔴 수정: -inf를 매우 작은 값으로 대체 (연속성 확보 for gradient)
             if not np.isfinite(draw_ll):
@@ -1586,6 +1727,18 @@ class SimultaneousEstimator:
         param_dict = self._unpack_parameters(
             params, measurement_model, structural_model, choice_model
         )
+
+        # 🔍 디버깅: 첫 번째 호출 시 파라미터 로깅
+        if not hasattr(self, '_first_ll_logged'):
+            self._first_ll_logged = True
+            self.iteration_logger.info(
+                f"\n{'='*70}\n"
+                f"첫 번째 로그우도 계산\n"
+                f"{'='*70}\n"
+                f"  구조모델 파라미터: {param_dict['structural']}\n"
+                f"  선택모델 파라미터 (일부): {list(param_dict['choice'].keys())[:5]}...\n"
+                f"{'='*70}\n"
+            )
 
         # 메모리 체크 (Halton draws 가져오기 전)
         if hasattr(self, 'memory_monitor') and hasattr(self, '_likelihood_call_count'):

@@ -286,36 +286,42 @@ def create_sugar_substitute_multi_lv_config(
     """
 
     # 1. 측정모델 설정 (5개)
+    # ✅ CFA와 동일하게 continuous_linear 사용
     measurement_configs = {
         'health_concern': MeasurementConfig(
             latent_variable='health_concern',
             indicators=['q6', 'q7', 'q8', 'q9', 'q10', 'q11'],
             n_categories=5,
-            indicator_type='ordered'
+            measurement_method='continuous_linear',  # ✅ CFA와 동일
+            indicator_type='continuous'  # ✅ 연속형
         ),
         'perceived_benefit': MeasurementConfig(
             latent_variable='perceived_benefit',
             indicators=['q12', 'q13', 'q14', 'q15', 'q16', 'q17'],
             n_categories=5,
-            indicator_type='ordered'
+            measurement_method='continuous_linear',  # ✅ CFA와 동일
+            indicator_type='continuous'  # ✅ 연속형
         ),
         'perceived_price': MeasurementConfig(
             latent_variable='perceived_price',
             indicators=['q27', 'q28', 'q29'],
             n_categories=5,
-            indicator_type='ordered'
+            measurement_method='continuous_linear',  # ✅ CFA와 동일
+            indicator_type='continuous'  # ✅ 연속형
         ),
         'nutrition_knowledge': MeasurementConfig(
             latent_variable='nutrition_knowledge',
             indicators=[f'q{i}' for i in range(30, 50)],
             n_categories=5,
-            indicator_type='ordered'
+            measurement_method='continuous_linear',  # ✅ CFA와 동일
+            indicator_type='continuous'  # ✅ 연속형
         ),
         'purchase_intention': MeasurementConfig(
             latent_variable='purchase_intention',
             indicators=['q18', 'q19', 'q20'],
             n_categories=5,
-            indicator_type='ordered'
+            measurement_method='continuous_linear',  # ✅ CFA와 동일
+            indicator_type='continuous'  # ✅ 연속형
         )
     }
 
