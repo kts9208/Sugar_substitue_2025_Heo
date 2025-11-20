@@ -137,8 +137,10 @@ class SequentialEstimator(BaseEstimator):
             results = {
                 'cfa_results': cfa_results,
                 'factor_scores': self.factor_scores,
+                'params': cfa_results.get('params'),  # ✅ 전체 파라미터 추가 (절편 포함)
                 'loadings': cfa_results['loadings'],
                 'measurement_errors': cfa_results.get('measurement_errors'),
+                'intercepts': cfa_results.get('intercepts'),  # ✅ 절편 추가
                 'correlations': cfa_results['correlations'],
                 'fit_indices': cfa_results['fit_indices'],
                 'log_likelihood': cfa_results['log_likelihood']
@@ -172,8 +174,10 @@ class SequentialEstimator(BaseEstimator):
         # 1. Pickle 저장 (전체 결과)
         save_data = {
             'factor_scores': results['factor_scores'],
+            'params': results.get('params'),  # ✅ 전체 파라미터 저장 (절편 포함)
             'loadings': results['loadings'],
             'measurement_errors': results.get('measurement_errors'),
+            'intercepts': results.get('intercepts'),  # ✅ 절편 저장
             'correlations': results['correlations'],
             'fit_indices': results['fit_indices'],
             'log_likelihood': results['log_likelihood']
@@ -186,47 +190,63 @@ class SequentialEstimator(BaseEstimator):
         # 2. CSV 저장
         base_path = save_path.with_suffix('')
 
-        # 2-1. 측정모델 파라미터 통합 저장 (요인적재량 + 오차분산)
-        if 'loadings' in results and results['loadings'] is not None:
+        # 2-1. 전체 파라미터 저장 (절편 포함)
+        if 'params' in results and results['params'] is not None:
+            params_csv = f"{base_path}_all_params.csv"
+            results['params'].to_csv(params_csv, index=False, encoding='utf-8-sig')
+            self.logger.info(f"전체 파라미터 저장 (절편 포함): {params_csv}")
+
+        # 2-2. 측정모델 파라미터 통합 저장 (요인적재량 + 오차분산 + 절편)
+        if 'params' in results and results['params'] is not None:
             measurement_params_list = []
+            params_df = results['params']
 
-            # 요인적재량 추가
-            loadings_df = results['loadings'].copy()
-            loadings_df['param_type'] = 'loading'
-            measurement_params_list.append(loadings_df)
+            # 요인적재량 추가 (op == '~', rval != '1')
+            loadings_df = params_df[(params_df['op'] == '~') & (params_df['rval'] != '1')].copy()
+            if len(loadings_df) > 0:
+                loadings_df['param_type'] = 'loading'
+                measurement_params_list.append(loadings_df)
 
-            # 오차분산 추가
-            if 'measurement_errors' in results and results['measurement_errors'] is not None:
-                errors_df = results['measurement_errors'].copy()
+            # 오차분산 추가 (op == '~~')
+            errors_df = params_df[params_df['op'] == '~~'].copy()
+            if len(errors_df) > 0:
                 errors_df['param_type'] = 'error_variance'
                 measurement_params_list.append(errors_df)
+
+            # 절편 추가 (op == '~', rval == '1') - ModelMeans 사용시
+            intercepts_df = params_df[(params_df['op'] == '~') & (params_df['rval'] == '1')].copy()
+            if len(intercepts_df) > 0:
+                intercepts_df['param_type'] = 'intercept'
+                measurement_params_list.append(intercepts_df)
+                self.logger.info(f"절편 발견: {len(intercepts_df)}개")
 
             # 통합 DataFrame 생성
             if measurement_params_list:
                 measurement_params_df = pd.concat(measurement_params_list, ignore_index=True)
                 measurement_params_csv = f"{base_path}_measurement_params.csv"
                 measurement_params_df.to_csv(measurement_params_csv, index=False, encoding='utf-8-sig')
-                self.logger.info(f"측정모델 파라미터 저장 (요인적재량 + 오차분산): {measurement_params_csv}")
+                self.logger.info(f"측정모델 파라미터 저장 (요인적재량 + 오차분산 + 절편): {measurement_params_csv}")
 
-            # 하위 호환성: 요인적재량만 별도 저장
+        # 2-3. 하위 호환성: 요인적재량만 별도 저장
+        if 'loadings' in results and results['loadings'] is not None:
             loadings_csv = f"{base_path}_loadings.csv"
             results['loadings'].to_csv(loadings_csv, index=False, encoding='utf-8-sig')
             self.logger.info(f"요인적재량 저장 (하위 호환): {loadings_csv}")
 
-        # 2-2. 상관관계 (pairwise)
+        # 2-4. 상관관계 (pairwise)
         if 'correlations' in results and results['correlations'] is not None:
             correlations_csv = f"{base_path}_correlations.csv"
             results['correlations'].to_csv(correlations_csv, index=False, encoding='utf-8-sig')
             self.logger.info(f"잠재변수 간 상관관계 저장: {correlations_csv}")
 
-            # 2-2-1. 상관관계 행렬 생성 및 저장
+            # 2-4-1. 상관관계 행렬 생성 및 저장
             corr_matrix = self._build_correlation_matrix(results['correlations'])
             if corr_matrix is not None:
                 corr_matrix_csv = f"{base_path}_correlation_matrix.csv"
                 corr_matrix.to_csv(corr_matrix_csv, encoding='utf-8-sig')
                 self.logger.info(f"상관관계 행렬 저장: {corr_matrix_csv}")
 
-                # 2-2-2. p-value 행렬 생성 및 저장
+                # 2-4-2. p-value 행렬 생성 및 저장
                 pvalue_matrix = self._build_pvalue_matrix(results['correlations'])
                 if pvalue_matrix is not None:
                     pvalue_matrix_csv = f"{base_path}_pvalue_matrix.csv"

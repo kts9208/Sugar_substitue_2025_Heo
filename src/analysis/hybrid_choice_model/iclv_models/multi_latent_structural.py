@@ -165,30 +165,38 @@ class MultiLatentStructural:
 
                 # 평균 계산: Σ(γ_k * LV_k)
                 lv_mean = 0.0
+                gamma_details = []  # 🔍 디버깅용
                 for pred in predictors:
                     param_name = f'gamma_{pred}_to_{target}'
                     if param_name not in params:
                         raise KeyError(f"파라미터 '{param_name}'가 없습니다.")
 
                     gamma = params[param_name]
-                    lv_mean += gamma * latent_vars[pred]
+                    pred_lv = latent_vars[pred]
+                    contribution = gamma * pred_lv
+                    lv_mean += contribution
+                    gamma_details.append(f"{param_name}={gamma:.4f} × {pred}={pred_lv:.4f} = {contribution:.4f}")
 
                 # 오차항 추가
                 error_draw = higher_order_draws.get(target, 0.0)
                 error_term = np.sqrt(self.error_variance) * error_draw
                 latent_vars[target] = lv_mean + error_term
 
-                # ✅ 디버깅: 첫 번째 경로만 로깅 (디버깅 플래그가 설정된 경우에만)
-                if path_idx == 0 and hasattr(self, '_debug_predict') and self._debug_predict:
-                    print(f"[predict() 디버깅] 경로: {predictors} → {target}")
-                    print(f"  higher_order_draws type: {type(higher_order_draws)}")
-                    print(f"  higher_order_draws dict: {higher_order_draws}")
-                    print(f"  target key: '{target}'")
-                    print(f"  lv_mean = {lv_mean}")
-                    print(f"  error_draw = {error_draw}")
-                    print(f"  error_variance = {self.error_variance}")
-                    print(f"  error_term = {error_term}")
-                    print(f"  latent_vars[{target}] = {latent_vars[target]}")
+                # ✅ 디버깅: 모든 경로 로깅 (디버깅 플래그가 설정된 경우에만)
+                if hasattr(self, '_debug_predict') and self._debug_predict:
+                    if hasattr(self, '_iteration_logger'):
+                        logger = self._iteration_logger
+                    else:
+                        import logging
+                        logger = logging.getLogger(__name__)
+
+                    logger.info(f"\n[predict() 디버깅] 경로 #{path_idx+1}: {predictors} → {target}")
+                    for detail in gamma_details:
+                        logger.info(f"  {detail}")
+                    logger.info(f"  lv_mean (합계) = {lv_mean:.4f}")
+                    logger.info(f"  error_draw = {error_draw:.4f}")
+                    logger.info(f"  error_term = √{self.error_variance:.4f} × {error_draw:.4f} = {error_term:.4f}")
+                    logger.info(f"  {target} = {lv_mean:.4f} + {error_term:.4f} = {latent_vars[target]:.4f}")
 
         else:
             # 병렬 구조 (하위 호환)
@@ -260,7 +268,7 @@ class MultiLatentStructural:
         # 2. 2차+ LV 로그우도
         if self.is_hierarchical:
             # ✅ 계층적 구조
-            for path in self.hierarchical_paths:
+            for path_idx, path in enumerate(self.hierarchical_paths):
                 target = path['target']
                 predictors = path['predictors']
 
@@ -273,7 +281,21 @@ class MultiLatentStructural:
 
                 # 로그우도: N(lv_mean, σ²)
                 lv_value = latent_vars[target]
-                ll += norm.logpdf(lv_value, loc=lv_mean, scale=np.sqrt(self.error_variance))
+                ll_component = norm.logpdf(lv_value, loc=lv_mean, scale=np.sqrt(self.error_variance))
+                ll += ll_component
+
+                # 🔍 디버깅: 구조모델 우도 성분
+                if hasattr(self, '_debug_ll') and self._debug_ll:
+                    if hasattr(self, '_iteration_logger'):
+                        logger = self._iteration_logger
+                    else:
+                        import logging
+                        logger = logging.getLogger(__name__)
+
+                    logger.info(f"[log_likelihood() 디버깅] 경로 #{path_idx+1}: {predictors} → {target}")
+                    logger.info(f"  lv_mean = {lv_mean:.4f}")
+                    logger.info(f"  lv_value = {lv_value:.4f}")
+                    logger.info(f"  ll_component = logpdf({lv_value:.4f} | μ={lv_mean:.4f}, σ={np.sqrt(self.error_variance):.4f}) = {ll_component:.4f}")
 
         else:
             # 병렬 구조 (하위 호환)

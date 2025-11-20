@@ -423,16 +423,26 @@ def _compute_hierarchical_structural_batch_gpu(ind_data: pd.DataFrame,
         # 각 경로에 대한 로그우도 계산
         total_ll = 0.0
 
-        for path in structural_model.hierarchical_paths:
+        # 🔍 디버깅: 첫 번째 draw에 대한 상세 로깅
+        if log_detail and draw_idx == 0:
+            iteration_logger.info(f"\n[구조모델 우도 계산 - Draw #0]")
+            iteration_logger.info(f"  error_variance: {structural_model.error_variance:.4f}")
+            iteration_logger.info(f"  경로 수: {len(structural_model.hierarchical_paths)}")
+
+        for path_idx, path in enumerate(structural_model.hierarchical_paths):
             target = path['target']
             predictors = path['predictors']
 
             # 예측값 계산
             lv_mean = 0.0
+            gamma_details = []
             for pred in predictors:
                 param_name = f'gamma_{pred}_to_{target}'
                 gamma = params[param_name]
-                lv_mean += gamma * lv_dict[pred]
+                pred_lv = lv_dict[pred]
+                contribution = gamma * pred_lv
+                lv_mean += contribution
+                gamma_details.append(f"{param_name}={gamma:.4f} × {pred}={pred_lv:.4f} = {contribution:.4f}")
 
             # 실제값
             target_actual = lv_dict[target]
@@ -447,7 +457,13 @@ def _compute_hierarchical_structural_batch_gpu(ind_data: pd.DataFrame,
             total_ll += ll
 
             if log_detail and draw_idx == 0:
-                iteration_logger.info(f"  경로 {pred}->{target}: 예측={lv_mean:.4f}, 실제={target_actual:.4f}, LL={ll:.4f}")
+                iteration_logger.info(f"\n  [경로 #{path_idx+1}] {predictors} → {target}")
+                for detail in gamma_details:
+                    iteration_logger.info(f"    {detail}")
+                iteration_logger.info(f"    lv_mean (합계) = {lv_mean:.4f}")
+                iteration_logger.info(f"    target_actual = {target_actual:.4f}")
+                iteration_logger.info(f"    residual = {residual:.4f}")
+                iteration_logger.info(f"    ll = logpdf({target_actual:.4f} | μ={lv_mean:.4f}, σ²={error_var:.4f}) = {ll:.4f}")
 
         draw_lls.append(total_ll)
 

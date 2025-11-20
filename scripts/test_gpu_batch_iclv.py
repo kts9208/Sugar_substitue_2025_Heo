@@ -241,6 +241,7 @@ def main():
         if 'loadings' in cfa_results and 'measurement_errors' in cfa_results:
             loadings_df = cfa_results['loadings']
             errors_df = cfa_results['measurement_errors']
+            intercepts_df = cfa_results.get('intercepts', None)  # ✅ 절편 로드
 
             # 각 잠재변수의 측정모델에 CFA 결과 설정
             for lv_name, model in measurement_model.models.items():
@@ -273,13 +274,31 @@ def main():
                         print(f"    [WARNING] {indicator}의 오차분산을 찾을 수 없습니다. 기본값 0.5 사용")
                         sigma_sq_values.append(0.5)
 
+                # ✅ alpha (절편)
+                alpha_values = []
+                if intercepts_df is not None:
+                    for indicator in indicators:
+                        row = intercepts_df[(intercepts_df['lval'] == indicator) &
+                                           (intercepts_df['op'] == '~') &
+                                           (intercepts_df['rval'] == '1')]
+
+                        if not row.empty:
+                            alpha_values.append(float(row['Estimate'].iloc[0]))
+                        else:
+                            print(f"    [WARNING] {indicator}의 절편을 찾을 수 없습니다. 기본값 0.0 사용")
+                            alpha_values.append(0.0)
+                else:
+                    print(f"    [WARNING] CFA 결과에 절편이 없습니다. 모든 절편을 0.0으로 설정")
+                    alpha_values = [0.0] * len(indicators)
+
                 # 측정모델 config에 CFA 결과 설정
                 model.config.zeta = np.array(zeta_values)
                 model.config.sigma_sq = np.array(sigma_sq_values)
+                model.config.alpha = np.array(alpha_values)  # ✅ 절편 추가
 
-                print(f"    [INFO] {lv_name}: zeta={len(zeta_values)}개, sigma_sq={len(sigma_sq_values)}개 로드 완료")
+                print(f"    [INFO] {lv_name}: zeta={len(zeta_values)}개, sigma_sq={len(sigma_sq_values)}개, alpha={len(alpha_values)}개 로드 완료")
 
-            print(f"    [SUCCESS] 측정모델에 CFA 결과 로드 완료")
+            print(f"    [SUCCESS] 측정모델에 CFA 결과 로드 완료 (절편 포함)")
         else:
             print(f"    [WARNING] CFA 결과 형식이 올바르지 않습니다.")
 
@@ -321,6 +340,7 @@ def main():
 
             loadings_df = cfa_results['loadings']
             errors_df = cfa_results['measurement_errors']
+            intercepts_df = cfa_results.get('intercepts', None)  # ✅ 절편 로드
 
             # 측정모델 파라미터 딕셔너리 생성
             measurement_dict = {}
@@ -353,15 +373,34 @@ def main():
                         print(f"    [WARNING] {indicator}의 오차분산을 찾을 수 없습니다. 기본값 0.5 사용")
                         sigma_sq_values.append(0.5)
 
+                # ✅ alpha (절편) - CFA intercepts에서 추출
+                alpha_values = []
+                if intercepts_df is not None:
+                    for indicator in indicators:
+                        row = intercepts_df[(intercepts_df['lval'] == indicator) &
+                                           (intercepts_df['op'] == '~') &
+                                           (intercepts_df['rval'] == '1')]
+
+                        if not row.empty:
+                            alpha_values.append(float(row['Estimate'].iloc[0]))
+                        else:
+                            print(f"    [WARNING] {indicator}의 절편을 찾을 수 없습니다. 기본값 0.0 사용")
+                            alpha_values.append(0.0)
+                else:
+                    print(f"    [WARNING] CFA 결과에 절편이 없습니다. 모든 절편을 0.0으로 설정")
+                    alpha_values = [0.0] * len(indicators)
+
                 measurement_dict[lv_name] = {
                     'zeta': np.array(zeta_values),
-                    'sigma_sq': np.array(sigma_sq_values)
+                    'sigma_sq': np.array(sigma_sq_values),
+                    'alpha': np.array(alpha_values)  # ✅ 절편 추가
                 }
 
                 # ✅ 로드된 값 출력
                 print(f"    [INFO] {lv_name} 측정모델 파라미터 로드:")
                 print(f"      - zeta (요인적재량): {zeta_values}")
                 print(f"      - sigma_sq (오차분산): {sigma_sq_values}")
+                print(f"      - alpha (절편): {alpha_values}")
 
             # 2. 구조모델 파라미터: 0.1로 초기화
             print(f"    [INFO] 구조모델 파라미터: 0.1로 초기화")

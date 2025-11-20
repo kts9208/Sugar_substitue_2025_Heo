@@ -1044,7 +1044,8 @@ def compute_all_individuals_likelihood_full_batch_gpu(
     structural_model,
     choice_model,
     iteration_logger=None,
-    log_level: str = 'MINIMAL'
+    log_level: str = 'MINIMAL',
+    use_scaling: bool = True
 ) -> float:
     """
     모든 개인의 우도를 완전 GPU batch로 동시 계산
@@ -1060,6 +1061,8 @@ def compute_all_individuals_likelihood_full_batch_gpu(
         choice_model: 선택모델
         iteration_logger: 로거
         log_level: 로깅 레벨
+        use_scaling: bool = True이면 측정모델 우도를 지표 수로 나눔 (최적화용),
+                           False면 원본 우도 사용 (AIC/BIC 계산용)
 
     Returns:
         전체 로그우도 (스칼라)
@@ -1135,17 +1138,44 @@ def compute_all_individuals_likelihood_full_batch_gpu(
     likelihood_start = time.time()
     total_ll = 0.0
 
+    # 🔍 측정모델 지표 수 계산 (스케일링용)
+    n_measurement_indicators = 0
+    if hasattr(gpu_measurement_model, 'models'):
+        for lv_name, model in gpu_measurement_model.models.items():
+            n_measurement_indicators += len(model.config.indicators)
+
+    # 스케일링 가중치 계산
+    measurement_weight = 1.0 / n_measurement_indicators if (use_scaling and n_measurement_indicators > 0) else 1.0
+
+    if iteration_logger and log_level == 'DETAILED':
+        if use_scaling:
+            iteration_logger.info(
+                f"\n[우도 스케일링 정보]\n"
+                f"  측정모델 지표 수: {n_measurement_indicators}\n"
+                f"  측정모델 가중치: {measurement_weight:.6f} (= 1/{n_measurement_indicators})\n"
+                f"  → 측정모델 우도만 스케일링 (선택/구조모델은 원본 유지)"
+            )
+        else:
+            iteration_logger.info(
+                f"\n[우도 스케일링 정보]\n"
+                f"  스케일링 비활성화 (use_scaling=False)\n"
+                f"  → 모든 우도를 원본 그대로 사용 (AIC/BIC 계산용)"
+            )
+
     for ind_idx, (ind_data, ind_lvs_list, ind_draws) in enumerate(zip(all_ind_data, all_lvs_list, all_ind_draws)):
         # 기존 gpu_batch_utils 함수 활용
         from . import gpu_batch_utils
 
         # 측정모델 우도 (GPU 배치)
-        ll_measurement = gpu_batch_utils.compute_measurement_batch_gpu(
+        ll_measurement_raw = gpu_batch_utils.compute_measurement_batch_gpu(
             gpu_measurement_model,
             ind_data,
             ind_lvs_list,
             params_dict['measurement']
         )
+
+        # ✅ 측정모델 우도 스케일링 (가중치 적용)
+        ll_measurement = ll_measurement_raw * measurement_weight
 
         # 선택모델 우도 (GPU 배치)
         ll_choice = gpu_batch_utils.compute_choice_batch_gpu(
@@ -1161,11 +1191,42 @@ def compute_all_individuals_likelihood_full_batch_gpu(
             ind_lvs_list,
             params_dict['structural'],
             ind_draws,
-            structural_model
+            structural_model,
+            iteration_logger=iteration_logger if (ind_idx == 0 and log_level == 'DETAILED') else None
         )
 
         # 결합 우도 (R,)
         draw_lls = ll_measurement + ll_choice + ll_structural
+
+        # 🔍 디버깅: 첫 번째 개인의 첫 번째 draw 우도 성분 로깅
+        if ind_idx == 0 and iteration_logger and log_level == 'DETAILED':
+            if use_scaling:
+                iteration_logger.info(
+                    f"\n[개인 1, Draw #0] 우도 성분 (스케일링 적용)\n"
+                    f"  ll_measurement_raw: {ll_measurement_raw[0]:.4f} (원본)\n"
+                    f"  ll_measurement: {ll_measurement[0]:.4f} (×{measurement_weight:.6f})\n"
+                    f"  ll_choice: {ll_choice[0]:.4f} (원본)\n"
+                    f"  ll_structural: {ll_structural[0]:.4f} (원본)\n"
+                    f"  draw_ll (합계): {draw_lls[0]:.4f}\n"
+                    f"\n"
+                    f"  ⚠️ 우도 성분 비율:\n"
+                    f"    측정모델: {ll_measurement[0]:.1f} ({100*ll_measurement[0]/draw_lls[0]:.1f}%)\n"
+                    f"    선택모델: {ll_choice[0]:.1f} ({100*ll_choice[0]/draw_lls[0]:.1f}%)\n"
+                    f"    구조모델: {ll_structural[0]:.1f} ({100*ll_structural[0]/draw_lls[0]:.1f}%)"
+                )
+            else:
+                iteration_logger.info(
+                    f"\n[개인 1, Draw #0] 우도 성분 (원본, 스케일링 없음)\n"
+                    f"  ll_measurement: {ll_measurement[0]:.4f}\n"
+                    f"  ll_choice: {ll_choice[0]:.4f}\n"
+                    f"  ll_structural: {ll_structural[0]:.4f}\n"
+                    f"  draw_ll (합계): {draw_lls[0]:.4f}\n"
+                    f"\n"
+                    f"  ⚠️ 우도 성분 비율:\n"
+                    f"    측정모델: {ll_measurement[0]:.1f} ({100*ll_measurement[0]/draw_lls[0]:.1f}%)\n"
+                    f"    선택모델: {ll_choice[0]:.1f} ({100*ll_choice[0]/draw_lls[0]:.1f}%)\n"
+                    f"    구조모델: {ll_structural[0]:.1f} ({100*ll_structural[0]/draw_lls[0]:.1f}%)"
+                )
 
         # 유한성 체크
         draw_lls = np.where(np.isfinite(draw_lls), draw_lls, -1e10)

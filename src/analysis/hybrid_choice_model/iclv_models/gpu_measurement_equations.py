@@ -466,23 +466,30 @@ class GPUContinuousLinearMeasurement:
         Args:
             data: 관측지표 데이터
             latent_var: 잠재변수 값
-            params: {'zeta': ..., 'sigma_sq': ...}
+            params: {'zeta': ..., 'sigma_sq': ..., 'alpha': ...}
+                - 'alpha': 절편 (n_indicators,) - 선택적
 
         Returns:
             로그우도 값
         """
         zeta = params['zeta']
         sigma_sq = params['sigma_sq']
+        alpha = params.get('alpha', None)  # ✅ 절편 (선택적)
 
         if self.use_gpu:
             # GPU 계산
             zeta_gpu = cp.asarray(zeta)
             sigma_sq_gpu = cp.asarray(sigma_sq)
             latent_var_gpu = cp.asarray(latent_var)
+            if alpha is not None:
+                alpha_gpu = cp.asarray(alpha)
+            else:
+                alpha_gpu = None
         else:
             zeta_gpu = zeta
             sigma_sq_gpu = sigma_sq
             latent_var_gpu = latent_var
+            alpha_gpu = alpha
 
         total_ll = 0.0
         first_row = data.iloc[0]
@@ -496,11 +503,17 @@ class GPUContinuousLinearMeasurement:
             if pd.isna(y_obs):
                 continue
 
-            # 예측값
+            # ✅ 예측값: Y_pred = α + ζ * LV (절편 포함)
             if self.use_gpu:
-                y_pred = float(zeta_gpu[i] * latent_var_gpu)
+                if alpha_gpu is not None:
+                    y_pred = float(alpha_gpu[i] + zeta_gpu[i] * latent_var_gpu)
+                else:
+                    y_pred = float(zeta_gpu[i] * latent_var_gpu)
             else:
-                y_pred = zeta_gpu[i] * latent_var_gpu
+                if alpha_gpu is not None:
+                    y_pred = alpha_gpu[i] + zeta_gpu[i] * latent_var_gpu
+                else:
+                    y_pred = zeta_gpu[i] * latent_var_gpu
 
             # 잔차
             residual = y_obs - y_pred
@@ -545,7 +558,8 @@ class GPUContinuousLinearMeasurement:
         Args:
             data_batch: (n_batch, n_indicators) 관측 데이터
             latent_vars: (n_batch,) 잠재변수 값들
-            params: {'zeta': ..., 'sigma_sq': ...}
+            params: {'zeta': ..., 'sigma_sq': ..., 'alpha': ...}
+                - 'alpha': 절편 (n_indicators,) - 선택적
 
         Returns:
             (n_batch,) 로그우도 배열
@@ -567,6 +581,12 @@ class GPUContinuousLinearMeasurement:
         data_gpu = cp.asarray(data_batch)      # (n_batch, n_indicators)
         lv_gpu = cp.asarray(latent_vars)       # (n_batch,)
 
+        # ✅ 절편 (선택적)
+        if 'alpha' in params and params['alpha'] is not None:
+            alpha = cp.asarray(params['alpha'])  # (n_indicators,)
+        else:
+            alpha = None
+
         n_batch = len(latent_vars)
         ll_batch = cp.zeros(n_batch)
 
@@ -574,14 +594,17 @@ class GPUContinuousLinearMeasurement:
         for i in range(self.n_indicators):
             y_obs = data_gpu[:, i]  # (n_batch,)
 
-            # 예측값: Y_pred = ζ * LV
-            y_pred = zeta[i] * lv_gpu  # (n_batch,)
+            # ✅ 예측값: Y_pred = α + ζ * LV (절편 포함)
+            if alpha is not None:
+                y_pred = alpha[i] + zeta[i] * lv_gpu  # (n_batch,)
+            else:
+                y_pred = zeta[i] * lv_gpu  # (n_batch,) - 절편 없음 (하위 호환성)
 
             # 잔차
             residual = y_obs - y_pred  # (n_batch,)
 
             # 정규분포 로그우도
-            # log p(y|LV) = -0.5 * log(2π * σ²) - 0.5 * (y - ζ*LV)² / σ²
+            # log p(y|LV) = -0.5 * log(2π * σ²) - 0.5 * (y - α - ζ*LV)² / σ²
             ll_i = -0.5 * cp.log(2 * cp.pi * sigma_sq[i])  # 스칼라
             ll_i = ll_i - 0.5 * (residual ** 2) / sigma_sq[i]  # (n_batch,)
 

@@ -1649,6 +1649,10 @@ class SimultaneousEstimator:
                     )
 
             # ✅ 구조모델: LV = γ*X + η (올바른 인자 전달)
+            # 🔍 디버깅: 첫 번째 draw에 로거 전달
+            if log_debug and j == 0:
+                structural_model._iteration_logger = self.iteration_logger
+
             lv = structural_model.predict(
                 data=ind_data,
                 exo_draws=exo_draws,
@@ -1662,10 +1666,26 @@ class SimultaneousEstimator:
                     f"  lv: {lv}"
                 )
 
+                # 🔍 첫 번째 draw 이후 디버깅 플래그 비활성화
+                if hasattr(structural_model, '_debug_predict'):
+                    structural_model._debug_predict = False
+                if hasattr(structural_model, '_debug_ll'):
+                    structural_model._debug_ll = False
+
             # 측정모델 우도: P(Indicators|LV)
             ll_measurement = measurement_model.log_likelihood(
                 ind_data, lv, param_dict['measurement']
             )
+
+            # 🔍 디버깅: 첫 번째 draw에서 측정모델 파라미터 확인
+            if log_debug and j == 0:
+                first_lv = list(param_dict['measurement'].keys())[0]
+                first_params = param_dict['measurement'][first_lv]
+                self.iteration_logger.info(
+                    f"[개인 {ind_id}, Draw #0] 측정모델 파라미터 (첫 번째 LV: {first_lv})\n"
+                    f"  zeta (처음 3개): {first_params['zeta'][:3] if len(first_params['zeta']) >= 3 else first_params['zeta']}\n"
+                    f"  sigma_sq (처음 3개): {first_params['sigma_sq'][:3] if len(first_params['sigma_sq']) >= 3 else first_params['sigma_sq']}"
+                )
 
             # Panel Product: 개인의 여러 선택 상황에 대한 확률을 곱함
             choice_set_lls = []
@@ -1681,6 +1701,10 @@ class SimultaneousEstimator:
             ll_choice = sum(choice_set_lls)
 
             # ✅ 구조모델 우도: P(LV|X) - 정규분포 가정 (올바른 인자 전달)
+            # 🔍 디버깅: 첫 번째 draw에 로거 전달
+            if log_debug and j == 0:
+                structural_model._iteration_logger = self.iteration_logger
+
             ll_structural = structural_model.log_likelihood(
                 data=ind_data,
                 latent_vars=lv,
@@ -1698,7 +1722,12 @@ class SimultaneousEstimator:
                     f"  ll_measurement: {ll_measurement:.4f}\n"
                     f"  ll_choice: {ll_choice:.4f}\n"
                     f"  ll_structural: {ll_structural:.4f}\n"
-                    f"  draw_ll (합계): {draw_ll:.4f}"
+                    f"  draw_ll (합계): {draw_ll:.4f}\n"
+                    f"\n"
+                    f"  ⚠️ 우도 성분 비율:\n"
+                    f"    측정모델: {ll_measurement:.1f} ({100*ll_measurement/draw_ll:.1f}%)\n"
+                    f"    선택모델: {ll_choice:.1f} ({100*ll_choice/draw_ll:.1f}%)\n"
+                    f"    구조모델: {ll_structural:.1f} ({100*ll_structural/draw_ll:.1f}%)"
                 )
 
             # 🔴 수정: -inf를 매우 작은 값으로 대체 (연속성 확보 for gradient)
@@ -1739,6 +1768,10 @@ class SimultaneousEstimator:
                 f"  선택모델 파라미터 (일부): {list(param_dict['choice'].keys())[:5]}...\n"
                 f"{'='*70}\n"
             )
+
+        # 🔍 구조모델 디버깅 플래그 활성화 (매 iteration마다, 첫 번째 개인의 첫 번째 draw만)
+        structural_model._debug_predict = True
+        structural_model._debug_ll = True
 
         # 메모리 체크 (Halton draws 가져오기 전)
         if hasattr(self, 'memory_monitor') and hasattr(self, '_likelihood_call_count'):

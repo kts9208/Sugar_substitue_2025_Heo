@@ -15,7 +15,7 @@ import warnings
 # semopy 임포트
 try:
     import semopy
-    from semopy import Model
+    from semopy import Model  # Model 클래스 사용 (절편은 수동 계산)
     from semopy.stats import calc_stats
 except ImportError as e:
     logging.error("semopy 라이브러리를 찾을 수 없습니다. pip install semopy로 설치해주세요.")
@@ -58,7 +58,7 @@ class SemopyAnalyzer:
         try:
             # 데이터 전처리
             clean_data = self._prepare_data(data)
-            
+
             # 모델 생성
             self.model = Model(model_spec)
 

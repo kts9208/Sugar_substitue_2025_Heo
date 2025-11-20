@@ -368,6 +368,7 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
             # 로깅 레벨 설정
             log_level = 'DETAILED' if self._current_iteration == 1 else 'MINIMAL'
 
+            # ✅ 최적화 중에는 스케일링 사용 (use_scaling=True)
             total_ll = gpu_gradient_batch.compute_all_individuals_likelihood_full_batch_gpu(
                 self.gpu_measurement_model,
                 all_ind_data,
@@ -376,7 +377,8 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
                 structural_model,
                 choice_model,
                 iteration_logger=self.iteration_logger if hasattr(self, 'iteration_logger') else None,
-                log_level=log_level
+                log_level=log_level,
+                use_scaling=True  # 최적화 중에는 측정모델 우도 스케일링
             )
         else:
             # 기존 방식: 개인별 순차 처리
@@ -859,4 +861,81 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
                 }
 
         return structured
+
+    def _process_results(self, optimization_result,
+                        measurement_model,
+                        structural_model,
+                        choice_model) -> Dict:
+        """
+        최적화 결과 처리 (언스케일링된 우도 계산 포함)
+
+        ✅ 최적화는 스케일링된 우도로 수행
+        ✅ 최종 우도는 언스케일링하여 AIC/BIC 계산
+        """
+        # 부모 클래스의 _process_results 호출
+        results = super()._process_results(
+            optimization_result,
+            measurement_model,
+            structural_model,
+            choice_model
+        )
+
+        # ✅ 언스케일링된 우도 재계산 (AIC/BIC용)
+        if self.use_gpu and self.use_full_parallel:
+            self.iteration_logger.info("\n" + "="*80)
+            self.iteration_logger.info("최적화 완료 - 언스케일링된 우도 재계산 (AIC/BIC용)")
+            self.iteration_logger.info("="*80)
+
+            # 최종 파라미터로 언스케일링된 우도 계산
+            param_dict = self._unpack_parameters(
+                optimization_result.x,
+                measurement_model,
+                structural_model,
+                choice_model
+            )
+
+            draws = self.halton_generator.get_draws()
+            individual_ids = self.data[self.config.individual_id_column].unique()
+
+            # 모든 개인 데이터 준비
+            all_ind_data = []
+            for ind_id in individual_ids:
+                ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
+                all_ind_data.append(ind_data)
+
+            from . import gpu_gradient_batch
+
+            # ✅ use_scaling=False로 언스케일링된 우도 계산
+            unscaled_ll = gpu_gradient_batch.compute_all_individuals_likelihood_full_batch_gpu(
+                self.gpu_measurement_model,
+                all_ind_data,
+                draws,
+                param_dict,
+                structural_model,
+                choice_model,
+                iteration_logger=self.iteration_logger,
+                log_level='DETAILED',
+                use_scaling=False  # 언스케일링
+            )
+
+            self.iteration_logger.info(f"\n스케일링된 우도 (최적화용): {results['log_likelihood']:.4f}")
+            self.iteration_logger.info(f"언스케일링된 우도 (AIC/BIC용): {unscaled_ll:.4f}")
+
+            # ✅ 언스케일링된 우도로 AIC/BIC 재계산
+            results['log_likelihood_scaled'] = results['log_likelihood']  # 스케일링된 우도 보존
+            results['log_likelihood'] = unscaled_ll  # 언스케일링된 우도로 교체
+
+            # AIC, BIC 재계산
+            ll = unscaled_ll
+            k = results['n_parameters']
+            n = results['n_observations']
+
+            results['aic'] = -2 * ll + 2 * k
+            results['bic'] = -2 * ll + k * np.log(n)
+
+            self.iteration_logger.info(f"AIC (언스케일링): {results['aic']:.2f}")
+            self.iteration_logger.info(f"BIC (언스케일링): {results['bic']:.2f}")
+            self.iteration_logger.info("="*80)
+
+        return results
 

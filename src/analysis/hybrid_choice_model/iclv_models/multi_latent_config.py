@@ -425,12 +425,13 @@ def create_sugar_substitute_multi_lv_config(
 
     # 3. 선택모델 설정
     # ✅ 순차추정과 동일한 설정: Multinomial Logit (3 alternatives)
+    # ✅ Multinomial Logit에서는 sugar_free 속성이 아니라 sugar_content로 대안 구분
     if choice_config_overrides:
         # ✅ 사용자 정의 설정 사용
         print(f"[DEBUG] choice_config_overrides 사용: {choice_config_overrides}")
 
         choice_config = ChoiceConfig(
-            choice_attributes=['sugar_free', 'health_label', 'price'],
+            choice_attributes=['health_label', 'price'],  # ✅ sugar_free 제거 (multinomial에서는 sugar_content로 대안 구분)
             choice_type='multinomial',  # ✅ binary → multinomial
             n_alternatives=3,           # ✅ 3개 대안 (일반당, 무설탕, opt-out)
             price_variable='price',
@@ -443,7 +444,7 @@ def create_sugar_substitute_multi_lv_config(
     else:
         # ✅ 디폴트: 모든 LV 주효과
         choice_config = ChoiceConfig(
-            choice_attributes=['sugar_free', 'health_label', 'price'],
+            choice_attributes=['health_label', 'price'],  # ✅ sugar_free 제거 (multinomial에서는 sugar_content로 대안 구분)
             choice_type='multinomial',  # ✅ binary → multinomial
             n_alternatives=3,           # ✅ 3개 대안 (일반당, 무설탕, opt-out)
             price_variable='price',

@@ -149,6 +149,28 @@ class SEMEstimator:
             (~params['lval'].isin(latent_vars))
         ].copy()
 
+        # 절편 계산 (각 지표의 평균)
+        all_indicators = []
+        for config in measurement_model.configs.values():
+            all_indicators.extend(config.indicators)
+
+        indicator_means = unique_data[all_indicators].mean()
+
+        # 절편 DataFrame 생성 (semopy params 형식과 동일)
+        intercepts_data = []
+        for indicator in all_indicators:
+            intercepts_data.append({
+                'lval': indicator,
+                'op': '~',
+                'rval': '1',
+                'Estimate': indicator_means[indicator],
+                'Est. Std': None,  # 표준화 추정치 없음
+                'Std. Err': None,  # 표준오차 없음
+                'z-value': None,
+                'p-value': None
+            })
+        intercepts = pd.DataFrame(intercepts_data)
+
         # 잠재변수 간 상관관계 (공분산)
         correlations = params[
             (params['op'] == '~~') &
@@ -159,6 +181,7 @@ class SEMEstimator:
 
         logger.info(f"요인적재량: {len(loadings)}개")
         logger.info(f"측정 오차분산: {len(measurement_errors)}개")
+        logger.info(f"절편 (지표 평균으로 계산): {len(intercepts)}개")
         logger.info(f"잠재변수 간 상관관계: {len(correlations)}개")
 
         # 6. 적합도 지수
@@ -173,6 +196,7 @@ class SEMEstimator:
             'params': params,
             'loadings': loadings,
             'measurement_errors': measurement_errors,
+            'intercepts': intercepts,  # ✅ 절편 추가
             'correlations': correlations,
             'fit_indices': fit_indices,
             'log_likelihood': log_likelihood

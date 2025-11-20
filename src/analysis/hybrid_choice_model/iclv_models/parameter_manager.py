@@ -253,25 +253,29 @@ class ParameterManager:
         if hasattr(measurement_model, 'models'):
             for lv_name, model in measurement_model.models.items():
                 # ✅ 모델 객체에서 직접 파라미터 추출 (config가 아님!)
-                # test_gpu_batch_iclv.py에서 model.config.zeta/sigma_sq로 설정했으므로
+                # test_gpu_batch_iclv.py에서 model.config.zeta/sigma_sq/alpha로 설정했으므로
                 # config에서 추출
                 if hasattr(model, 'config'):
                     zeta = getattr(model.config, 'zeta', np.array([]))
                     sigma_sq = getattr(model.config, 'sigma_sq', np.array([]))
+                    alpha = getattr(model.config, 'alpha', None)  # ✅ 절편 추가
                 else:
                     # config가 없으면 모델 객체에서 직접
                     zeta = getattr(model, 'zeta', np.array([]))
                     sigma_sq = getattr(model, 'sigma_sq', np.array([]))
+                    alpha = getattr(model, 'alpha', None)  # ✅ 절편 추가
 
                 # 디버깅: 추출된 파라미터 로깅
                 if len(zeta) == 0 or len(sigma_sq) == 0:
                     self.logger.warning(f"[array_to_dict_optimized] {lv_name}: zeta={len(zeta)}개, sigma_sq={len(sigma_sq)}개 (빈 배열!)")
                 else:
-                    self.logger.debug(f"[array_to_dict_optimized] {lv_name}: zeta={len(zeta)}개, sigma_sq={len(sigma_sq)}개")
+                    alpha_info = f", alpha={len(alpha)}개" if alpha is not None else ", alpha=None"
+                    self.logger.debug(f"[array_to_dict_optimized] {lv_name}: zeta={len(zeta)}개, sigma_sq={len(sigma_sq)}개{alpha_info}")
 
                 param_dict['measurement'][lv_name] = {
                     'zeta': zeta,
-                    'sigma_sq': sigma_sq
+                    'sigma_sq': sigma_sq,
+                    'alpha': alpha  # ✅ 절편 추가
                 }
 
         # ✅ 구조모델 + 선택모델 파라미터: 배열에서 추출
