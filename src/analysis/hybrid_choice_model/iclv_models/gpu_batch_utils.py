@@ -2,6 +2,8 @@
 GPU 배치 처리 유틸리티 함수들
 
 SimultaneousEstimator에서 사용할 GPU 배치 계산 함수들을 제공합니다.
+
+Updated: 2025-11-20 - 에러 처리 개선
 """
 
 import numpy as np
@@ -298,8 +300,25 @@ def compute_choice_batch_gpu(ind_data: pd.DataFrame,
                 sum_exp_V = cp.sum(exp_V)
 
                 # 선택된 대안의 확률
-                chosen_idx = start_idx + cp.where(choices_gpu[start_idx:end_idx] == 1)[0][0]
-                chosen_alt_idx = int(chosen_idx - start_idx)
+                # ✅ 최적화: cp.where() 대신 argmax 사용 (더 빠름)
+                choices_cs = choices_gpu[start_idx:end_idx]  # (3,)
+                chosen_alt_idx = int(cp.argmax(choices_cs))  # 선택된 대안의 인덱스 (0, 1, or 2)
+
+                # 에러 체크: 선택된 대안이 없는 경우
+                if float(choices_cs[chosen_alt_idx]) != 1.0:
+                    print(f"\n{'='*80}")
+                    print(f"❌ 선택모델 우도 계산 에러: Choice set {cs_idx}에 선택된 대안이 없습니다!")
+                    print(f"{'='*80}")
+                    print(f"Draw index: {draw_idx}/{n_draws}")
+                    print(f"Choice set index: {cs_idx}/{n_choice_sets}")
+                    print(f"Choice set range: [{start_idx}:{end_idx}]")
+                    print(f"Choices in this set: {cp.asnumpy(choices_cs)}")
+                    print(f"Utilities: {cp.asnumpy(V_cs)}")
+                    print(f"개인 데이터 shape: {ind_data.shape}")
+                    print(f"전체 choices shape: {choices_gpu.shape}")
+                    print(f"{'='*80}\n")
+                    raise ValueError(f"Choice set {cs_idx}에 선택된 대안이 없습니다!")
+
                 prob_chosen = exp_V[chosen_alt_idx] / sum_exp_V
 
                 # 로그우도 누적
@@ -342,7 +361,33 @@ def compute_choice_batch_gpu(ind_data: pd.DataFrame,
 
         # 유한성 체크
         if not cp.isfinite(ll):
-            ll = -1e10
+            print(f"\n{'='*80}")
+            print(f"❌ 선택모델 우도가 비유한값(inf/nan)입니다!")
+            print(f"{'='*80}")
+            print(f"Draw index: {draw_idx}/{n_draws}")
+            print(f"Log-likelihood value: {ll}")
+            print(f"개인 데이터 shape: {ind_data.shape}")
+            if use_alternative_specific:
+                print(f"Choice sets: {n_choice_sets}")
+                print(f"Utilities (first 10): {cp.asnumpy(utility[:10])}")
+                print(f"Utilities (last 10): {cp.asnumpy(utility[-10:])}")
+                print(f"Utilities stats: min={float(cp.min(utility)):.4f}, max={float(cp.max(utility)):.4f}, mean={float(cp.mean(utility)):.4f}")
+            else:
+                print(f"Utilities (first 10): {cp.asnumpy(utility[:10])}")
+                print(f"Probabilities (first 10): {cp.asnumpy(prob[:10])}")
+            print(f"LV values: {lv_dict}")
+            print(f"Parameters:")
+            if use_alternative_specific:
+                print(f"  asc_sugar: {asc_sugar}")
+                print(f"  asc_sugar_free: {asc_sugar_free}")
+                print(f"  beta: {beta}")
+                print(f"  theta_params: {theta_params}")
+            else:
+                print(f"  intercept: {intercept}")
+                print(f"  beta: {beta}")
+                print(f"  lambda_lvs: {lambda_lvs}")
+            print(f"{'='*80}\n")
+            raise ValueError(f"선택모델 우도가 비유한값입니다: {ll}")
 
         draw_lls.append(float(ll))
 

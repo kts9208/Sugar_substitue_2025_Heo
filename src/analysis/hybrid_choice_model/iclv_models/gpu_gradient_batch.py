@@ -1229,7 +1229,23 @@ def compute_all_individuals_likelihood_full_batch_gpu(
                 )
 
         # 유한성 체크
-        draw_lls = np.where(np.isfinite(draw_lls), draw_lls, -1e10)
+        non_finite_mask = ~np.isfinite(draw_lls)
+        if np.any(non_finite_mask):
+            non_finite_indices = np.where(non_finite_mask)[0]
+            print(f"\n{'='*80}")
+            print(f"❌ 개인 {ind_idx+1}에서 비유한 우도 발견!")
+            print(f"{'='*80}")
+            print(f"비유한 draws 수: {len(non_finite_indices)}/{n_draws}")
+            print(f"비유한 draw 인덱스: {non_finite_indices[:10]}...")  # 처음 10개만
+            print(f"비유한 우도 값: {draw_lls[non_finite_indices[:10]]}")
+            print(f"\n우도 성분 (첫 번째 비유한 draw):")
+            bad_idx = non_finite_indices[0]
+            print(f"  ll_measurement[{bad_idx}]: {ll_measurement[bad_idx]:.4f}")
+            print(f"  ll_choice[{bad_idx}]: {ll_choice[bad_idx]:.4f}")
+            print(f"  ll_structural[{bad_idx}]: {ll_structural[bad_idx]:.4f}")
+            print(f"  draw_ll[{bad_idx}]: {draw_lls[bad_idx]}")
+            print(f"{'='*80}\n")
+            raise ValueError(f"개인 {ind_idx+1}에서 비유한 우도 발견!")
 
         # 개인 우도: log(1/R * sum(exp(draw_lls)))
         person_ll = logsumexp(draw_lls) - np.log(n_draws)
