@@ -262,21 +262,7 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
         self.iteration_logger.info(f"Iteration {iteration} - 파라미터 값")
         self.iteration_logger.info("="*80)
 
-        # 측정모델 파라미터
-        self.iteration_logger.info("\n[측정모델 파라미터]")
-        for lv_idx, (lv_name, lv_params) in enumerate(param_dict['measurement'].items()):
-            if log_level == 'DETAILED' or lv_idx == 0:
-                self.iteration_logger.info(f"  {lv_name}:")
-                zeta = lv_params['zeta']
-                # 전체 파라미터 출력 (초기값 설정용)
-                self.iteration_logger.info(f"    - zeta: {zeta}")
-
-                if 'sigma_sq' in lv_params:
-                    sigma_sq = lv_params['sigma_sq']
-                    self.iteration_logger.info(f"    - sigma_sq: {sigma_sq}")
-                elif 'tau' in lv_params:
-                    tau = lv_params['tau']
-                    self.iteration_logger.info(f"    - tau shape: {tau.shape}")
+        # ✅ 측정모델 파라미터 로깅 제거 (고정값이므로 불필요)
 
         # 구조모델 파라미터
         self.iteration_logger.info("\n[구조모델 파라미터]")

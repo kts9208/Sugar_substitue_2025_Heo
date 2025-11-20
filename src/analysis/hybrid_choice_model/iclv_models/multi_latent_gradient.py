@@ -447,9 +447,7 @@ class MultiLatentJointGradient:
 
         if gpu_ready:
             # GPU 모드: 완전 병렬 처리
-            if iteration_logger:
-                mode = "완전 병렬" if self.use_full_parallel else "배치"
-                iteration_logger.info(f"🚀 GPU {mode} 모드로 gradient 계산")
+            # ✅ 로깅 제거 (중복)
 
             return self.compute_all_individuals_gradients_full_batch(
                 all_ind_data, all_ind_draws, params_dict,
@@ -458,8 +456,7 @@ class MultiLatentJointGradient:
             )
         else:
             # CPU 모드: 순차 처리
-            if iteration_logger:
-                iteration_logger.info("⚙️ CPU 순차 모드로 gradient 계산")
+            # ✅ 로깅 제거 (중복)
 
             return self.compute_all_individuals_gradients_batch(
                 all_ind_data, all_ind_draws, params_dict,

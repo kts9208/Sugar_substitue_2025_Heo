@@ -2210,9 +2210,7 @@ class SimultaneousEstimator:
             params, measurement_model, structural_model, choice_model
         )
 
-        # 🔍 디버깅: param_dict['choice'] 키 확인
-        if 'choice' in param_dict:
-            self.iteration_logger.info(f"[DEBUG _compute_gradient] param_dict['choice'] 키: {list(param_dict['choice'].keys())}")
+        # ✅ 디버깅 로그 제거 (불필요한 중복)
 
         # 병렬처리 설정 가져오기
         use_parallel = getattr(self.config.estimation, 'use_parallel', False)
@@ -2234,7 +2232,7 @@ class SimultaneousEstimator:
 
             # 개인 데이터 준비
             individual_ids = self.data[self.config.individual_id_column].unique()
-            self.iteration_logger.info(f"처리할 개인 수: {len(individual_ids)}")
+            # ✅ 로깅 제거 (중복)
 
             all_ind_data = []
             all_ind_draws = []
@@ -2449,25 +2447,9 @@ class SimultaneousEstimator:
             gpu_state: GPU 계산 상태 객체
             prefix: 로그 메시지 접두사
         """
-        separator = "=" * 80
-        mode_msg = f"{prefix}Gradient 계산 모드: {gpu_state.get_mode_name()}"
-
-        # 콘솔과 파일 모두에 기록
-        self.iteration_logger.info(separator)
-        self.iteration_logger.info(mode_msg)
-        self.iteration_logger.info(separator)
-
-        self.iteration_logger.info(separator)
-        self.iteration_logger.info(mode_msg)
-        self.iteration_logger.info(separator)
-
-        # 상세 정보는 파일에만 기록
-        status = gpu_state.get_status_dict()
-        self.iteration_logger.info(f"{prefix}  enabled: {status['enabled']}")
-        self.iteration_logger.info(f"{prefix}  measurement_model: {status['measurement_model_available']}")
-        self.iteration_logger.info(f"{prefix}  full_parallel: {status['full_parallel']}")
-        self.iteration_logger.info(f"{prefix}  is_ready: {status['is_ready']}")
-        self.iteration_logger.info(separator)
+        # ✅ 로깅 제거 (중복 및 불필요)
+        # GPU 상태는 초기화 시 한 번만 로깅하면 충분
+        pass
 
     def _process_results(self, optimization_result,
                         measurement_model,

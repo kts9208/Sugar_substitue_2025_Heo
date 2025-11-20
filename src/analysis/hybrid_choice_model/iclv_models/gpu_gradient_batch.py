@@ -1045,7 +1045,7 @@ def compute_all_individuals_likelihood_full_batch_gpu(
     choice_model,
     iteration_logger=None,
     log_level: str = 'MINIMAL',
-    use_scaling: bool = True
+    use_scaling: bool = False  # ✅ 스케일링 비활성화 (기본값)
 ) -> float:
     """
     모든 개인의 우도를 완전 GPU batch로 동시 계산
@@ -1138,6 +1138,11 @@ def compute_all_individuals_likelihood_full_batch_gpu(
     likelihood_start = time.time()
     total_ll = 0.0
 
+    # 📊 전체 우도 성분 누적 (로깅용)
+    total_ll_measurement = 0.0
+    total_ll_choice = 0.0
+    total_ll_structural = 0.0
+
     # 🔍 측정모델 지표 수 계산 (스케일링용)
     n_measurement_indicators = 0
     if hasattr(gpu_measurement_model, 'models'):
@@ -1146,21 +1151,6 @@ def compute_all_individuals_likelihood_full_batch_gpu(
 
     # 스케일링 가중치 계산
     measurement_weight = 1.0 / n_measurement_indicators if (use_scaling and n_measurement_indicators > 0) else 1.0
-
-    if iteration_logger and log_level == 'DETAILED':
-        if use_scaling:
-            iteration_logger.info(
-                f"\n[우도 스케일링 정보]\n"
-                f"  측정모델 지표 수: {n_measurement_indicators}\n"
-                f"  측정모델 가중치: {measurement_weight:.6f} (= 1/{n_measurement_indicators})\n"
-                f"  → 측정모델 우도만 스케일링 (선택/구조모델은 원본 유지)"
-            )
-        else:
-            iteration_logger.info(
-                f"\n[우도 스케일링 정보]\n"
-                f"  스케일링 비활성화 (use_scaling=False)\n"
-                f"  → 모든 우도를 원본 그대로 사용 (AIC/BIC 계산용)"
-            )
 
     for ind_idx, (ind_data, ind_lvs_list, ind_draws) in enumerate(zip(all_ind_data, all_lvs_list, all_ind_draws)):
         # 기존 gpu_batch_utils 함수 활용
@@ -1192,41 +1182,20 @@ def compute_all_individuals_likelihood_full_batch_gpu(
             params_dict['structural'],
             ind_draws,
             structural_model,
-            iteration_logger=iteration_logger if (ind_idx == 0 and log_level == 'DETAILED') else None
+            iteration_logger=None  # ✅ 구조모델 내부 로깅 비활성화
         )
 
         # 결합 우도 (R,)
         draw_lls = ll_measurement + ll_choice + ll_structural
 
-        # 🔍 디버깅: 첫 번째 개인의 첫 번째 draw 우도 성분 로깅
-        if ind_idx == 0 and iteration_logger and log_level == 'DETAILED':
-            if use_scaling:
-                iteration_logger.info(
-                    f"\n[개인 1, Draw #0] 우도 성분 (스케일링 적용)\n"
-                    f"  ll_measurement_raw: {ll_measurement_raw[0]:.4f} (원본)\n"
-                    f"  ll_measurement: {ll_measurement[0]:.4f} (×{measurement_weight:.6f})\n"
-                    f"  ll_choice: {ll_choice[0]:.4f} (원본)\n"
-                    f"  ll_structural: {ll_structural[0]:.4f} (원본)\n"
-                    f"  draw_ll (합계): {draw_lls[0]:.4f}\n"
-                    f"\n"
-                    f"  ⚠️ 우도 성분 비율:\n"
-                    f"    측정모델: {ll_measurement[0]:.1f} ({100*ll_measurement[0]/draw_lls[0]:.1f}%)\n"
-                    f"    선택모델: {ll_choice[0]:.1f} ({100*ll_choice[0]/draw_lls[0]:.1f}%)\n"
-                    f"    구조모델: {ll_structural[0]:.1f} ({100*ll_structural[0]/draw_lls[0]:.1f}%)"
-                )
-            else:
-                iteration_logger.info(
-                    f"\n[개인 1, Draw #0] 우도 성분 (원본, 스케일링 없음)\n"
-                    f"  ll_measurement: {ll_measurement[0]:.4f}\n"
-                    f"  ll_choice: {ll_choice[0]:.4f}\n"
-                    f"  ll_structural: {ll_structural[0]:.4f}\n"
-                    f"  draw_ll (합계): {draw_lls[0]:.4f}\n"
-                    f"\n"
-                    f"  ⚠️ 우도 성분 비율:\n"
-                    f"    측정모델: {ll_measurement[0]:.1f} ({100*ll_measurement[0]/draw_lls[0]:.1f}%)\n"
-                    f"    선택모델: {ll_choice[0]:.1f} ({100*ll_choice[0]/draw_lls[0]:.1f}%)\n"
-                    f"    구조모델: {ll_structural[0]:.1f} ({100*ll_structural[0]/draw_lls[0]:.1f}%)"
-                )
+        # 📊 전체 우도 성분 누적 (개인별 평균)
+        person_ll_measurement = logsumexp(ll_measurement) - np.log(n_draws)
+        person_ll_choice = logsumexp(ll_choice) - np.log(n_draws)
+        person_ll_structural = logsumexp(ll_structural) - np.log(n_draws)
+
+        total_ll_measurement += person_ll_measurement
+        total_ll_choice += person_ll_choice
+        total_ll_structural += person_ll_structural
 
         # 유한성 체크
         non_finite_mask = ~np.isfinite(draw_lls)
@@ -1255,10 +1224,19 @@ def compute_all_individuals_likelihood_full_batch_gpu(
     total_time = time.time() - total_start
 
     if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+        # 📊 전체 우도 성분 로깅
         iteration_logger.info(
-            f"  우도 계산 완료 ({likelihood_time:.3f}초)\n"
-            f"  총 시간: {total_time:.3f}초\n"
-            f"  최종 LL: {total_ll:.4f}\n"
+            f"\n{'='*80}\n"
+            f"📊 우도 계산 완료\n"
+            f"{'='*80}\n"
+            f"  총 시간: {total_time:.3f}초 (LV: {lv_time:.3f}초, 우도: {likelihood_time:.3f}초)\n"
+            f"\n"
+            f"  전체 로그우도: {total_ll:.4f}\n"
+            f"\n"
+            f"  📈 모델별 우도 성분:\n"
+            f"    측정모델: {total_ll_measurement:.4f} ({100*abs(total_ll_measurement)/abs(total_ll):.1f}%)\n"
+            f"    선택모델: {total_ll_choice:.4f} ({100*abs(total_ll_choice)/abs(total_ll):.1f}%)\n"
+            f"    구조모델: {total_ll_structural:.4f} ({100*abs(total_ll_structural)/abs(total_ll):.1f}%)\n"
             f"{'='*80}"
         )
 
@@ -1303,49 +1281,19 @@ def compute_all_individuals_gradients_full_batch_gpu(
     n_individuals = len(all_ind_data)
     n_draws = all_ind_draws.shape[1]
 
-    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
-        iteration_logger.info(
-            f"\n{'='*80}\n"
-            f"🚀 완전 GPU Batch Gradient 계산\n"
-            f"{'='*80}\n"
-            f"  개인 수: {n_individuals}명\n"
-            f"  Draws per individual: {n_draws}개\n"
-            f"  총 계산: {n_individuals} × {n_draws} = {n_individuals * n_draws}개 동시 처리\n"
-            f"{'='*80}"
-        )
-
     total_start = time.time()
 
-    # Step 1: 데이터 준비 - 모든 개인 데이터를 3D 배열로 변환
+    # Step 1: 데이터 준비
     prep_start = time.time()
-
-    # 모든 개인이 동일한 행 수를 가진다고 가정 (18행)
     n_rows = len(all_ind_data[0])
-
-    # 필요한 컬럼 추출 (선택 데이터만)
-    # choice_column은 estimator의 config에 있음
-    # 여기서는 사용하지 않으므로 제거
-
     prep_time = time.time() - prep_start
-
-    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
-        iteration_logger.info(
-            f"  데이터 준비 완료 ({prep_time:.3f}초):\n"
-            f"    - all_ind_draws shape: {all_ind_draws.shape}"
-        )
 
     # Step 2: GPU로 데이터 전송
     transfer_start = time.time()
-
     all_draws_gpu = cp.asarray(all_ind_draws)
-
     transfer_time = time.time() - transfer_start
 
     # Step 3: 완전 GPU Batch로 모든 개인 × 모든 draws의 LV 계산
-    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
-        iteration_logger.info(
-            f"  Step 3: 모든 개인 × 모든 draws의 LV 계산 중..."
-        )
 
     lv_start = time.time()
 
@@ -1393,21 +1341,7 @@ def compute_all_individuals_gradients_full_batch_gpu(
 
     lv_time = time.time() - lv_start
 
-    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
-        iteration_logger.info(
-            f"  LV 계산 완료 ({lv_time:.3f}초)"
-        )
-        # 첫 번째 개인의 첫 번째 draw LV 값 출력 (디버깅)
-        if len(all_lvs_list) > 0 and len(all_lvs_list[0]) > 0:
-            first_lv = all_lvs_list[0][0]
-            iteration_logger.info(f"  [디버깅] 첫 번째 개인, 첫 번째 draw LV 값: {first_lv}")
-
     # Step 4: LV를 3D 배열로 변환 (326, 100, 5)
-    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
-        iteration_logger.info(
-            f"  Step 4: LV를 3D 배열로 변환 중..."
-        )
-
     convert_start = time.time()
 
     # LV 이름 순서 정의
@@ -1424,17 +1358,7 @@ def compute_all_individuals_gradients_full_batch_gpu(
 
     convert_time = time.time() - convert_start
 
-    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
-        iteration_logger.info(
-            f"  LV 배열 변환 완료 ({convert_time:.3f}초): shape = {all_lvs_array.shape}"
-        )
-
     # Step 5: 완전 GPU Batch로 모든 개인 × 모든 draws의 gradient 계산
-    if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
-        iteration_logger.info(
-            f"  Step 5: 완전 GPU Batch gradient 계산 중 (1번의 GPU 호출)..."
-        )
-
     grad_start = time.time()
 
     # 균등 가중치 (326, 100)
@@ -1467,14 +1391,11 @@ def compute_all_individuals_gradients_full_batch_gpu(
 
     if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
         iteration_logger.info(
-            f"\n완전 GPU Batch 계산 완료:\n"
-            f"  총 시간: {total_time:.3f}초\n"
-            f"    - 데이터 준비: {prep_time:.3f}초\n"
-            f"    - 데이터 전송 (GPU): {transfer_time:.3f}초\n"
-            f"    - LV 계산: {lv_time:.3f}초\n"
-            f"    - Gradient 계산: {grad_time:.3f}초\n"
-            f"  개인당 시간: {total_time / n_individuals * 1000:.2f}ms\n"
-            f"  처리량: {n_individuals / total_time:.1f} 개인/초"
+            f"\n{'='*80}\n"
+            f"📊 Gradient 계산 완료\n"
+            f"{'='*80}\n"
+            f"  총 시간: {total_time:.3f}초 (LV: {lv_time:.3f}초, Grad: {grad_time:.3f}초)\n"
+            f"{'='*80}"
         )
 
     return all_individual_gradients
