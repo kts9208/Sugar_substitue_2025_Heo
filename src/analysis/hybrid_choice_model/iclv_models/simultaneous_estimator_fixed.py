@@ -1399,19 +1399,27 @@ class SimultaneousEstimator:
 
             # Hessian 역행렬 처리
             if self.config.estimation.calculate_se:
-                # BFGS의 hess_inv가 있으면 사용 (추가 계산 0회!)
+                # Optimizer가 hess_inv를 제공하면 사용 (추가 계산 0회!)
+                # - BFGS: numpy.ndarray로 제공
+                # - L-BFGS-B: LbfgsInvHessProduct 객체로 제공 (todense()로 변환 필요)
                 if hasattr(result, 'hess_inv') and result.hess_inv is not None:
-                    self.iteration_logger.info("Hessian 역행렬: BFGS에서 자동 제공 (추가 계산 0회)")
-                    self.iteration_logger.info("Hessian 역행렬: BFGS에서 자동 제공 (추가 계산 0회)")
-
-                    # ✅ Hessian 역행렬 통계 로깅
                     hess_inv = result.hess_inv
+
+                    # Hessian 역행렬 타입 확인 및 변환
                     if hasattr(hess_inv, 'todense'):
+                        # L-BFGS-B의 경우: LbfgsInvHessProduct → numpy array
+                        self.iteration_logger.info("Hessian 역행렬: L-BFGS-B에서 자동 제공 (LbfgsInvHessProduct)")
+                        self.iteration_logger.info("  → todense()로 numpy 배열로 변환 중...")
                         hess_inv_array = hess_inv.todense()
+                        self.iteration_logger.info(f"  ✅ 변환 완료 (shape: {hess_inv_array.shape})")
                     else:
+                        # BFGS의 경우: 이미 numpy array
+                        self.iteration_logger.info("Hessian 역행렬: BFGS에서 자동 제공 (numpy.ndarray)")
                         hess_inv_array = hess_inv
 
-                    # ✅ Hessian 역행렬을 result에 저장 (나중에 CSV로 저장)
+                    self.iteration_logger.info("  → 추가 계산 0회! (optimizer가 최적화 중 자동 계산)")
+
+                    # ✅ Hessian 역행렬을 저장 (나중에 CSV로 저장)
                     self.hessian_inv_matrix = np.array(hess_inv_array)
 
                     # 대각 원소 (각 파라미터의 분산 근사)
@@ -1421,10 +1429,14 @@ class SimultaneousEstimator:
                     off_diag_mask = ~np.eye(hess_inv_array.shape[0], dtype=bool)
                     off_diag_elements = hess_inv_array[off_diag_mask]
 
+                    # Hessian 역행렬 출처 표시
+                    hess_inv_source = "L-BFGS-B" if hasattr(hess_inv, 'todense') else "BFGS"
+
                     self.iteration_logger.info(
                         f"\n{'='*80}\n"
-                        f"최종 Hessian 역행렬 (H^(-1)) 통계\n"
+                        f"최종 Hessian 역행렬 (H^(-1)) 통계 - {hess_inv_source} 제공\n"
                         f"{'='*80}\n"
+                        f"  출처: {hess_inv_source} optimizer가 최적화 중 자동 계산\n"
                         f"  Shape: {hess_inv_array.shape}\n"
                         f"  대각 원소 (분산 근사):\n"
                         f"    - 범위: [{np.min(diag_elements):.6e}, {np.max(diag_elements):.6e}]\n"
@@ -1453,11 +1465,14 @@ class SimultaneousEstimator:
                     # (HESSIAN_ROW 로그 삭제 - 로그 파일 크기 절약)
 
                 else:
-                    # BFGS hess_inv가 없으면 BHHH 방법으로 계산 (L-BFGS-B의 경우)
-                    self.iteration_logger.warning("Hessian 역행렬 없음 (L-BFGS-B는 hess_inv 제공 안 함)")
-                    self.iteration_logger.warning("Hessian 역행렬 없음 (L-BFGS-B는 hess_inv 제공 안 함)")
-                    self.iteration_logger.info("BHHH 방법으로 Hessian 계산 시작...")
-                    self.iteration_logger.info("BHHH 방법으로 Hessian 계산 시작...")
+                    # Optimizer가 hess_inv를 제공하지 않는 경우 → BHHH 방법으로 계산
+                    # 참고: BFGS와 L-BFGS-B는 모두 hess_inv를 제공하므로,
+                    #       이 분기는 다른 optimizer를 사용하거나 최적화가 실패한 경우에만 실행됨
+                    self.iteration_logger.warning("⚠️ Optimizer가 Hessian 역행렬을 제공하지 않음")
+                    self.iteration_logger.warning(f"   Optimizer: {self.config.estimation.optimizer}")
+                    self.iteration_logger.warning(f"   최적화 성공 여부: {result.success}")
+                    self.iteration_logger.info("→ BHHH 방법으로 Hessian 역행렬 계산 시작...")
+                    self.iteration_logger.info("  (개인별 gradient의 Outer Product 사용)")
 
                     try:
                         # BHHH 방법으로 Hessian 계산
@@ -1470,8 +1485,8 @@ class SimultaneousEstimator:
 
                         if hess_inv_bhhh is not None:
                             self.hessian_inv_matrix = hess_inv_bhhh
-                            self.iteration_logger.info("BHHH Hessian 계산 성공")
-                            self.iteration_logger.info("BHHH Hessian 계산 성공")
+                            self.iteration_logger.info("✅ BHHH Hessian 역행렬 계산 성공")
+                            self.iteration_logger.info(f"   Shape: {hess_inv_bhhh.shape}")
 
                             # BHHH Hessian 통계 로깅 (BFGS와 동일한 형식)
                             diag_elements = np.diag(hess_inv_bhhh)
@@ -1505,14 +1520,14 @@ class SimultaneousEstimator:
 
                             self.iteration_logger.info(f"{'='*80}\n")
                         else:
-                            self.iteration_logger.warning("BHHH Hessian 계산 실패")
-                            self.iteration_logger.warning("BHHH Hessian 계산 실패")
+                            self.iteration_logger.error("❌ BHHH Hessian 역행렬 계산 실패")
+                            self.iteration_logger.warning("   표준오차를 계산할 수 없습니다")
                             self.hessian_inv_matrix = None
 
                     except Exception as e:
-                        self.iteration_logger.error(f"BHHH Hessian 계산 중 오류: {e}")
-                        self.iteration_logger.error(f"BHHH Hessian 계산 중 오류: {e}")
+                        self.iteration_logger.error(f"❌ BHHH Hessian 계산 중 오류 발생: {e}")
                         import traceback
+                        self.iteration_logger.debug("상세 오류 정보:")
                         self.iteration_logger.debug(traceback.format_exc())
                         self.hessian_inv_matrix = None
             else:
@@ -1951,7 +1966,10 @@ class SimultaneousEstimator:
 
             # gamma (structural model coefficients) 스케일
             elif name.startswith('gamma_'):
-                custom_scales[name] = 0.5  # 기본값
+                # ✅ 구조모델 그래디언트가 극도로 작은 문제 해결
+                # 잠재변수가 표준정규분포 (평균 ≈ 0)로 생성되어 그래디언트 ≈ 0
+                # → 더 큰 스케일 팩터로 그래디언트를 증폭
+                custom_scales[name] = 50.0  # 0.5 → 50.0 (100배 증가)
 
             # tau (thresholds) 스케일
             elif name.startswith('tau_'):
