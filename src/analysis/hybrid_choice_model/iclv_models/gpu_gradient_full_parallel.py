@@ -350,13 +350,16 @@ def compute_all_individuals_gradients_full_parallel_gpu(
     
     # 4. 구조모델 Gradient (기존 방식)
     from .gpu_gradient_batch import compute_structural_full_batch_gpu
-    
+
     struct_start = time.time()
     struct_grads = compute_structural_full_batch_gpu(
+        all_ind_data,
         all_lvs_gpu,
-        params_dict['structural'],
+        params_dict,
         all_weights_gpu,
         structural_model,
+        choice_model,
+        gpu_measurement_model,
         lv_names,
         iteration_logger,
         log_level

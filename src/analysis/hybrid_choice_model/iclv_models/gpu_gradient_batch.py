@@ -43,6 +43,204 @@ except ImportError:
     log_sum_exp_gpu = None
 
 
+def compute_measurement_grad_wrt_lv_gpu(
+    gpu_measurement_model,
+    ind_data: pd.DataFrame,
+    lvs_list: List[Dict[str, float]],
+    params_measurement: Dict,
+    target_lv: str
+) -> np.ndarray:
+    """
+    측정모델 우도의 잠재변수에 대한 그래디언트 계산
+
+    ∂LL_measurement/∂LV for each draw
+
+    Args:
+        gpu_measurement_model: GPU 측정모델
+        ind_data: 개인 데이터
+        lvs_list: 각 draw의 잠재변수 값
+        params_measurement: 측정모델 파라미터
+        target_lv: 대상 잠재변수 이름
+
+    Returns:
+        각 draw의 ∂LL_measurement/∂LV (n_draws,)
+    """
+    if not CUPY_AVAILABLE:
+        raise RuntimeError("CuPy not available")
+
+    n_draws = len(lvs_list)
+    grad_ll_wrt_lv = cp.zeros(n_draws)
+
+    # 대상 LV의 파라미터 추출
+    if target_lv not in params_measurement:
+        return cp.asnumpy(grad_ll_wrt_lv)
+
+    lv_params = params_measurement[target_lv]
+    zeta = lv_params['zeta']
+    n_indicators = len(zeta)
+
+    # 측정 방법 확인
+    measurement_method = getattr(gpu_measurement_model.models[target_lv], 'measurement_method', 'ordered_probit')
+    config = gpu_measurement_model.models[target_lv].config
+
+    # LV 값들을 배열로 변환
+    lv_values = np.array([lvs[target_lv] for lvs in lvs_list])
+    lv_values_gpu = cp.asarray(lv_values)  # (n_draws,)
+    zeta_gpu = cp.asarray(zeta)  # (n_indicators,)
+
+    # 첫 번째 행만 사용 (측정모델은 개인 수준)
+    row = ind_data.iloc[0]
+
+    # 각 지표별로 ∂LL/∂LV 계산
+    for i, indicator in enumerate(config.indicators):
+        if indicator not in row.index:
+            continue
+
+        y = row[indicator]
+        if pd.isna(y):
+            continue
+
+        if measurement_method == 'continuous_linear':
+            # Continuous Linear: Y = ζ * LV + ε
+            # ∂LL/∂LV = ζ * (y - ζ*LV) / σ²
+            sigma_sq = lv_params['sigma_sq']
+            sigma_sq_gpu = cp.asarray(sigma_sq)
+
+            y_pred = zeta_gpu[i] * lv_values_gpu
+            residual = y - y_pred
+            grad_ll_wrt_lv += zeta_gpu[i] * residual / sigma_sq_gpu[i]
+
+        else:
+            # Ordered Probit
+            tau = lv_params['tau']
+            tau_gpu = cp.asarray(tau)
+            k = int(y) - 1
+
+            V = zeta_gpu[i] * lv_values_gpu
+            tau_i = tau_gpu[i]
+
+            # P(Y=k) 계산
+            if k == 0:
+                prob = cp_ndtr(tau_i[0] - V)
+                phi_upper = cp_norm_pdf(tau_i[0] - V)
+                phi_lower = cp.zeros_like(V)
+            elif k == config.n_categories - 1:
+                prob = 1 - cp_ndtr(tau_i[-1] - V)
+                phi_upper = cp.zeros_like(V)
+                phi_lower = cp_norm_pdf(tau_i[-1] - V)
+            else:
+                prob = cp_ndtr(tau_i[k] - V) - cp_ndtr(tau_i[k-1] - V)
+                phi_upper = cp_norm_pdf(tau_i[k] - V)
+                phi_lower = cp_norm_pdf(tau_i[k-1] - V)
+
+            prob = cp.clip(prob, 1e-10, 1 - 1e-10)
+
+            # ∂LL/∂LV = (φ_upper - φ_lower) / P * (-ζ)
+            grad_ll_wrt_lv += (phi_upper - phi_lower) / prob * (-zeta_gpu[i])
+
+    return cp.asnumpy(grad_ll_wrt_lv)
+
+
+def compute_choice_grad_wrt_lv_gpu(
+    ind_data: pd.DataFrame,
+    lvs_list: List[Dict[str, float]],
+    params_choice: Dict,
+    target_lv: str,
+    choice_attributes: List[str]
+) -> np.ndarray:
+    """
+    선택모델 우도의 잠재변수에 대한 그래디언트 계산
+
+    ∂LL_choice/∂LV for each draw
+
+    Args:
+        ind_data: 개인 데이터
+        lvs_list: 각 draw의 잠재변수 값
+        params_choice: 선택모델 파라미터
+        target_lv: 대상 잠재변수 이름
+        choice_attributes: 선택 속성 리스트
+
+    Returns:
+        각 draw의 ∂LL_choice/∂LV (n_draws,)
+    """
+    if not CUPY_AVAILABLE:
+        raise RuntimeError("CuPy not available")
+
+    n_draws = len(lvs_list)
+    n_choice_situations = len(ind_data)
+
+    # Lambda 파라미터 확인
+    lambda_key = f'lambda_{target_lv}'
+    if lambda_key not in params_choice:
+        # 이 LV가 선택모델에 포함되지 않음
+        return np.zeros(n_draws)
+
+    lambda_val = params_choice[lambda_key]
+    intercept = params_choice['intercept']
+
+    # Beta 파라미터
+    if 'beta' in params_choice:
+        beta = params_choice['beta']
+    else:
+        beta_keys = sorted([k for k in params_choice.keys() if k.startswith('beta_')])
+        beta = np.array([params_choice[k] for k in beta_keys])
+
+    # LV 값들
+    lv_values = np.array([lvs[target_lv] for lvs in lvs_list])
+    lv_values_gpu = cp.asarray(lv_values)  # (n_draws,)
+
+    # 선택 변수 찾기
+    choice_var = None
+    for col in ['choice', 'chosen', 'choice_binary']:
+        if col in ind_data.columns:
+            choice_var = col
+            break
+
+    if choice_var is None:
+        return np.zeros(n_draws)
+
+    # 속성 데이터와 선택 준비
+    attributes_matrix = []
+    choices = []
+
+    for idx in range(n_choice_situations):
+        row = ind_data.iloc[idx]
+        attr_values = [row[attr] if attr in row.index and not pd.isna(row[attr]) else 0.0 for attr in choice_attributes]
+        attributes_matrix.append(attr_values)
+        choices.append(row[choice_var])
+
+    attributes_matrix = np.array(attributes_matrix)
+    choices = np.array(choices)
+
+    # GPU로 전송
+    attr_gpu = cp.asarray(attributes_matrix)
+    choices_gpu = cp.asarray(choices)
+    beta_gpu = cp.asarray(beta)
+
+    # V 계산 (배치)
+    attr_batch = attr_gpu[None, :, :]  # (1, n_situations, n_attributes)
+    V_batch = intercept + cp.dot(attr_batch, beta_gpu[:, None]).squeeze(-1)  # (n_draws, n_situations)
+    V_batch = V_batch + lambda_val * lv_values_gpu[:, None]  # (n_draws, n_situations)
+
+    # Φ(V), φ(V)
+    prob_batch = cp_ndtr(V_batch)
+    prob_batch = cp.clip(prob_batch, 1e-10, 1 - 1e-10)
+    phi_batch = cp_norm_pdf(V_batch)
+
+    # 실제 선택에 따라
+    prob_final_batch = cp.where(choices_gpu[None, :] == 1, prob_batch, 1 - prob_batch)
+
+    # Mills ratio
+    mills_batch = phi_batch / prob_final_batch
+    sign_batch = cp.where(choices_gpu[None, :] == 1, 1.0, -1.0)
+
+    # ∂LL_choice/∂LV = Σ_situations (sign * mills * ∂V/∂LV)
+    # ∂V/∂LV = lambda
+    grad_ll_wrt_lv = cp.sum(sign_batch * mills_batch * lambda_val, axis=1)  # (n_draws,)
+
+    return cp.asnumpy(grad_ll_wrt_lv)
+
+
 def compute_joint_likelihood_batch_gpu(
     gpu_measurement_model,
     ind_data: pd.DataFrame,
@@ -405,23 +603,28 @@ def compute_structural_gradient_batch_gpu(
     error_variance: float = 1.0,
     is_hierarchical: bool = False,
     hierarchical_paths: List[Dict] = None,
+    gpu_measurement_model=None,
+    choice_model=None,
     iteration_logger=None,
     log_level: str = 'DETAILED'
 ) -> Dict[str, np.ndarray]:
     """
-    구조모델 그래디언트를 GPU 배치로 계산 (가중평균 적용)
+    구조모델 그래디언트를 GPU 배치로 계산 (체인룰 역전파 적용)
 
-    ✅ 계층적 구조와 병렬 구조 모두 지원
+    ✅ 올바른 그래디언트 계산:
+    ∂LL/∂γ_HC_to_PB = Σ_r w_r × ∂LL_r/∂γ_HC_to_PB
 
-    CPU 구현 (gradient_calculator.py의 StructuralGradient)을 따르면서:
-    1. Importance weighting 적용
-    2. GPU 배치 처리로 성능 향상
+    ∂LL_r/∂γ_HC_to_PB = ∂LL_measurement/∂PB × ∂PB/∂γ_HC_to_PB
+                        + ∂LL_choice/∂PB × ∂PB/∂γ_HC_to_PB
+
+    where:
+    ∂PB/∂γ_HC_to_PB = HC (예측변수 값)
 
     Args:
         ind_data: 개인 데이터
         lvs_list: 각 draw의 잠재변수 값
         exo_draws_list: 각 draw의 외생 draws
-        params: 구조모델 파라미터
+        params: 전체 파라미터 딕셔너리 {'measurement': ..., 'structural': ..., 'choice': ...}
         covariates: 공변량 리스트
         endogenous_lv: 내생 LV 이름 (병렬 구조에서만 사용)
         exogenous_lvs: 외생 LV 이름 리스트 (병렬 구조에서만 사용)
@@ -429,6 +632,8 @@ def compute_structural_gradient_batch_gpu(
         error_variance: 오차 분산
         is_hierarchical: 계층적 구조 여부
         hierarchical_paths: 계층적 경로 정보
+        gpu_measurement_model: GPU 측정모델 (역전파용)
+        choice_model: 선택모델 (역전파용)
         iteration_logger: 로거 (optional)
         log_level: 로깅 레벨 ('MINIMAL', 'MODERATE', 'DETAILED')
 
@@ -488,9 +693,45 @@ def compute_structural_gradient_batch_gpu(
                 iteration_logger.info(f"    - predictor 값 (처음 5개 draws): {pred_values[:5]}")
                 iteration_logger.info(f"    - 잔차 (처음 5개 draws): {cp.asnumpy(residual[:5])}")
 
-            # ∂ log L / ∂γ = Σ_r w_r * (target - μ)_r / σ² * predictor_r
-            weighted_residual = weights_gpu * residual / error_variance  # (n_draws,)
-            grad_gamma = cp.sum(weighted_residual * pred_gpu)  # 스칼라
+            # ✅ 올바른 그래디언트 계산 (체인룰 역전파)
+            # ∂LL/∂γ = Σ_r w_r × (∂LL_measurement/∂target + ∂LL_choice/∂target) × predictor_r
+
+            # 1. ∂LL_measurement/∂target 계산
+            grad_ll_meas_wrt_target = compute_measurement_grad_wrt_lv_gpu(
+                gpu_measurement_model,
+                ind_data,
+                lvs_list,
+                params['measurement'],
+                target
+            )
+            grad_ll_meas_wrt_target_gpu = cp.asarray(grad_ll_meas_wrt_target)  # (n_draws,)
+
+            # 2. ∂LL_choice/∂target 계산
+            choice_attributes = list(params['choice'].keys())
+            choice_attributes = [k.replace('beta_', '') for k in choice_attributes if k.startswith('beta_')]
+
+            grad_ll_choice_wrt_target = compute_choice_grad_wrt_lv_gpu(
+                ind_data,
+                lvs_list,
+                params['choice'],
+                target,
+                choice_attributes
+            )
+            grad_ll_choice_wrt_target_gpu = cp.asarray(grad_ll_choice_wrt_target)  # (n_draws,)
+
+            # 3. 총 그래디언트: ∂LL/∂target
+            grad_ll_wrt_target = grad_ll_meas_wrt_target_gpu + grad_ll_choice_wrt_target_gpu  # (n_draws,)
+
+            # 4. 체인룰: ∂LL/∂γ = Σ_r w_r × (∂LL/∂target)_r × (∂target/∂γ)_r
+            # ∂target/∂γ = predictor
+            grad_gamma = cp.sum(weights_gpu * grad_ll_wrt_target * pred_gpu)  # 스칼라
+
+            if iteration_logger and log_level == 'DETAILED' and path_idx == 0:
+                iteration_logger.info(f"\n    [역전파 그래디언트]")
+                iteration_logger.info(f"      - ∂LL_meas/∂{target} (draw 0): {float(grad_ll_meas_wrt_target_gpu[0]):.6f}")
+                iteration_logger.info(f"      - ∂LL_choice/∂{target} (draw 0): {float(grad_ll_choice_wrt_target_gpu[0]):.6f}")
+                iteration_logger.info(f"      - ∂LL/∂{target} (draw 0): {float(grad_ll_wrt_target[0]):.6f}")
+                iteration_logger.info(f"      - ∂{target}/∂γ (draw 0): {float(pred_gpu[0]):.6f}")
 
             # NaN 체크
             if cp.isnan(grad_gamma):
@@ -503,17 +744,17 @@ def compute_structural_gradient_batch_gpu(
             gradients[f'grad_{param_key}'] = cp.asnumpy(grad_gamma).item()
 
             if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
-                iteration_logger.info(f"    - grad_{param_key}: {gradients[f'grad_{param_key}']:.6f}")
+                iteration_logger.info(f"    - grad_{param_key} (역전파): {gradients[f'grad_{param_key}']:.6f}")
 
         return gradients
 
     else:
-        # 병렬 구조 (기존 방식)
+        # 병렬 구조 (체인룰 역전파 적용)
         n_exo = len(exogenous_lvs)
         n_cov = len(covariates)
 
-        gamma_lv = params['gamma_lv']
-        gamma_x = params['gamma_x']
+        gamma_lv = params['structural']['gamma_lv']
+        gamma_x = params['structural']['gamma_x']
 
         # 배열로 변환
         lv_endo_values = np.array([lvs[endogenous_lv] for lvs in lvs_list])
@@ -527,22 +768,43 @@ def compute_structural_gradient_batch_gpu(
         lv_endo_gpu = cp.asarray(lv_endo_values)  # (n_draws,)
         exo_lv_gpu = cp.asarray(exo_lv_matrix)  # (n_draws, n_exo)
         X_gpu = cp.asarray(X)  # (n_cov,)
-        gamma_lv_gpu = cp.asarray(gamma_lv)  # (n_exo,)
-        gamma_x_gpu = cp.asarray(gamma_x)  # (n_cov,)
 
-        # 예측값 계산
-        mu = cp.dot(exo_lv_gpu, gamma_lv_gpu) + cp.dot(X_gpu, gamma_x_gpu)  # (n_draws,)
+        # ✅ 올바른 그래디언트 계산 (체인룰 역전파)
+        # ∂LL/∂γ = Σ_r w_r × (∂LL_measurement/∂endo + ∂LL_choice/∂endo) × ∂endo/∂γ
 
-        # 잔차
-        residual = lv_endo_gpu - mu  # (n_draws,)
+        # 1. ∂LL_measurement/∂endo 계산
+        grad_ll_meas_wrt_endo = compute_measurement_grad_wrt_lv_gpu(
+            gpu_measurement_model,
+            ind_data,
+            lvs_list,
+            params['measurement'],
+            endogenous_lv
+        )
+        grad_ll_meas_wrt_endo_gpu = cp.asarray(grad_ll_meas_wrt_endo)  # (n_draws,)
 
-        # ✅ 수정: 가중평균 적용
-        # ∂ log L / ∂γ_lv = Σ_r w_r * (LV_endo - μ)_r / σ² * LV_exo_r
-        weighted_residual = weights_gpu * residual / error_variance  # (n_draws,)
-        grad_gamma_lv = cp.dot(exo_lv_gpu.T, weighted_residual)  # (n_exo,)
+        # 2. ∂LL_choice/∂endo 계산
+        choice_attributes = list(params['choice'].keys())
+        choice_attributes = [k.replace('beta_', '') for k in choice_attributes if k.startswith('beta_')]
 
-        # ∂ log L / ∂γ_x = Σ_r w_r * (LV_endo - μ)_r / σ² * X
-        grad_gamma_x = cp.sum(weighted_residual) * X_gpu  # (n_cov,)
+        grad_ll_choice_wrt_endo = compute_choice_grad_wrt_lv_gpu(
+            ind_data,
+            lvs_list,
+            params['choice'],
+            endogenous_lv,
+            choice_attributes
+        )
+        grad_ll_choice_wrt_endo_gpu = cp.asarray(grad_ll_choice_wrt_endo)  # (n_draws,)
+
+        # 3. 총 그래디언트: ∂LL/∂endo
+        grad_ll_wrt_endo = grad_ll_meas_wrt_endo_gpu + grad_ll_choice_wrt_endo_gpu  # (n_draws,)
+
+        # 4. 체인룰: ∂LL/∂γ_lv = Σ_r w_r × (∂LL/∂endo)_r × (∂endo/∂γ_lv)_r
+        # ∂endo/∂γ_lv = exo_lv
+        grad_gamma_lv = cp.dot(exo_lv_gpu.T, weights_gpu * grad_ll_wrt_endo)  # (n_exo,)
+
+        # ∂LL/∂γ_x = Σ_r w_r × (∂LL/∂endo)_r × (∂endo/∂γ_x)_r
+        # ∂endo/∂γ_x = X
+        grad_gamma_x = cp.sum(weights_gpu * grad_ll_wrt_endo) * X_gpu  # (n_cov,)
 
         # NaN 체크
         if cp.any(cp.isnan(grad_gamma_lv)):
@@ -964,7 +1226,7 @@ def compute_all_individuals_gradients_batch_gpu(
             ind_data,
             lvs_list,
             exo_draws_list,
-            params_dict['structural'],
+            params_dict,  # ✅ 전체 파라미터 딕셔너리 전달 (역전파용)
             structural_model.covariates,
             structural_model.endogenous_lv if not is_hierarchical else None,
             structural_model.exogenous_lvs if not is_hierarchical else None,
@@ -972,6 +1234,8 @@ def compute_all_individuals_gradients_batch_gpu(
             error_variance=1.0,
             is_hierarchical=is_hierarchical,
             hierarchical_paths=structural_model.hierarchical_paths if is_hierarchical else None,
+            gpu_measurement_model=gpu_measurement_model,  # ✅ 역전파용
+            choice_model=choice_model,  # ✅ 역전파용
             iteration_logger=None,
             log_level='MINIMAL'
         )
@@ -1421,12 +1685,15 @@ def compute_full_batch_gradients_gpu(
     # 측정모델 그래디언트는 빈 딕셔너리로 설정
     meas_grads = {}
 
-    # 1. 구조모델 Gradient (완전 Batch)
+    # 1. 구조모델 Gradient (완전 Batch - 체인룰 역전파)
     struct_grads = compute_structural_full_batch_gpu(
+        all_ind_data,
         all_lvs_gpu,
-        params_dict['structural'],
+        params_dict,  # ✅ 전체 파라미터 딕셔너리 전달
         all_weights_gpu,
         structural_model,
+        choice_model,
+        gpu_measurement_model,
         lv_names,
         iteration_logger,
         log_level
@@ -1562,16 +1829,22 @@ def compute_measurement_full_batch_gpu(
 
 
 def compute_structural_full_batch_gpu(
-    all_lvs_gpu,  # CuPy array (N, R, 5)
-    params: Dict,
+    all_ind_data: List[pd.DataFrame],
+    all_lvs_gpu,  # CuPy array (N, R, n_lvs)
+    params_dict: Dict,  # ✅ 전체 파라미터 딕셔너리
     all_weights_gpu,  # CuPy array (N, R)
     structural_model,
+    choice_model,
+    gpu_measurement_model,
     lv_names: List[str],
     iteration_logger=None,
     log_level: str = 'MINIMAL'
 ) -> Dict:
     """
-    구조모델 Gradient - 완전 GPU Batch
+    구조모델 Gradient - 완전 GPU Batch (체인룰 역전파)
+
+    ✅ 올바른 그래디언트 계산:
+    ∂LL/∂γ = Σ_r w_r × (∂LL_measurement/∂target + ∂LL_choice/∂target) × ∂target/∂γ
 
     Returns:
         {param_name: (N,)}
@@ -1582,36 +1855,66 @@ def compute_structural_full_batch_gpu(
 
     # 계층적 구조인 경우
     if hasattr(structural_model, 'is_hierarchical') and structural_model.is_hierarchical:
-        error_variance = 1.0
 
         for path in structural_model.hierarchical_paths:
             target = path['target']
             predictor = path['predictors'][0]  # 단일 predictor 가정
             param_key = f"gamma_{predictor}_to_{target}"
-            gamma = params[param_key]
 
             # LV 인덱스 찾기
             target_idx = lv_names.index(target)
             pred_idx = lv_names.index(predictor)
 
-            # LV 값 추출: (N, R)
-            target_values = all_lvs_gpu[:, :, target_idx]
-            pred_values = all_lvs_gpu[:, :, pred_idx]
+            # 모든 개인의 그래디언트 저장: (N,)
+            all_grad_gamma = cp.zeros(n_individuals)
 
-            # 예측값: (N, R)
-            mu = gamma * pred_values
+            # 개인별로 역전파 계산 (각 개인의 R draws는 GPU 배치)
+            for ind_idx, ind_data in enumerate(all_ind_data):
+                # 이 개인의 LV 값: (R,)
+                target_values_gpu = all_lvs_gpu[ind_idx, :, target_idx]
+                pred_values_gpu = all_lvs_gpu[ind_idx, :, pred_idx]
+                weights_gpu = all_weights_gpu[ind_idx, :]
 
-            # 잔차: (N, R)
-            residual = target_values - mu
+                # LV 딕셔너리 리스트 생성 (역전파 함수용)
+                lvs_list = []
+                for draw_idx in range(n_draws):
+                    lvs_dict = {lv_name: float(all_lvs_gpu[ind_idx, draw_idx, lv_idx])
+                                for lv_idx, lv_name in enumerate(lv_names)}
+                    lvs_list.append(lvs_dict)
 
-            # Gradient: (N, R)
-            weighted_residual = all_weights_gpu * residual / error_variance
+                # 1. ∂LL_measurement/∂target 계산
+                grad_ll_meas_wrt_target = compute_measurement_grad_wrt_lv_gpu(
+                    gpu_measurement_model,
+                    ind_data,
+                    lvs_list,
+                    params_dict['measurement'],
+                    target
+                )
+                grad_ll_meas_wrt_target_gpu = cp.asarray(grad_ll_meas_wrt_target)  # (R,)
 
-            # 가중합: (N,)
-            grad_gamma = cp.sum(weighted_residual * pred_values, axis=1)
+                # 2. ∂LL_choice/∂target 계산
+                choice_attributes = [k.replace('beta_', '') for k in params_dict['choice'].keys() if k.startswith('beta_')]
+
+                grad_ll_choice_wrt_target = compute_choice_grad_wrt_lv_gpu(
+                    ind_data,
+                    lvs_list,
+                    params_dict['choice'],
+                    target,
+                    choice_attributes
+                )
+                grad_ll_choice_wrt_target_gpu = cp.asarray(grad_ll_choice_wrt_target)  # (R,)
+
+                # 3. 총 그래디언트: ∂LL/∂target
+                grad_ll_wrt_target = grad_ll_meas_wrt_target_gpu + grad_ll_choice_wrt_target_gpu  # (R,)
+
+                # 4. 체인룰: ∂LL/∂γ = Σ_r w_r × (∂LL/∂target)_r × (∂target/∂γ)_r
+                # ∂target/∂γ = predictor
+                grad_gamma = cp.sum(weights_gpu * grad_ll_wrt_target * pred_values_gpu)
+
+                all_grad_gamma[ind_idx] = grad_gamma
 
             # 접두사 없이 저장
-            gradients[param_key] = cp.asnumpy(grad_gamma)
+            gradients[param_key] = cp.asnumpy(all_grad_gamma)
 
     return gradients
 
