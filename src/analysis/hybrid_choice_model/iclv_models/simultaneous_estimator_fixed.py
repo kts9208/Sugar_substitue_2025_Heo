@@ -27,6 +27,7 @@ from .gradient_calculator import (
     JointGradient
 )
 from .parameter_scaler import ParameterScaler
+from .data_standardizer import DataStandardizer
 from .parameter_context import ParameterContext
 from .bhhh_calculator import BHHHCalculator
 from .parameter_manager import ParameterManager
@@ -346,6 +347,44 @@ class SimultaneousEstimator:
         if hasattr(self, 'memory_monitor') and self.memory_monitor is not None:
             self.memory_monitor.logger = self.iteration_logger
 
+        # ========================================================================
+        # 데이터 표준화 (선택 속성)
+        # ========================================================================
+        standardize_choice_attributes = getattr(
+            self.config.estimation, 'standardize_choice_attributes', True
+        )
+
+        if standardize_choice_attributes:
+            self.iteration_logger.info("=" * 80)
+            self.iteration_logger.info("선택 속성 Z-score 표준화")
+            self.iteration_logger.info("=" * 80)
+
+            # DataStandardizer 생성
+            self.data_standardizer = DataStandardizer(
+                variables_to_standardize=self.config.choice.choice_attributes,
+                logger=self.iteration_logger
+            )
+
+            # 원본 데이터 백업 (비교용)
+            data_original = data.copy()
+
+            # Fit & Transform
+            data = self.data_standardizer.fit_transform(data)
+
+            # 비교 로깅
+            self.data_standardizer.log_standardization_comparison(
+                data_original, data
+            )
+
+            self.iteration_logger.info("✅ 선택 속성 z-score 표준화 완료")
+            self.iteration_logger.info("=" * 80)
+        else:
+            self.data_standardizer = None
+            self.iteration_logger.info("=" * 80)
+            self.iteration_logger.info("선택 속성 표준화 비활성화 (원본 데이터 사용)")
+            self.iteration_logger.info("=" * 80)
+
+        # 표준화된 데이터 저장
         self.data = data
         n_individuals = data[self.config.individual_id_column].nunique()
 

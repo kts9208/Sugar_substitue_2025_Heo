@@ -172,6 +172,14 @@ class EstimationConfig:
     # Parameter Scaling 설정
     use_parameter_scaling: bool = True  # True: parameter scaling 활성화, False: 비활성화
 
+    # Data Standardization 설정
+    standardize_choice_attributes: bool = True  # True: 선택 속성 z-score 표준화, False: 원본 사용
+    """
+    선택 속성(price, health_label 등)을 z-score 표준화하여 그래디언트 균형 개선
+    - True: z = (x - mean) / std (권장)
+    - False: 원본 데이터 사용
+    """
+
     # Gradient 로깅 설정
     gradient_log_level: Literal['MINIMAL', 'MODERATE', 'DETAILED'] = 'DETAILED'
     # - MINIMAL: 최종 그래디언트 norm만 로깅

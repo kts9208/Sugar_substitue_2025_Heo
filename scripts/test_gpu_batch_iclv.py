@@ -194,7 +194,8 @@ def main():
         use_analytic_gradient=True,
         calculate_se=True,
         gradient_log_level='DETAILED',
-        use_parameter_scaling=True  # ✅ 스케일링 활성화 (그래디언트 크기 불균형 해결)
+        use_parameter_scaling=False,  # ✅ 스케일링 비활성화 (z-score 표준화만 테스트)
+        standardize_choice_attributes=True  # ✅ z-score 표준화 활성화
     )
 
     print(f"    Config 생성 완료")
@@ -203,7 +204,8 @@ def main():
     print(f"    - Halton draws: {N_DRAWS}")
     print(f"    - 최대 반복: {MAX_ITERATIONS}")
     print(f"    - 최적화: L-BFGS-B (Analytic Gradient)")
-    print(f"    - 파라미터 스케일링: ✅ 활성화 (그래디언트 크기 불균형 해결)")
+    print(f"    - 파라미터 스케일링: ❌ 비활성화 (모든 스케일 = 1.0)")
+    print(f"    - 데이터 표준화: ✅ 활성화 (z-score)")
     print(f"    - GPU 배치 처리: 활성화")
     
     # 5. 모델 생성

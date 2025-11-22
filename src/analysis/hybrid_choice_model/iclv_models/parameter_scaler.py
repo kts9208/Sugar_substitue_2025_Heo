@@ -145,60 +145,72 @@ class ParameterScaler:
     def get_scale_info(self) -> Dict[str, float]:
         """
         Get scaling information as dictionary
-        
+
         Returns:
             Dictionary mapping parameter names to scale factors
         """
         return {name: scale for name, scale in zip(self.param_names, self.scales)}
-    
-    def log_parameter_comparison(self, params_external: np.ndarray, 
+
+    def log_parameter_comparison(self, params_external: np.ndarray,
                                   params_internal: np.ndarray):
         """
         Log comparison between external and internal parameters
-        
+
         Args:
             params_external: External (unscaled) parameters
             params_internal: Internal (scaled) parameters
         """
         self.logger.info("")
-        self.logger.info("Parameter Scaling Comparison:")
+        self.logger.info("=" * 80)
+        self.logger.info("파라미터 스케일링 전후 비교")
+        self.logger.info("=" * 80)
+        self.logger.info(f"{'파라미터':<30s} {'External':>15s} {'Internal':>15s} {'Scale':>15s} {'비율':>10s}")
         self.logger.info("-" * 80)
-        self.logger.info(f"{'Parameter':<30s} {'External':>12s} {'Internal':>12s} {'Scale':>12s}")
-        self.logger.info("-" * 80)
-        
+
         for i, name in enumerate(self.param_names):
+            ratio = params_internal[i] / params_external[i] if abs(params_external[i]) > 1e-10 else 0.0
             self.logger.info(
-                f"{name:<30s} {params_external[i]:12.6f} {params_internal[i]:12.6f} "
-                f"{self.scales[i]:12.6f}"
+                f"{name:<30s} {params_external[i]:15.6f} {params_internal[i]:15.6f} "
+                f"{self.scales[i]:15.6f} {ratio:10.4f}"
             )
+
         self.logger.info("-" * 80)
+        self.logger.info(f"{'External 범위:':<30s} [{params_external.min():12.6f}, {params_external.max():12.6f}]")
+        self.logger.info(f"{'Internal 범위:':<30s} [{params_internal.min():12.6f}, {params_internal.max():12.6f}]")
+        self.logger.info(f"{'External 평균 크기:':<30s} {np.abs(params_external).mean():12.6f}")
+        self.logger.info(f"{'Internal 평균 크기:':<30s} {np.abs(params_internal).mean():12.6f}")
+        self.logger.info("=" * 80)
     
-    def log_gradient_comparison(self, grad_external: np.ndarray, 
+    def log_gradient_comparison(self, grad_external: np.ndarray,
                                  grad_internal: np.ndarray):
         """
         Log comparison between external and internal gradients
-        
+
         Args:
             grad_external: Gradient w.r.t. external parameters
             grad_internal: Gradient w.r.t. internal parameters
         """
         self.logger.info("")
-        self.logger.info("Gradient Scaling Comparison:")
+        self.logger.info("=" * 80)
+        self.logger.info("그래디언트 스케일링 전후 비교")
+        self.logger.info("=" * 80)
+        self.logger.info(f"{'파라미터':<30s} {'Grad(External)':>15s} {'Grad(Internal)':>15s} {'Scale':>12s} {'비율':>10s}")
         self.logger.info("-" * 80)
-        self.logger.info(f"{'Parameter':<30s} {'Grad(External)':>15s} {'Grad(Internal)':>15s} {'Scale':>12s}")
-        self.logger.info("-" * 80)
-        
+
         for i, name in enumerate(self.param_names):
+            ratio = grad_internal[i] / grad_external[i] if abs(grad_external[i]) > 1e-10 else 0.0
             self.logger.info(
                 f"{name:<30s} {grad_external[i]:15.6e} {grad_internal[i]:15.6e} "
-                f"{self.scales[i]:12.6f}"
+                f"{self.scales[i]:12.6f} {ratio:10.4f}"
             )
         self.logger.info("-" * 80)
-        self.logger.info(f"External gradient norm: {np.linalg.norm(grad_external):.6e}")
-        self.logger.info(f"Internal gradient norm: {np.linalg.norm(grad_internal):.6e}")
-        self.logger.info(f"External gradient max:  {np.max(np.abs(grad_external)):.6e}")
-        self.logger.info(f"Internal gradient max:  {np.max(np.abs(grad_internal)):.6e}")
-        self.logger.info("-" * 80)
+        self.logger.info(f"{'External gradient norm:':<30s} {np.linalg.norm(grad_external):15.6e}")
+        self.logger.info(f"{'Internal gradient norm:':<30s} {np.linalg.norm(grad_internal):15.6e}")
+        self.logger.info(f"{'External gradient max:':<30s} {np.max(np.abs(grad_external)):15.6e}")
+        self.logger.info(f"{'Internal gradient max:':<30s} {np.max(np.abs(grad_internal)):15.6e}")
+        self.logger.info(f"{'External gradient 평균:':<30s} {np.abs(grad_external).mean():15.6e}")
+        self.logger.info(f"{'Internal gradient 평균:':<30s} {np.abs(grad_internal).mean():15.6e}")
+        self.logger.info("=" * 80)
 
 
 class AdaptiveParameterScaler(ParameterScaler):
