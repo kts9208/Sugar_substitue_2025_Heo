@@ -129,6 +129,23 @@ class BaseICLVChoice(ABC):
             # ✅ 각 LV를 배열로 변환 (유연한 리스트 기반)
             lv_arrays = {}
             if isinstance(lv, dict):
+                # 개인 인덱스 계산 (각 행 → 개인)
+                # 데이터 구조: 개인1_선택1_대안1, 개인1_선택1_대안2, 개인1_선택1_대안3, 개인1_선택2_대안1, ...
+                # 개인 수 추정: 첫 번째 LV 배열의 길이
+                first_lv_name = list(lv.keys())[0]
+                first_lv_value = lv[first_lv_name]
+                if np.isscalar(first_lv_value):
+                    n_individuals = 1
+                else:
+                    n_individuals = len(first_lv_value)
+
+                # 선택 상황 수 계산
+                n_choice_situations = len(data) // (n_individuals * self.n_alternatives)
+
+                # 개인 인덱스: 각 행이 어느 개인에 속하는지
+                # 예: 개인 0의 8개 선택 상황 × 3개 대안 = 24행 → person_idx = [0]*24
+                person_idx = np.repeat(np.arange(n_individuals), n_choice_situations * self.n_alternatives)
+
                 # 주효과에 사용되는 잠재변수
                 for lv_name in self.main_lvs:
                     if lv_name not in lv:
@@ -138,7 +155,9 @@ class BaseICLVChoice(ABC):
                     if np.isscalar(lv_value):
                         lv_arrays[lv_name] = np.full(len(data), lv_value)
                     else:
-                        lv_arrays[lv_name] = lv_value
+                        # 개인 수준 배열 → 전체 데이터 길이로 확장
+                        # person_idx를 사용하여 각 행에 해당하는 개인의 LV 값 할당
+                        lv_arrays[lv_name] = lv_value[person_idx]
 
                 # ✅ 상호작용에 사용되는 잠재변수 (주효과 없어도 포함)
                 for interaction in self.lv_attribute_interactions:
@@ -148,7 +167,8 @@ class BaseICLVChoice(ABC):
                         if np.isscalar(lv_value):
                             lv_arrays[lv_name] = np.full(len(data), lv_value)
                         else:
-                            lv_arrays[lv_name] = lv_value
+                            # 개인 수준 배열 → 전체 데이터 길이로 확장
+                            lv_arrays[lv_name] = lv_value[person_idx]
 
                 # 디버깅: lv_arrays 내용 로깅 (첫 호출 시에만)
                 if not hasattr(self, '_lv_arrays_logged'):
@@ -157,145 +177,116 @@ class BaseICLVChoice(ABC):
                         self.logger.info(f"  {lv_name}: shape={lv_arr.shape if hasattr(lv_arr, 'shape') else 'scalar'}, first 3 values={lv_arr[:3] if hasattr(lv_arr, '__getitem__') else lv_arr}")
                     self._lv_arrays_logged = True
 
-            # 효용 계산
-            for i in range(len(data)):
-                if has_nan[i]:
-                    V[i] = 0.0  # opt-out: 효용 = 0
-                else:
-                    # ✅ sugar_content 기준으로 대안 구분
-                    if 'sugar_content' in data.columns:
-                        sugar_content = data['sugar_content'].iloc[i]
+            # ✅ 벡터화된 효용 계산
+            if 'sugar_content' in data.columns:
+                # sugar_content 기준 대안 구분
+                sugar_content_col = data['sugar_content'].values
 
-                        if pd.isna(sugar_content):
-                            # opt-out (구매안함)
-                            V[i] = 0.0
-                        elif sugar_content == '알반당':  # ✅ 데이터에는 '알반당'으로 저장됨
-                            # 일반당 대안
-                            asc = params.get('asc_sugar', params.get('ASC_sugar', 0.0))
-                            V[i] = asc + X[i] @ beta
+                # 마스크 생성
+                is_sugar = (sugar_content_col == '알반당') & ~has_nan
+                is_sugar_free = (sugar_content_col == '무설탕') & ~has_nan
+                is_opt_out = pd.isna(sugar_content_col) | has_nan
 
-                            # 잠재변수 효과 추가 (대안별) - 잠재변수가 있는 경우만
-                            if lv_arrays:
-                                for lv_name in self.main_lvs:
-                                    param_name = f'theta_sugar_{lv_name}'
-                                    if param_name in params:
-                                        theta = params[param_name]
-                                        V[i] += theta * lv_arrays[lv_name][i // self.n_alternatives]
+                # 기본 효용: ASC + β*X (벡터화)
+                asc_sugar = params.get('asc_sugar', params.get('ASC_sugar', 0.0))
+                asc_sugar_free = params.get('asc_sugar_free', params.get('ASC_sugar_free', 0.0))
 
-                            # ✅ LV-Attribute 상호작용 추가 (대안별)
-                            if lv_arrays and self.lv_attribute_interactions:
-                                for interaction in self.lv_attribute_interactions:
-                                    lv_name = interaction['lv']
-                                    attr_name = interaction['attribute']
-                                    param_name = f'gamma_sugar_{lv_name}_{attr_name}'
+                V[is_sugar] = asc_sugar + (X[is_sugar] @ beta)
+                V[is_sugar_free] = asc_sugar_free + (X[is_sugar_free] @ beta)
+                V[is_opt_out] = 0.0
 
-                                    if param_name in params and attr_name in self.choice_attributes:
-                                        gamma = params[param_name]
-                                        attr_idx = self.choice_attributes.index(attr_name)
-                                        if lv_name in lv_arrays:
-                                            lv_value = lv_arrays[lv_name][i // self.n_alternatives]
-                                            attr_value = X[i, attr_idx]
-                                            interaction_term = gamma * lv_value * attr_value
-                                            V[i] += interaction_term
+                # LV 주효과 추가 (벡터화)
+                if lv_arrays:
+                    for lv_name in self.main_lvs:
+                        # 알반당 대안
+                        param_name_sugar = f'theta_sugar_{lv_name}'
+                        if param_name_sugar in params:
+                            theta = params[param_name_sugar]
+                            # lv_arrays는 이미 전체 데이터 길이로 확장됨
+                            V[is_sugar] += theta * lv_arrays[lv_name][is_sugar]
 
-                                            # 🔍 상세 로깅 (첫 5개 관측치만)
-                                            if i < 15 and not hasattr(self, '_interaction_logged_sugar'):
-                                                self.logger.info(f"[알반당 상호작용] i={i}, gamma={gamma:.4f}, LV={lv_value:.4f}, attr={attr_value:.4f}, term={interaction_term:.4f}, V[{i}]={V[i]:.4f}")
-                                        else:
-                                            # 디버깅: lv_name이 lv_arrays에 없음
-                                            if i == 0:  # 첫 번째 행에서만 로그
-                                                self.logger.warning(f"LV '{lv_name}'이 lv_arrays에 없습니다. lv_arrays keys: {list(lv_arrays.keys())}")
-                                    elif i == 0:
-                                        # 파라미터가 없거나 속성이 없는 경우
-                                        if param_name not in params:
-                                            self.logger.warning(f"[알반당] 파라미터 '{param_name}'이 params에 없습니다. params keys: {list(params.keys())}")
-                                        if attr_name not in self.choice_attributes:
-                                            self.logger.warning(f"[알반당] 속성 '{attr_name}'이 choice_attributes에 없습니다.")
+                        # 무설탕 대안
+                        param_name_sugar_free = f'theta_sugar_free_{lv_name}'
+                        if param_name_sugar_free in params:
+                            theta = params[param_name_sugar_free]
+                            V[is_sugar_free] += theta * lv_arrays[lv_name][is_sugar_free]
 
-                                # 로깅 플래그 설정
-                                if not hasattr(self, '_interaction_logged_sugar'):
-                                    self._interaction_logged_sugar = True
+                # LV-Attribute 상호작용 추가 (벡터화)
+                if lv_arrays and self.lv_attribute_interactions:
+                    for interaction in self.lv_attribute_interactions:
+                        lv_name = interaction['lv']
+                        attr_name = interaction['attribute']
 
-                        elif sugar_content == '무설탕':
-                            # 무설탕 대안
-                            asc = params.get('asc_sugar_free', params.get('ASC_sugar_free', 0.0))
-                            V[i] = asc + X[i] @ beta
+                        if lv_name not in lv_arrays or attr_name not in self.choice_attributes:
+                            continue
 
-                            # 잠재변수 효과 추가 (대안별) - 잠재변수가 있는 경우만
-                            if lv_arrays:
-                                for lv_name in self.main_lvs:
-                                    param_name = f'theta_sugar_free_{lv_name}'
-                                    if param_name in params:
-                                        theta = params[param_name]
-                                        V[i] += theta * lv_arrays[lv_name][i // self.n_alternatives]
+                        attr_idx = self.choice_attributes.index(attr_name)
+                        lv_values = lv_arrays[lv_name]  # Shape: (N,)
+                        attr_values = X[:, attr_idx]     # Shape: (N,) - 1D slice from 2D array
 
-                            # ✅ LV-Attribute 상호작용 추가 (대안별)
-                            if lv_arrays and self.lv_attribute_interactions:
-                                for interaction in self.lv_attribute_interactions:
-                                    lv_name = interaction['lv']
-                                    attr_name = interaction['attribute']
-                                    param_name = f'gamma_sugar_free_{lv_name}_{attr_name}'
+                        # ✅ 차원 검증 (디버깅용)
+                        assert lv_values.ndim == 1, f"lv_values should be 1D, got {lv_values.ndim}D"
+                        assert attr_values.ndim == 1, f"attr_values should be 1D, got {attr_values.ndim}D"
+                        assert len(lv_values) == len(attr_values), f"Length mismatch: lv_values={len(lv_values)}, attr_values={len(attr_values)}"
 
-                                    if param_name in params and attr_name in self.choice_attributes:
-                                        gamma = params[param_name]
-                                        attr_idx = self.choice_attributes.index(attr_name)
-                                        if lv_name in lv_arrays:
-                                            lv_value = lv_arrays[lv_name][i // self.n_alternatives]
-                                            attr_value = X[i, attr_idx]
-                                            interaction_term = gamma * lv_value * attr_value
-                                            V[i] += interaction_term
+                        # 알반당 상호작용
+                        param_name_sugar = f'gamma_sugar_{lv_name}_{attr_name}'
+                        if param_name_sugar in params:
+                            gamma = params[param_name_sugar]
+                            interaction_term = gamma * lv_values * attr_values  # Element-wise: (N,) * (N,) = (N,)
+                            V[is_sugar] += interaction_term[is_sugar]
 
-                                            # 🔍 상세 로깅 (첫 5개 관측치만)
-                                            if i < 15 and not hasattr(self, '_interaction_logged_sugar_free'):
-                                                self.logger.info(f"[무설탕 상호작용] i={i}, gamma={gamma:.4f}, LV={lv_value:.4f}, attr={attr_value:.4f}, term={interaction_term:.4f}, V[{i}]={V[i]:.4f}")
-                                        else:
-                                            # 디버깅: lv_name이 lv_arrays에 없음
-                                            if i == 0:  # 첫 번째 행에서만 로그
-                                                self.logger.warning(f"LV '{lv_name}'이 lv_arrays에 없습니다. lv_arrays keys: {list(lv_arrays.keys())}")
-                                    elif i == 0:
-                                        # 파라미터가 없거나 속성이 없는 경우
-                                        if param_name not in params:
-                                            self.logger.warning(f"[무설탕] 파라미터 '{param_name}'이 params에 없습니다. params keys: {list(params.keys())}")
-                                        if attr_name not in self.choice_attributes:
-                                            self.logger.warning(f"[무설탕] 속성 '{attr_name}'이 choice_attributes에 없습니다.")
+                            # 🔍 상세 로깅 (첫 5개만)
+                            if not hasattr(self, '_interaction_logged_sugar'):
+                                sugar_indices = np.where(is_sugar)[0][:5]
+                                for i in sugar_indices:
+                                    self.logger.info(f"[알반당 상호작용] i={i}, gamma={gamma:.4f}, LV={lv_values[i]:.4f}, attr={attr_values[i]:.4f}, term={interaction_term[i]:.4f}, V[{i}]={V[i]:.4f}")
+                                self._interaction_logged_sugar = True
 
-                                # 로깅 플래그 설정
-                                if not hasattr(self, '_interaction_logged_sugar_free'):
-                                    self._interaction_logged_sugar_free = True
-                        else:
-                            # 알 수 없는 값
-                            V[i] = 0.0
+                        # 무설탕 상호작용
+                        param_name_sugar_free = f'gamma_sugar_free_{lv_name}_{attr_name}'
+                        if param_name_sugar_free in params:
+                            gamma = params[param_name_sugar_free]
+                            interaction_term = gamma * lv_values * attr_values  # Element-wise: (N,) * (N,) = (N,)
+                            V[is_sugar_free] += interaction_term[is_sugar_free]
 
-                    else:
-                        # sugar_content 컬럼이 없으면 기존 방식 (alternative 기준)
-                        alt_idx = i % self.n_alternatives
+                            # 🔍 상세 로깅 (첫 5개만)
+                            if not hasattr(self, '_interaction_logged_sugar_free'):
+                                sugar_free_indices = np.where(is_sugar_free)[0][:5]
+                                for i in sugar_free_indices:
+                                    self.logger.info(f"[무설탕 상호작용] i={i}, gamma={gamma:.4f}, LV={lv_values[i]:.4f}, attr={attr_values[i]:.4f}, term={interaction_term[i]:.4f}, V[{i}]={V[i]:.4f}")
+                                self._interaction_logged_sugar_free = True
 
-                        if alt_idx == 0:  # 대안 A
-                            asc = params.get('asc_A', params.get('ASC_A', 0.0))
-                            V[i] = asc + X[i] @ beta
+            else:
+                # sugar_content 컬럼이 없으면 기존 방식 (alternative 기준) - 벡터화
+                alt_idx = np.arange(len(data)) % self.n_alternatives
 
-                            # 잠재변수 효과 추가 - 잠재변수가 있는 경우만
-                            if lv_arrays:
-                                for lv_name in self.main_lvs:
-                                    param_name = f'theta_A_{lv_name}'
-                                    if param_name in params:
-                                        theta = params[param_name]
-                                        V[i] += theta * lv_arrays[lv_name][i // self.n_alternatives]
+                is_alt_A = (alt_idx == 0) & ~has_nan
+                is_alt_B = (alt_idx == 1) & ~has_nan
+                is_opt_out = (alt_idx == 2) | has_nan
 
-                        elif alt_idx == 1:  # 대안 B
-                            asc = params.get('asc_B', params.get('ASC_B', 0.0))
-                            V[i] = asc + X[i] @ beta
+                # 기본 효용: ASC + β*X
+                asc_A = params.get('asc_A', params.get('ASC_A', 0.0))
+                asc_B = params.get('asc_B', params.get('ASC_B', 0.0))
 
-                            # 잠재변수 효과 추가 - 잠재변수가 있는 경우만
-                            if lv_arrays:
-                                for lv_name in self.main_lvs:
-                                    param_name = f'theta_B_{lv_name}'
-                                    if param_name in params:
-                                        theta = params[param_name]
-                                        V[i] += theta * lv_arrays[lv_name][i // self.n_alternatives]
+                V[is_alt_A] = asc_A + (X[is_alt_A] @ beta)
+                V[is_alt_B] = asc_B + (X[is_alt_B] @ beta)
+                V[is_opt_out] = 0.0
 
-                        else:  # 대안 C (opt-out)
-                            V[i] = 0.0
+                # LV 주효과 추가 (벡터화)
+                if lv_arrays:
+                    for lv_name in self.main_lvs:
+                        # 대안 A
+                        param_name_A = f'theta_A_{lv_name}'
+                        if param_name_A in params:
+                            theta = params[param_name_A]
+                            V[is_alt_A] += theta * lv_arrays[lv_name][is_alt_A]
+
+                        # 대안 B
+                        param_name_B = f'theta_B_{lv_name}'
+                        if param_name_B in params:
+                            theta = params[param_name_B]
+                            V[is_alt_B] += theta * lv_arrays[lv_name][is_alt_B]
 
         elif self.all_lvs_as_main and isinstance(lv, dict) and self.main_lvs:
             # ✅ 모든 LV 주효과 모델 (대안별이 아닌 경우)
@@ -313,22 +304,21 @@ class BaseICLVChoice(ABC):
                 else:
                     lv_arrays[lv_name] = lv_value
 
-            # 효용 계산
+            # ✅ 벡터화된 효용 계산
             intercept = params.get('intercept', 0.0)
-            for i in range(len(data)):
-                if has_nan[i]:
-                    V[i] = 0.0
-                else:
-                    V[i] = intercept + X[i] @ beta
 
-                    # 모든 LV 주효과 추가
-                    for lv_name in self.main_lvs:
-                        param_name = f'lambda_{lv_name}'
-                        if param_name in params:
-                            lambda_lv = params[param_name]
-                            V[i] += lambda_lv * lv_arrays[lv_name][i]
+            # 기본 효용: intercept + β*X (벡터화)
+            V[~has_nan] = intercept + (X[~has_nan] @ beta)
+            V[has_nan] = 0.0
 
-            # ✅ LV-Attribute 상호작용 추가
+            # 모든 LV 주효과 추가 (벡터화)
+            for lv_name in self.main_lvs:
+                param_name = f'lambda_{lv_name}'
+                if param_name in params:
+                    lambda_lv = params[param_name]
+                    V[~has_nan] += lambda_lv * lv_arrays[lv_name][~has_nan]
+
+            # ✅ LV-Attribute 상호작용 추가 (벡터화)
             if self.lv_attribute_interactions:
                 for interaction in self.lv_attribute_interactions:
                     lv_name = interaction['lv']
@@ -337,19 +327,20 @@ class BaseICLVChoice(ABC):
                     # 파라미터 이름: gamma_PI_price, gamma_PI_health_label, gamma_NK_health_label
                     param_name = f'gamma_{lv_name}_{attr_name}'
 
-                    if param_name in params:
+                    if param_name in params and attr_name in self.choice_attributes:
                         gamma = params[param_name]
+                        attr_idx = self.choice_attributes.index(attr_name)
 
-                        # 속성 인덱스 찾기
-                        if attr_name in self.choice_attributes:
-                            attr_idx = self.choice_attributes.index(attr_name)
+                        # 상호작용항 추가: γ * LV * Attribute (벡터화)
+                        lv_values = lv_arrays[lv_name]  # Shape: (N,)
+                        attr_values = X[:, attr_idx]     # Shape: (N,)
 
-                            # 상호작용항 추가: γ * LV * Attribute
-                            for i in range(len(data)):
-                                if not has_nan[i]:  # opt-out이 아닌 경우만
-                                    lv_value = lv_arrays[lv_name][i]
-                                    attr_value = X[i, attr_idx]
-                                    V[i] += gamma * lv_value * attr_value
+                        # ✅ 차원 검증
+                        assert lv_values.ndim == 1, f"lv_values should be 1D, got {lv_values.ndim}D"
+                        assert attr_values.ndim == 1, f"attr_values should be 1D, got {attr_values.ndim}D"
+
+                        # Element-wise multiplication: (N,) * (N,) = (N,)
+                        V[~has_nan] += gamma * lv_values[~has_nan] * attr_values[~has_nan]
 
         elif self.moderation_enabled and isinstance(lv, dict):
             # 조절효과 모델 (하위 호환)
@@ -372,21 +363,18 @@ class BaseICLVChoice(ABC):
                 else:
                     moderator_arrays[mod_lv] = lv_mod
 
-            # 효용 계산: V = intercept + β*X + λ_main*LV_main + Σ(λ_mod_i * LV_main * LV_mod_i)
-            for i in range(len(data)):
-                if has_nan[i]:
-                    V[i] = 0.0  # opt-out: 효용 = 0
-                else:
-                    # 기본 효용
-                    V[i] = intercept + X[i] @ beta + lambda_main * lv_main_array[i]
+            # ✅ 벡터화된 효용 계산: V = intercept + β*X + λ_main*LV_main + Σ(λ_mod_i * LV_main * LV_mod_i)
+            # 기본 효용
+            V[~has_nan] = intercept + (X[~has_nan] @ beta) + lambda_main * lv_main_array[~has_nan]
+            V[has_nan] = 0.0
 
-                    # 조절효과 추가
-                    for mod_lv in self.moderator_lvs:
-                        param_name = f'lambda_mod_{mod_lv}'
-                        if param_name in params:
-                            lambda_mod = params[param_name]
-                            interaction = lv_main_array[i] * moderator_arrays[mod_lv][i]
-                            V[i] += lambda_mod * interaction
+            # 조절효과 추가 (벡터화)
+            for mod_lv in self.moderator_lvs:
+                param_name = f'lambda_mod_{mod_lv}'
+                if param_name in params:
+                    lambda_mod = params[param_name]
+                    interaction = lv_main_array * moderator_arrays[mod_lv]
+                    V[~has_nan] += lambda_mod * interaction[~has_nan]
 
         else:
             # 기본 모델 (단일 LV, 하위 호환)
@@ -405,12 +393,9 @@ class BaseICLVChoice(ABC):
             else:
                 lv_array = lv_value
 
-            # 효용 계산: V = intercept + β*X + λ*LV
-            for i in range(len(data)):
-                if has_nan[i]:
-                    V[i] = 0.0  # opt-out: 효용 = 0
-                else:
-                    V[i] = intercept + X[i] @ beta + lambda_lv * lv_array[i]
+            # ✅ 벡터화된 효용 계산: V = intercept + β*X + λ*LV
+            V[~has_nan] = intercept + (X[~has_nan] @ beta) + lambda_lv * lv_array[~has_nan]
+            V[has_nan] = 0.0
 
         return V
 
