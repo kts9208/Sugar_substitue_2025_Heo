@@ -83,16 +83,7 @@ def compute_joint_likelihood_batch_gpu(
         params_dict['measurement']
     )
 
-    # 2. 구조모델 우도 (배치)
-    ll_structural = gpu_batch_utils.compute_structural_batch_gpu(
-        ind_data,
-        lvs_list,
-        params_dict['structural'],
-        draws,
-        structural_model
-    )
-
-    # 3. 선택모델 우도 (배치)
+    # 2. 선택모델 우도 (배치)
     ll_choice = gpu_batch_utils.compute_choice_batch_gpu(
         ind_data,
         lvs_list,
@@ -100,8 +91,9 @@ def compute_joint_likelihood_batch_gpu(
         choice_model
     )
 
-    # 4. 결합 우도
-    ll_joint = ll_measurement + ll_structural + ll_choice
+    # 3. 결합 우도
+    # ✅ 구조모델 우도는 포함하지 않음 (구조모델은 LV 생성만 담당)
+    ll_joint = ll_measurement + ll_choice
 
     return ll_joint
 
@@ -1141,7 +1133,6 @@ def compute_all_individuals_likelihood_full_batch_gpu(
     # 📊 전체 우도 성분 누적 (로깅용)
     total_ll_measurement = 0.0
     total_ll_choice = 0.0
-    total_ll_structural = 0.0
 
     # 🔍 측정모델 지표 수 계산 (스케일링용)
     n_measurement_indicators = 0
@@ -1175,27 +1166,16 @@ def compute_all_individuals_likelihood_full_batch_gpu(
             choice_model
         )
 
-        # 구조모델 우도 (GPU 배치)
-        ll_structural = gpu_batch_utils.compute_structural_batch_gpu(
-            ind_data,
-            ind_lvs_list,
-            params_dict['structural'],
-            ind_draws,
-            structural_model,
-            iteration_logger=None  # ✅ 구조모델 내부 로깅 비활성화
-        )
-
         # 결합 우도 (R,)
-        draw_lls = ll_measurement + ll_choice + ll_structural
+        # ✅ 구조모델 우도는 포함하지 않음 (구조모델은 LV 생성만 담당)
+        draw_lls = ll_measurement + ll_choice
 
         # 📊 전체 우도 성분 누적 (개인별 평균)
         person_ll_measurement = logsumexp(ll_measurement) - np.log(n_draws)
         person_ll_choice = logsumexp(ll_choice) - np.log(n_draws)
-        person_ll_structural = logsumexp(ll_structural) - np.log(n_draws)
 
         total_ll_measurement += person_ll_measurement
         total_ll_choice += person_ll_choice
-        total_ll_structural += person_ll_structural
 
         # 유한성 체크
         non_finite_mask = ~np.isfinite(draw_lls)
@@ -1211,7 +1191,6 @@ def compute_all_individuals_likelihood_full_batch_gpu(
             bad_idx = non_finite_indices[0]
             print(f"  ll_measurement[{bad_idx}]: {ll_measurement[bad_idx]:.4f}")
             print(f"  ll_choice[{bad_idx}]: {ll_choice[bad_idx]:.4f}")
-            print(f"  ll_structural[{bad_idx}]: {ll_structural[bad_idx]:.4f}")
             print(f"  draw_ll[{bad_idx}]: {draw_lls[bad_idx]}")
             print(f"{'='*80}\n")
             raise ValueError(f"개인 {ind_idx+1}에서 비유한 우도 발견!")
@@ -1236,7 +1215,6 @@ def compute_all_individuals_likelihood_full_batch_gpu(
             f"  📈 모델별 우도 성분:\n"
             f"    측정모델: {total_ll_measurement:.4f} ({100*abs(total_ll_measurement)/abs(total_ll):.1f}%)\n"
             f"    선택모델: {total_ll_choice:.4f} ({100*abs(total_ll_choice)/abs(total_ll):.1f}%)\n"
-            f"    구조모델: {total_ll_structural:.4f} ({100*abs(total_ll_structural)/abs(total_ll):.1f}%)\n"
             f"{'='*80}"
         )
 
