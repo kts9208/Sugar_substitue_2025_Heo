@@ -94,7 +94,7 @@ def main():
     # ═══════════════════════════════════════════════════════════════════
 
     # 📌 1단계 결과 파일명 (1단계에서 생성된 파일명)
-    STAGE1_RESULT_FILE = "stage1_HC-PB_PB-PI_results.pkl"
+    STAGE1_RESULT_FILE = "stage1_HC-PB_HC-PP_PB-PI_PP-PI_results.pkl"
 
     # 📌 요인점수 변환 방법
     # 'zscore': Z-score 표준화 (평균 0, 표준편차 1) - 기본값
@@ -182,7 +182,6 @@ def main():
 
     choice_config_dict = build_choice_config_dict(
         main_lvs=MAIN_LVS,
-        moderation_lvs=MODERATION_LVS,
         lv_attribute_interactions=LV_ATTRIBUTE_INTERACTIONS
     )
 

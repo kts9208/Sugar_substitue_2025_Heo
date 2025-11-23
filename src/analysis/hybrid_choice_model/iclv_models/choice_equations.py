@@ -66,6 +66,14 @@ class BaseICLVChoice(ABC):
         self.main_lvs = config.main_lvs if config.main_lvs else []
         self.lv_attribute_interactions = config.lv_attribute_interactions if config.lv_attribute_interactions else []
 
+        # ✅ 하위 호환성: all_lvs_as_main 속성 추가 (main_lvs가 있으면 True)
+        self.all_lvs_as_main = len(self.main_lvs) > 0
+
+        # ✅ 하위 호환성: moderation_enabled 속성 추가 (현재는 사용 안 함)
+        self.moderation_enabled = getattr(config, 'moderation_enabled', False)
+        self.moderator_lvs = getattr(config, 'moderator_lvs', [])
+        self.main_lv = getattr(config, 'main_lv', None)
+
         self.logger = logging.getLogger(__name__)
 
         self.logger.info(f"{self.__class__.__name__} 초기화")
@@ -129,23 +137,6 @@ class BaseICLVChoice(ABC):
             # ✅ 각 LV를 배열로 변환 (유연한 리스트 기반)
             lv_arrays = {}
             if isinstance(lv, dict):
-                # 개인 인덱스 계산 (각 행 → 개인)
-                # 데이터 구조: 개인1_선택1_대안1, 개인1_선택1_대안2, 개인1_선택1_대안3, 개인1_선택2_대안1, ...
-                # 개인 수 추정: 첫 번째 LV 배열의 길이
-                first_lv_name = list(lv.keys())[0]
-                first_lv_value = lv[first_lv_name]
-                if np.isscalar(first_lv_value):
-                    n_individuals = 1
-                else:
-                    n_individuals = len(first_lv_value)
-
-                # 선택 상황 수 계산
-                n_choice_situations = len(data) // (n_individuals * self.n_alternatives)
-
-                # 개인 인덱스: 각 행이 어느 개인에 속하는지
-                # 예: 개인 0의 8개 선택 상황 × 3개 대안 = 24행 → person_idx = [0]*24
-                person_idx = np.repeat(np.arange(n_individuals), n_choice_situations * self.n_alternatives)
-
                 # 주효과에 사용되는 잠재변수
                 for lv_name in self.main_lvs:
                     if lv_name not in lv:
@@ -155,9 +146,30 @@ class BaseICLVChoice(ABC):
                     if np.isscalar(lv_value):
                         lv_arrays[lv_name] = np.full(len(data), lv_value)
                     else:
-                        # 개인 수준 배열 → 전체 데이터 길이로 확장
-                        # person_idx를 사용하여 각 행에 해당하는 개인의 LV 값 할당
-                        lv_arrays[lv_name] = lv_value[person_idx]
+                        # lv_value가 이미 전체 데이터 길이로 확장되어 있는지 확인
+                        if len(lv_value) == len(data):
+                            # 이미 확장됨 (부트스트랩에서 전달된 경우)
+                            lv_arrays[lv_name] = lv_value
+                        else:
+                            # 개인 수준 배열 → 전체 데이터 길이로 확장 필요
+                            # respondent_id를 기준으로 매핑
+                            if 'respondent_id' in data.columns:
+                                # 고유 ID 리스트
+                                unique_ids = data['respondent_id'].unique()
+                                if len(lv_value) != len(unique_ids):
+                                    raise ValueError(f"LV '{lv_name}' 길이({len(lv_value)})와 고유 ID 수({len(unique_ids)})가 다릅니다.")
+
+                                # ID별 LV 값 매핑
+                                id_to_lv = {unique_ids[i]: lv_value[i] for i in range(len(unique_ids))}
+
+                                # 각 행에 대응하는 LV 값 할당
+                                lv_arrays[lv_name] = np.array([id_to_lv[rid] for rid in data['respondent_id']])
+                            else:
+                                # respondent_id가 없으면 기존 방식 사용
+                                n_individuals = len(lv_value)
+                                n_choice_situations = len(data) // (n_individuals * self.n_alternatives)
+                                person_idx = np.repeat(np.arange(n_individuals), n_choice_situations * self.n_alternatives)
+                                lv_arrays[lv_name] = lv_value[person_idx]
 
                 # ✅ 상호작용에 사용되는 잠재변수 (주효과 없어도 포함)
                 for interaction in self.lv_attribute_interactions:
@@ -167,8 +179,27 @@ class BaseICLVChoice(ABC):
                         if np.isscalar(lv_value):
                             lv_arrays[lv_name] = np.full(len(data), lv_value)
                         else:
-                            # 개인 수준 배열 → 전체 데이터 길이로 확장
-                            lv_arrays[lv_name] = lv_value[person_idx]
+                            # lv_value가 이미 전체 데이터 길이로 확장되어 있는지 확인
+                            if len(lv_value) == len(data):
+                                # 이미 확장됨
+                                lv_arrays[lv_name] = lv_value
+                            else:
+                                # 개인 수준 배열 → 전체 데이터 길이로 확장
+                                if 'respondent_id' in data.columns:
+                                    unique_ids = data['respondent_id'].unique()
+                                    if len(lv_value) != len(unique_ids):
+                                        raise ValueError(f"LV '{lv_name}' 길이({len(lv_value)})와 고유 ID 수({len(unique_ids)})가 다릅니다.")
+
+                                    id_to_lv = {unique_ids[i]: lv_value[i] for i in range(len(unique_ids))}
+                                    lv_arrays[lv_name] = np.array([id_to_lv[rid] for rid in data['respondent_id']])
+                                else:
+                                    # respondent_id가 없으면 기존 방식 사용
+                                    first_lv_name = list(lv.keys())[0]
+                                    first_lv_value = lv[first_lv_name]
+                                    n_individuals = len(first_lv_value) if not np.isscalar(first_lv_value) else 1
+                                    n_choice_situations = len(data) // (n_individuals * self.n_alternatives)
+                                    person_idx = np.repeat(np.arange(n_individuals), n_choice_situations * self.n_alternatives)
+                                    lv_arrays[lv_name] = lv_value[person_idx]
 
                 # 디버깅: lv_arrays 내용 로깅 (첫 호출 시에만)
                 if not hasattr(self, '_lv_arrays_logged'):

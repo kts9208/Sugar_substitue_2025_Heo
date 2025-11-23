@@ -1,124 +1,106 @@
 # 순차추정 부트스트래핑 가이드
 
+## ⚠️ 중요 업데이트 (2025-11-23)
+
+**항상 1+2단계 통합 부트스트래핑을 사용하세요!**
+
+- `bootstrap_both_stages()` 함수만 사용 권장
+- `bootstrap_stage1_only()`, `bootstrap_stage2_only()`는 deprecated
+- 1단계의 불확실성을 2단계 신뢰구간에 반영하는 것이 이론적으로 올바름
+
+---
+
 ## 📋 개요
 
-순차추정(Sequential Estimation)에서 3가지 부트스트래핑 모드를 지원합니다:
+순차추정(Sequential Estimation)에서 **1+2단계 통합 부트스트래핑**을 수행합니다:
 
-1. **Stage 1 Only**: 1단계(SEM)만 부트스트래핑
-2. **Stage 2 Only**: 2단계(선택모델)만 부트스트래핑 (요인점수 고정)
-3. **Both Stages**: 1+2단계 전체 부트스트래핑
-
----
-
-## 🎯 사용 목적
-
-### 1. Stage 1 Only (SEM 부트스트래핑)
-- **목적**: 측정모델과 구조모델 파라미터의 신뢰구간 추정
-- **사용 시기**: 
-  - SEM 파라미터의 불확실성 평가
-  - 경로계수의 유의성 검정
-  - 요인적재량의 안정성 확인
-
-### 2. Stage 2 Only (선택모델 부트스트래핑)
-- **목적**: 선택모델 파라미터의 신뢰구간 추정 (요인점수 고정)
-- **사용 시기**:
-  - 1단계 결과를 고정하고 2단계만 재추정
-  - 선택모델 파라미터의 불확실성만 평가
-  - 계산 시간 절약 (1단계 재추정 불필요)
-
-### 3. Both Stages (전체 부트스트래핑)
-- **목적**: 순차추정 전체의 불확실성 전파 평가
-- **사용 시기**:
-  - 1단계 불확실성이 2단계에 미치는 영향 평가
-  - 전체 모델의 신뢰구간 추정
-  - 가장 정확한 표준오차 추정 (하지만 계산 시간 많이 소요)
+- 각 부트스트랩 샘플마다 1단계(SEM) → 2단계(선택모델)를 순차 실행
+- 1단계의 불확실성을 2단계 신뢰구간에 반영
+- 이론적으로 올바른 순차추정 표준오차 제공
 
 ---
 
-## 🚀 사용법
+## 🎯 왜 Both Stages만 사용해야 하는가?
 
-### 기본 사용
+### ✅ Both Stages (1+2단계 통합) - 권장
+
+**장점**:
+- ✅ 1단계의 불확실성이 2단계 신뢰구간에 반영됨
+- ✅ 이론적으로 올바른 표준오차 추정
+- ✅ 보수적이고 정확한 신뢰구간
+- ✅ 논문 발표에 적합
+
+**단점**:
+- ⚠️ 계산 시간이 오래 걸림 (각 샘플마다 1+2단계 모두 추정)
+
+### ❌ Stage 1 Only / Stage 2 Only - Deprecated
+
+**문제점**:
+- ❌ 1단계의 불확실성이 2단계에 반영되지 않음
+- ❌ 신뢰구간이 과소추정될 위험
+- ❌ 이론적으로 부정확한 표준오차
+- ❌ 논문 심사에서 지적받을 가능성
+
+---
+
+## 🚀 사용법 (권장)
+
+### ✅ 기본 사용 - Both Stages만 사용
 
 ```python
-from src.analysis.hybrid_choice_model.iclv_models.bootstrap_sequential import (
-    bootstrap_stage1_only,
-    bootstrap_stage2_only,
-    bootstrap_both_stages
-)
+from src.analysis.hybrid_choice_model.iclv_models.bootstrap_sequential import bootstrap_both_stages
 
-# 1. Stage 1 Only
-results_stage1 = bootstrap_stage1_only(
-    data=data,
-    measurement_model=measurement_config,
-    structural_model=structural_config,
-    n_bootstrap=100,
-    n_workers=4,
-    confidence_level=0.95,
-    random_seed=42,
-    show_progress=True
-)
-
-# 2. Stage 2 Only
-results_stage2 = bootstrap_stage2_only(
-    choice_data=choice_data,
-    factor_scores=factor_scores,  # 1단계에서 추출한 요인점수
-    choice_model=choice_config,
-    n_bootstrap=100,
-    n_workers=4,
-    confidence_level=0.95,
-    random_seed=42,
-    show_progress=True
-)
-
-# 3. Both Stages
-results_both = bootstrap_both_stages(
+# ✅ 권장: 1+2단계 통합 부트스트래핑
+results = bootstrap_both_stages(
     data=data,
     measurement_model=measurement_config,
     structural_model=structural_config,
     choice_model=choice_config,
-    n_bootstrap=100,
-    n_workers=4,
+    n_bootstrap=1000,  # 권장: 1000 이상
+    n_workers=6,       # CPU 코어 수에 맞게 조정
     confidence_level=0.95,
     random_seed=42,
     show_progress=True
 )
 ```
 
-### 클래스 사용
+### ⚠️ Deprecated 함수들 (사용 금지)
+
+```python
+# ❌ 사용하지 마세요 - Deprecated
+from src.analysis.hybrid_choice_model.iclv_models.bootstrap_sequential import (
+    bootstrap_stage1_only,  # ❌ Deprecated
+    bootstrap_stage2_only   # ❌ Deprecated
+)
+
+# 이 함수들을 사용하면 DeprecationWarning이 발생합니다.
+```
+
+### 클래스 사용 (고급)
 
 ```python
 from src.analysis.hybrid_choice_model.iclv_models.bootstrap_sequential import SequentialBootstrap
 
 # 부트스트래퍼 생성
 bootstrapper = SequentialBootstrap(
-    n_bootstrap=100,
-    n_workers=4,
+    n_bootstrap=1000,  # 권장: 1000 이상
+    n_workers=6,
     confidence_level=0.95,
     random_seed=42,
     show_progress=True
 )
 
-# 1단계만 실행
-results_stage1 = bootstrapper.run_stage1_bootstrap(
-    data=data,
-    measurement_model=measurement_config,
-    structural_model=structural_config
-)
-
-# 2단계만 실행
-results_stage2 = bootstrapper.run_stage2_bootstrap(
-    choice_data=choice_data,
-    factor_scores=factor_scores,
-    choice_model=choice_config
-)
-
-# 전체 실행
-results_both = bootstrapper.run_both_stages_bootstrap(
+# ✅ 권장: 1+2단계 통합 실행
+results = bootstrapper.run_both_stages_bootstrap(
     data=data,
     measurement_model=measurement_config,
     structural_model=structural_config,
     choice_model=choice_config
 )
+
+# ❌ Deprecated: 사용하지 마세요
+# results_stage1 = bootstrapper.run_stage1_bootstrap(...)  # Deprecated
+# results_stage2 = bootstrapper.run_stage2_bootstrap(...)  # Deprecated
 ```
 
 ---
@@ -205,14 +187,48 @@ python examples/bootstrap_sequential_example.py --mode both
    - 표준오차가 과소추정될 수 있음
    - 빠른 탐색용으로 적합
 
-2. **Both Stages 사용 시**:
-   - 가장 정확한 신뢰구간 추정
-   - 계산 시간이 가장 오래 걸림
-   - 최종 분석에 권장
+2. **Both Stages 사용 (필수)**:
+   - ✅ 항상 이 방법을 사용하세요
+   - ✅ 가장 정확한 신뢰구간 추정
+   - ⚠️ 계산 시간이 오래 걸림 (각 샘플마다 1+2단계 모두 추정)
+   - 📌 최종 분석 및 논문 발표에 필수
 
 3. **병렬 처리**:
    - Windows에서는 `if __name__ == "__main__":` 블록 필수
    - 메모리 사용량 주의 (워커 수 × 데이터 크기)
+   - 권장 워커 수: CPU 코어 수 - 1
+
+---
+
+## 🎯 권장사항 요약
+
+### ✅ DO (해야 할 것)
+
+1. **항상 `bootstrap_both_stages()` 사용**
+   - 1단계의 불확실성을 2단계에 반영
+   - 이론적으로 올바른 표준오차
+
+2. **충분한 부트스트랩 샘플 수**
+   - 최소 1000회 이상 권장
+   - 안정적인 신뢰구간 추정
+
+3. **병렬 처리 활용**
+   - `n_workers=6` 이상 권장
+   - 계산 시간 대폭 단축
+
+### ❌ DON'T (하지 말아야 할 것)
+
+1. **`bootstrap_stage1_only()` 사용 금지**
+   - Deprecated
+   - 1단계 불확실성이 2단계에 반영 안 됨
+
+2. **`bootstrap_stage2_only()` 사용 금지**
+   - Deprecated
+   - 신뢰구간 과소추정 위험
+
+3. **적은 샘플 수 사용 금지**
+   - 100회 미만은 불안정
+   - 최소 1000회 이상 권장
 
 ---
 
@@ -220,5 +236,6 @@ python examples/bootstrap_sequential_example.py --mode both
 
 - Train, K. E. (2009). *Discrete Choice Methods with Simulation*. Cambridge University Press.
 - Bhat, C. R., & Dubey, S. K. (2014). A new estimation approach to integrate latent psychological constructs in choice modeling. *Transportation Research Part B*, 67, 68-85.
+- Efron, B., & Tibshirani, R. J. (1994). *An Introduction to the Bootstrap*. CRC Press.
 
 

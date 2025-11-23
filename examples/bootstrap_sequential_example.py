@@ -1,13 +1,18 @@
 """
 순차추정 부트스트래핑 예제
 
+⚠️ 중요 (2025-11-23 업데이트):
+- example_both_stages_bootstrap() 사용 권장 (--mode both)
+- example_stage1_bootstrap(), example_stage2_bootstrap()는 deprecated
+
 3가지 부트스트래핑 모드:
-1. Stage 1 Only: SEM만 부트스트래핑
-2. Stage 2 Only: 선택모델만 부트스트래핑 (요인점수 고정)
-3. Both Stages: 1+2단계 전체 부트스트래핑
+1. Stage 1 Only: SEM만 부트스트래핑 (❌ Deprecated)
+2. Stage 2 Only: 선택모델만 부트스트래핑 (❌ Deprecated)
+3. Both Stages: 1+2단계 전체 부트스트래핑 (✅ 권장)
 
 Author: ICLV Team
 Date: 2025-01-16
+Updated: 2025-11-23
 """
 
 import sys
@@ -30,9 +35,22 @@ from src.analysis.hybrid_choice_model.iclv_models.iclv_config import ChoiceConfi
 
 
 def example_stage1_bootstrap():
-    """1단계만 부트스트래핑 예제"""
+    """
+    1단계만 부트스트래핑 예제
+
+    ⚠️ DEPRECATED: 이 예제는 더 이상 권장되지 않습니다.
+    대신 example_both_stages_bootstrap()을 사용하세요.
+    """
+    import warnings
+    warnings.warn(
+        "example_stage1_bootstrap()은 deprecated되었습니다. "
+        "1단계의 불확실성을 2단계에 반영하려면 example_both_stages_bootstrap()을 사용하세요.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+
     print("=" * 70)
-    print("예제 1: 1단계만 부트스트래핑 (SEM)")
+    print("예제 1: 1단계만 부트스트래핑 (SEM) - ⚠️ DEPRECATED")
     print("=" * 70)
     
     # 데이터 로드
@@ -73,9 +91,22 @@ def example_stage1_bootstrap():
 
 
 def example_stage2_bootstrap():
-    """2단계만 부트스트래핑 예제"""
+    """
+    2단계만 부트스트래핑 예제
+
+    ⚠️ DEPRECATED: 이 예제는 더 이상 권장되지 않습니다.
+    대신 example_both_stages_bootstrap()을 사용하세요.
+    """
+    import warnings
+    warnings.warn(
+        "example_stage2_bootstrap()은 deprecated되었습니다. "
+        "1단계의 불확실성을 2단계에 반영하려면 example_both_stages_bootstrap()을 사용하세요.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+
     print("\n" + "=" * 70)
-    print("예제 2: 2단계만 부트스트래핑 (선택모델, 요인점수 고정)")
+    print("예제 2: 2단계만 부트스트래핑 (선택모델, 요인점수 고정) - ⚠️ DEPRECATED")
     print("=" * 70)
 
     # 데이터 로드
@@ -161,9 +192,15 @@ def example_stage2_bootstrap():
 
 
 def example_both_stages_bootstrap():
-    """1+2단계 전체 부트스트래핑 예제"""
+    """
+    1+2단계 전체 부트스트래핑 예제
+
+    ✅ 권장: 항상 이 방법을 사용하세요!
+    - 1단계의 불확실성을 2단계 신뢰구간에 반영
+    - 이론적으로 올바른 순차추정 표준오차
+    """
     print("\n" + "=" * 70)
-    print("예제 3: 1+2단계 전체 부트스트래핑 (1000회)")
+    print("예제 3: 1+2단계 전체 부트스트래핑 (1000회) - ✅ 권장")
     print("=" * 70)
 
     # 데이터 로드
@@ -262,8 +299,8 @@ if __name__ == "__main__":
         '--mode',
         type=str,
         choices=['stage1', 'stage2', 'both', 'all'],
-        default='all',
-        help='부트스트래핑 모드 (stage1: 1단계만, stage2: 2단계만, both: 전체, all: 모든 예제 실행)'
+        default='both',  # ✅ 기본값을 'both'로 변경
+        help='부트스트래핑 모드 (stage1: 1단계만 [Deprecated], stage2: 2단계만 [Deprecated], both: 전체 [권장], all: 모든 예제)'
     )
 
     args = parser.parse_args()

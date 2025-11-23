@@ -44,10 +44,10 @@ from src.analysis.hybrid_choice_model.iclv_models.multi_latent_config import cre
 # 경로 설정: True/False로 간단하게 켜고 끄기
 PATHS = {
     'HC->PB': True,   # 건강관심도 → 건강유익성
-    'HC->PP': False,  # 건강관심도 → 가격수준
+    'HC->PP': True,   # 건강관심도 → 가격수준  ✅ 추가
     'HC->PI': False,  # 건강관심도 → 구매의도
     'PB->PI': True,   # 건강유익성 → 구매의도
-    'PP->PI': False,  # 가격수준 → 구매의도
+    'PP->PI': True,   # 가격수준 → 구매의도  ✅ 추가
     'NK->PI': False,  # 영양지식 → 구매의도
 }
 

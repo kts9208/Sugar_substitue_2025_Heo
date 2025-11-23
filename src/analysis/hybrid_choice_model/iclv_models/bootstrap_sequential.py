@@ -1,13 +1,28 @@
 """
 순차추정 부트스트래핑 모듈
 
-3가지 부트스트래핑 지원:
-1. Stage 1 Only: SEM만 부트스트래핑 (측정모델 + 구조모델)
-2. Stage 2 Only: 선택모델만 부트스트래핑 (1단계 요인점수 고정)
-3. Stage 1+2: 순차추정 전체 부트스트래핑
+⚠️ 중요: 항상 1+2단계 통합 부트스트래핑을 수행합니다.
+- 각 부트스트랩 샘플마다 1단계(SEM) → 2단계(선택모델)를 순차적으로 실행
+- 1단계의 불확실성을 2단계 신뢰구간에 반영
+- 이론적으로 올바른 순차추정 부트스트래핑
+
+사용 예제:
+    from src.analysis.hybrid_choice_model.iclv_models.bootstrap_sequential import bootstrap_both_stages
+
+    results = bootstrap_both_stages(
+        data=data,
+        measurement_model=config.measurement_configs,
+        structural_model=config.structural,
+        choice_model=choice_config,
+        n_bootstrap=1000,
+        n_workers=6,
+        confidence_level=0.95,
+        random_seed=42
+    )
 
 Author: ICLV Team
 Date: 2025-01-16
+Updated: 2025-11-23 (항상 both 모드로 통합)
 """
 
 import logging
@@ -25,11 +40,14 @@ logger = logging.getLogger(__name__)
 class SequentialBootstrap:
     """
     순차추정 부트스트래핑 클래스
-    
-    3가지 부트스트래핑 모드:
-    - 'stage1': 1단계만 (SEM)
-    - 'stage2': 2단계만 (선택모델, 요인점수 고정)
-    - 'both': 1+2단계 전체
+
+    ⚠️ 항상 1+2단계 통합 부트스트래핑을 수행합니다.
+    - 각 부트스트랩 샘플마다 1단계(SEM) → 2단계(선택모델)를 순차 실행
+    - 1단계의 불확실성을 2단계 신뢰구간에 반영
+    - 이론적으로 올바른 순차추정 표준오차 추정
+
+    Note: run_stage1_bootstrap, run_stage2_bootstrap은 deprecated되었습니다.
+          항상 run_both_stages_bootstrap을 사용하세요.
     """
     
     def __init__(
@@ -71,23 +89,34 @@ class SequentialBootstrap:
         structural_model
     ) -> Dict[str, Any]:
         """
-        1단계만 부트스트래핑 (SEM)
-        
+        ⚠️ DEPRECATED: 이 메서드는 더 이상 권장되지 않습니다.
+
+        1단계만 부트스트래핑하면 1단계의 불확실성이 2단계에 반영되지 않습니다.
+        대신 run_both_stages_bootstrap()을 사용하세요.
+
         각 부트스트랩 샘플마다:
         1. 개인별 리샘플링
         2. SEM 재추정 (측정모델 + 구조모델)
         3. 파라미터 저장
-        
+
         Args:
             data: 전체 데이터
             measurement_model: 측정모델 설정
             structural_model: 구조모델 설정
-        
+
         Returns:
             부트스트랩 결과 딕셔너리
         """
+        import warnings
+        warnings.warn(
+            "run_stage1_bootstrap()은 deprecated되었습니다. "
+            "1단계의 불확실성을 2단계에 반영하려면 run_both_stages_bootstrap()을 사용하세요.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
         logger.info("=" * 70)
-        logger.info("1단계 부트스트래핑 시작 (SEM Only)")
+        logger.info("⚠️  1단계만 부트스트래핑 (SEM Only) - DEPRECATED")
         logger.info("=" * 70)
         
         # 개인 ID 추출
@@ -119,23 +148,35 @@ class SequentialBootstrap:
         choice_model
     ) -> Dict[str, Any]:
         """
-        2단계만 부트스트래핑 (선택모델, 요인점수 고정)
-        
+        ⚠️ DEPRECATED: 이 메서드는 더 이상 권장되지 않습니다.
+
+        2단계만 부트스트래핑하면 1단계의 불확실성이 반영되지 않아
+        신뢰구간이 과소추정됩니다.
+        대신 run_both_stages_bootstrap()을 사용하세요.
+
         각 부트스트랩 샘플마다:
         1. 개인별 리샘플링 (선택 데이터 + 요인점수)
         2. 선택모델 재추정
         3. 파라미터 저장
-        
+
         Args:
             choice_data: 선택 데이터
             factor_scores: 1단계에서 추출한 요인점수 (고정)
             choice_model: 선택모델 설정
-        
+
         Returns:
             부트스트랩 결과 딕셔너리
         """
+        import warnings
+        warnings.warn(
+            "run_stage2_bootstrap()은 deprecated되었습니다. "
+            "1단계의 불확실성을 반영하려면 run_both_stages_bootstrap()을 사용하세요.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
         logger.info("=" * 70)
-        logger.info("2단계 부트스트래핑 시작 (Choice Model Only)")
+        logger.info("⚠️  2단계만 부트스트래핑 (Choice Model Only) - DEPRECATED")
         logger.info("=" * 70)
 
         # 개인 ID 추출
@@ -168,13 +209,18 @@ class SequentialBootstrap:
         choice_model
     ) -> Dict[str, Any]:
         """
-        1+2단계 전체 부트스트래핑 (순차추정)
+        ✅ 권장: 1+2단계 전체 부트스트래핑 (순차추정)
 
         각 부트스트랩 샘플마다:
         1. 개인별 리샘플링
-        2. Step 1: SEM 재추정 -> 요인점수 추출
-        3. Step 2: 선택모델 재추정
+        2. Step 1: SEM 재추정 → 요인점수 추출
+        3. Step 2: 선택모델 재추정 (1단계 요인점수 사용)
         4. 파라미터 저장
+
+        이 방법은 1단계의 불확실성을 2단계 신뢰구간에 반영하므로
+        이론적으로 올바른 순차추정 표준오차를 제공합니다.
+
+        ✅ Sign Correction이 자동으로 적용됩니다.
 
         Args:
             data: 전체 데이터
@@ -183,10 +229,17 @@ class SequentialBootstrap:
             choice_model: 선택모델 설정
 
         Returns:
-            부트스트랩 결과 딕셔너리
+            부트스트랩 결과 딕셔너리:
+            - bootstrap_estimates: 각 샘플의 파라미터 추정치
+            - confidence_intervals: 파라미터별 신뢰구간
+            - bootstrap_statistics: 평균, 표준편차 등
+            - n_successful: 성공한 샘플 수
+            - n_failed: 실패한 샘플 수
+            - mode: 'both'
+            - sign_flip_statistics: 부호 반전 통계 (Sign Correction)
         """
         logger.info("=" * 70)
-        logger.info("1+2단계 부트스트래핑 시작 (Full Sequential)")
+        logger.info("✅ 1+2단계 통합 부트스트래핑 시작 (Full Sequential)")
         logger.info("=" * 70)
 
         # 개인 ID 추출
@@ -199,9 +252,17 @@ class SequentialBootstrap:
         print(f"  신뢰수준: {self.confidence_level}")
         print(f"  개인 수: {n_individuals}")
 
-        # 워커 함수 인자 준비
+        # ✅ Sign Correction을 위한 원본 요인적재량 추출
+        logger.info("\n원본 데이터로 1단계 추정 중 (Sign Correction 기준점)...")
+        original_sem_results = _run_stage1(data, measurement_model, structural_model)
+        original_loadings = original_sem_results['loadings']  # DataFrame 형식
+        logger.info(f"원본 요인적재량 추출 완료: {original_loadings['lval'].unique().tolist()}")
+        logger.info("✅ Sign Correction 활성화됨 (요인적재량 내적 기반)")
+
+        # 워커 함수 인자 준비 (원본 요인적재량 추가)
         worker_args = [
-            (i, data, individual_ids, measurement_model, structural_model, choice_model, self.random_seed, 'both')
+            (i, data, individual_ids, measurement_model, structural_model, choice_model,
+             self.random_seed, 'both', original_loadings)
             for i in range(self.n_bootstrap)
         ]
 
@@ -283,7 +344,26 @@ class SequentialBootstrap:
         # 부트스트랩 통계량 계산
         bootstrap_stats = self._calculate_statistics(bootstrap_results, mode)
 
-        return {
+        # ✅ Sign Flip 통계 계산 (both 모드에서만)
+        sign_flip_stats = None
+        if mode == 'both':
+            sign_flip_stats = self._calculate_sign_flip_statistics(bootstrap_results)
+            if sign_flip_stats is not None and len(sign_flip_stats) > 0:
+                print(f"\n✅ Sign Correction 통계:")
+                print(f"  총 잠재변수 수: {len(sign_flip_stats)}")
+                n_flipped_total = sign_flip_stats['n_flipped'].sum()
+                n_total = sign_flip_stats['n_total'].sum()
+                flip_rate_avg = sign_flip_stats['flip_rate'].mean()
+                print(f"  총 부호 반전 횟수: {n_flipped_total}/{n_total} ({flip_rate_avg*100:.1f}%)")
+
+                # 반전율이 높은 변수 경고
+                high_flip_vars = sign_flip_stats[sign_flip_stats['flip_rate'] > 0.3]
+                if len(high_flip_vars) > 0:
+                    print(f"  ⚠️  부호 반전율 > 30%인 변수: {len(high_flip_vars)}개")
+                    for _, row in high_flip_vars.iterrows():
+                        print(f"    - {row['lv_name']}: {row['flip_rate']*100:.1f}%")
+
+        result_dict = {
             'bootstrap_estimates': bootstrap_results,
             'confidence_intervals': confidence_intervals,
             'bootstrap_statistics': bootstrap_stats,
@@ -291,6 +371,11 @@ class SequentialBootstrap:
             'n_failed': self.n_bootstrap - len(bootstrap_results),
             'mode': mode
         }
+
+        if sign_flip_stats is not None:
+            result_dict['sign_flip_statistics'] = sign_flip_stats
+
+        return result_dict
 
     def _calculate_confidence_intervals(
         self,
@@ -415,6 +500,49 @@ class SequentialBootstrap:
 
         return pd.DataFrame(stats_data)
 
+    def _calculate_sign_flip_statistics(self, bootstrap_results: List[Dict]) -> Optional[pd.DataFrame]:
+        """
+        부호 반전 통계 계산 (Sign Correction)
+
+        Args:
+            bootstrap_results: 부트스트랩 결과 리스트
+
+        Returns:
+            부호 반전 통계 DataFrame
+            - lv_name: 잠재변수 이름
+            - n_flipped: 부호 반전된 횟수
+            - n_total: 총 샘플 수
+            - flip_rate: 부호 반전율 (0~1)
+        """
+        flip_counts = {}
+
+        for result in bootstrap_results:
+            if result is None or 'sign_flip_status' not in result:
+                continue
+
+            for lv_name, flipped in result['sign_flip_status'].items():
+                if lv_name not in flip_counts:
+                    flip_counts[lv_name] = {'flipped': 0, 'total': 0}
+
+                flip_counts[lv_name]['total'] += 1
+                if flipped:
+                    flip_counts[lv_name]['flipped'] += 1
+
+        if not flip_counts:
+            return None
+
+        # DataFrame 생성
+        stats_list = []
+        for lv_name, counts in flip_counts.items():
+            stats_list.append({
+                'lv_name': lv_name,
+                'n_flipped': counts['flipped'],
+                'n_total': counts['total'],
+                'flip_rate': counts['flipped'] / counts['total'] if counts['total'] > 0 else 0.0
+            })
+
+        return pd.DataFrame(stats_list)
+
 
 def _bootstrap_worker(args: Tuple) -> Optional[Dict]:
     """
@@ -422,19 +550,32 @@ def _bootstrap_worker(args: Tuple) -> Optional[Dict]:
 
     Args:
         args: (sample_idx, data, individual_ids, measurement_model, structural_model,
-               choice_model, random_seed, mode, factor_scores)
+               choice_model, random_seed, mode, original_loadings)
+
+        original_loadings: Sign Correction을 위한 원본 요인적재량 DataFrame (both 모드에서만)
 
     Returns:
         부트스트랩 결과 딕셔너리 또는 None (실패 시)
     """
     try:
         if len(args) == 8:
-            # stage1 또는 both
+            # stage1 (deprecated)
             sample_idx, data, individual_ids, measurement_model, structural_model, choice_model, random_seed, mode = args
             factor_scores = None
+            original_loadings = None
+        elif len(args) == 9:
+            # both (with Sign Correction) 또는 stage2
+            sample_idx, data, individual_ids, measurement_model, structural_model, choice_model, random_seed, mode, factor_scores_or_original = args
+            if mode == 'both':
+                # both 모드: factor_scores_or_original은 원본 요인적재량 DataFrame
+                original_loadings = factor_scores_or_original
+                factor_scores = None
+            else:
+                # stage2 모드: factor_scores_or_original은 요인점수
+                factor_scores = factor_scores_or_original
+                original_loadings = None
         else:
-            # stage2
-            sample_idx, data, individual_ids, measurement_model, structural_model, choice_model, random_seed, mode, factor_scores = args
+            raise ValueError(f"잘못된 인자 개수: {len(args)}")
 
         # 시드 설정
         np.random.seed(random_seed + sample_idx)
@@ -462,6 +603,37 @@ def _bootstrap_worker(args: Tuple) -> Optional[Dict]:
                 # 요인점수 추출
                 factor_scores = stage1_result['factor_scores']
 
+                # ✅ Sign Correction 적용 (요인적재량 기반)
+                if original_loadings is not None:
+                    from .sign_correction import align_loadings_dataframe
+
+                    # 부트스트랩 요인적재량 추출
+                    bootstrap_loadings = stage1_result['loadings']
+
+                    # 요인적재량 부호 정렬
+                    aligned_loadings, flip_status = align_loadings_dataframe(
+                        original_loadings,
+                        bootstrap_loadings,
+                        lv_column='lval',
+                        indicator_column='rval',
+                        estimate_column='Estimate'
+                    )
+
+                    # 요인점수에 부호 반전 적용
+                    for lv_name, flipped in flip_status.items():
+                        if flipped and lv_name in factor_scores:
+                            factor_scores[lv_name] = -factor_scores[lv_name]
+                            logger.info(f"  ✅ 부호 반전: {lv_name}")
+
+                    result['sign_flip_status'] = flip_status
+
+                    # 디버깅: flip_status 출력
+                    flipped_lvs = [lv for lv, f in flip_status.items() if f]
+                    if flipped_lvs:
+                        logger.info(f"  부호 반전된 잠재변수: {flipped_lvs}")
+                    else:
+                        logger.debug(f"  부호 반전 없음 (샘플 {sample_idx})")
+
         if mode in ['stage2', 'both']:
             # 2단계 추정
             if mode == 'stage2':
@@ -477,7 +649,28 @@ def _bootstrap_worker(args: Tuple) -> Optional[Dict]:
                 stage2_result = _run_stage2(bootstrap_data, resampled_factor_scores, choice_model)
             else:
                 # both 모드: 1단계에서 추출한 요인점수 사용
-                stage2_result = _run_stage2(bootstrap_data, factor_scores, choice_model)
+                # factor_scores는 Dict[str, np.ndarray] 형태 (개인별, N=328)
+                # 선택 데이터(N=5904)에 맞게 확장 필요
+
+                # 개인 ID 리스트 추출 (부트스트랩 데이터의 고유 ID)
+                unique_ids = bootstrap_data['respondent_id'].unique()
+
+                # 요인점수를 선택 데이터에 맞게 확장
+                expanded_factor_scores = {}
+                for lv_name, scores_array in factor_scores.items():
+                    # scores_array는 np.ndarray (개인별, N=328)
+                    # unique_ids와 scores_array의 길이가 같아야 함
+                    if len(scores_array) != len(unique_ids):
+                        raise ValueError(f"요인점수 길이({len(scores_array)})와 고유 ID 수({len(unique_ids)})가 다릅니다.")
+
+                    # ID별 요인점수 매핑
+                    id_to_score = {unique_ids[i]: scores_array[i] for i in range(len(unique_ids))}
+
+                    # 선택 데이터의 각 행에 대응하는 요인점수 추출
+                    expanded_scores = np.array([id_to_score[rid] for rid in bootstrap_data['respondent_id']])
+                    expanded_factor_scores[lv_name] = expanded_scores
+
+                stage2_result = _run_stage2(bootstrap_data, expanded_factor_scores, choice_model)
 
             result['stage2_params'] = stage2_result['params']
             result['stage2_ll'] = stage2_result['log_likelihood']
@@ -485,7 +678,9 @@ def _bootstrap_worker(args: Tuple) -> Optional[Dict]:
         return result
 
     except Exception as e:
+        import traceback
         logger.warning(f"부트스트랩 샘플 {sample_idx} 실패: {e}")
+        logger.warning(f"상세 에러:\n{traceback.format_exc()}")
         return None
 
 
@@ -551,10 +746,14 @@ def _run_stage1(data: pd.DataFrame, measurement_model, structural_model) -> Dict
     # 요인점수 추출
     factor_scores = sem_results.get('factor_scores', {})
 
+    # 요인적재량 DataFrame 추출
+    loadings_df = sem_results.get('loadings', pd.DataFrame())
+
     return {
         'params': params,
         'log_likelihood': sem_results.get('log_likelihood', np.nan),
-        'factor_scores': factor_scores
+        'factor_scores': factor_scores,
+        'loadings': loadings_df  # ✅ Sign Correction을 위해 추가
     }
 
 
@@ -630,7 +829,10 @@ def bootstrap_stage1_only(
     show_progress: bool = True
 ) -> Dict[str, Any]:
     """
-    1단계만 부트스트래핑 (편의 함수)
+    ⚠️ DEPRECATED: 이 함수는 더 이상 권장되지 않습니다.
+
+    1단계만 부트스트래핑하면 1단계의 불확실성이 2단계에 반영되지 않습니다.
+    대신 bootstrap_both_stages()를 사용하세요.
 
     Args:
         data: 전체 데이터
@@ -645,6 +847,14 @@ def bootstrap_stage1_only(
     Returns:
         부트스트랩 결과
     """
+    import warnings
+    warnings.warn(
+        "bootstrap_stage1_only()은 deprecated되었습니다. "
+        "1단계의 불확실성을 2단계에 반영하려면 bootstrap_both_stages()를 사용하세요.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+
     bootstrapper = SequentialBootstrap(
         n_bootstrap=n_bootstrap,
         n_workers=n_workers,
@@ -667,7 +877,11 @@ def bootstrap_stage2_only(
     show_progress: bool = True
 ) -> Dict[str, Any]:
     """
-    2단계만 부트스트래핑 (편의 함수)
+    ⚠️ DEPRECATED: 이 함수는 더 이상 권장되지 않습니다.
+
+    2단계만 부트스트래핑하면 1단계의 불확실성이 반영되지 않아
+    신뢰구간이 과소추정됩니다.
+    대신 bootstrap_both_stages()를 사용하세요.
 
     Args:
         choice_data: 선택 데이터
@@ -682,6 +896,14 @@ def bootstrap_stage2_only(
     Returns:
         부트스트랩 결과
     """
+    import warnings
+    warnings.warn(
+        "bootstrap_stage2_only()은 deprecated되었습니다. "
+        "1단계의 불확실성을 반영하려면 bootstrap_both_stages()를 사용하세요.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+
     bootstrapper = SequentialBootstrap(
         n_bootstrap=n_bootstrap,
         n_workers=n_workers,
@@ -705,21 +927,36 @@ def bootstrap_both_stages(
     show_progress: bool = True
 ) -> Dict[str, Any]:
     """
-    1+2단계 전체 부트스트래핑 (편의 함수)
+    ✅ 권장: 1+2단계 전체 부트스트래핑 (편의 함수)
+
+    각 부트스트랩 샘플마다:
+    1. 개인별 리샘플링
+    2. 1단계 SEM 재추정 → 요인점수 추출
+    3. 2단계 선택모델 재추정 (1단계 요인점수 사용)
+    4. 파라미터 저장
+
+    이 방법은 1단계의 불확실성을 2단계 신뢰구간에 반영하므로
+    이론적으로 올바른 순차추정 표준오차를 제공합니다.
 
     Args:
         data: 전체 데이터
         measurement_model: 측정모델 설정
         structural_model: 구조모델 설정
         choice_model: 선택모델 설정
-        n_bootstrap: 부트스트랩 샘플 수
-        n_workers: 병렬 작업 수
-        confidence_level: 신뢰수준
+        n_bootstrap: 부트스트랩 샘플 수 (권장: 1000 이상)
+        n_workers: 병렬 작업 수 (None이면 CPU 코어 수 - 1)
+        confidence_level: 신뢰수준 (기본: 0.95)
         random_seed: 랜덤 시드
         show_progress: 진행 상황 표시
 
     Returns:
-        부트스트랩 결과
+        부트스트랩 결과 딕셔너리:
+        - bootstrap_estimates: 각 샘플의 파라미터 추정치
+        - confidence_intervals: 파라미터별 신뢰구간
+        - bootstrap_statistics: 평균, 표준편차 등
+        - n_successful: 성공한 샘플 수
+        - n_failed: 실패한 샘플 수
+        - mode: 'both'
     """
     bootstrapper = SequentialBootstrap(
         n_bootstrap=n_bootstrap,
