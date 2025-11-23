@@ -36,7 +36,7 @@ def example_stage1_bootstrap():
     print("=" * 70)
     
     # 데이터 로드
-    data_path = project_root / "data" / "processed" / "iclv" / "integrated_data_cleaned.csv"
+    data_path = project_root / "data" / "processed" / "iclv" / "integrated_data.csv"
     data = pd.read_csv(data_path)
     print(f"데이터 로드 완료: {len(data)}행")
     
@@ -79,12 +79,12 @@ def example_stage2_bootstrap():
     print("=" * 70)
 
     # 데이터 로드
-    data_path = project_root / "data" / "processed" / "iclv" / "integrated_data_cleaned.csv"
+    data_path = project_root / "data" / "processed" / "iclv" / "integrated_data.csv"
     data = pd.read_csv(data_path)
     print(f"데이터 로드 완료: {len(data)}행")
 
     # 1단계 결과 로드 (요인점수)
-    results_dir = project_root / "results" / "sequential_stage_wise"
+    results_dir = project_root / "results" / "final" / "sequential" / "stage1"
     stage1_file = results_dir / "stage1_HC-PB_HC-PP_PB-PI_PP-PI_results.pkl"
 
     with open(stage1_file, 'rb') as f:
@@ -167,7 +167,7 @@ def example_both_stages_bootstrap():
     print("=" * 70)
 
     # 데이터 로드
-    data_path = project_root / "data" / "processed" / "iclv" / "integrated_data_cleaned.csv"
+    data_path = project_root / "data" / "processed" / "iclv" / "integrated_data.csv"
     data = pd.read_csv(data_path)
     print(f"데이터 로드 완료: {len(data)}행, {data['respondent_id'].nunique()}명")
 

@@ -151,7 +151,8 @@ def main():
 
     # 2. 1단계 결과 로드
     print("\n[2] 1단계 결과 로드 중...")
-    stage1_path = project_root / "results" / "sequential_stage_wise" / STAGE1_RESULT_FILE
+    # 최종 결과 폴더에서 로드
+    stage1_path = project_root / "results" / "final" / "sequential" / "stage1" / STAGE1_RESULT_FILE
 
     if not stage1_path.exists():
         raise FileNotFoundError(f"1단계 결과 파일이 없습니다: {stage1_path}")
@@ -386,7 +387,8 @@ def main():
     print("결과 저장")
     print("=" * 70)
 
-    save_dir = project_root / "results" / "sequential_stage_wise"
+    # 최종 결과 폴더에 저장
+    save_dir = project_root / "results" / "final" / "sequential" / "stage2"
     save_dir.mkdir(parents=True, exist_ok=True)
 
     # 1단계 모델 이름 추출

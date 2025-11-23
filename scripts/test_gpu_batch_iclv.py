@@ -80,8 +80,8 @@ from src.analysis.hybrid_choice_model.iclv_models.initial_values_final import ge
 # 📌 순차추정 2단계 CSV 파일명만 지정하세요!
 INITIAL_PARAMS_CSV = 'st2_HC-PB_PB-PI1_PI2_results.csv'  # PI 주효과만
 
-# CSV 파일 경로
-csv_path = project_root / 'results' / 'sequential_stage_wise' / INITIAL_PARAMS_CSV
+# CSV 파일 경로 (최종 결과 폴더)
+csv_path = project_root / 'results' / 'final' / 'sequential' / 'stage2' / INITIAL_PARAMS_CSV
 
 # CSV 파일명과 내용에서 설정 자동 파싱
 print("\n" + "=" * 70)
@@ -118,7 +118,7 @@ INITIAL_PARAMS_PKL = 'cfa_results.pkl'  # ✅ CFA 결과 (측정모델만)
 
 # 4. GPU 메모리 설정
 CPU_MEMORY_THRESHOLD_MB = 2000  # CPU 메모리 임계값 (MB)
-GPU_MEMORY_THRESHOLD_MB = 5000  # GPU 메모리 임계값 (MB)
+GPU_MEMORY_THRESHOLD_MB = 7000  # GPU 메모리 임계값 (MB) - 5GB → 7GB로 증가
 
 # 5. 추정 설정
 N_DRAWS = 100  # Halton draws 수
@@ -190,10 +190,11 @@ def main():
         choice_config_overrides=choice_config_dict,
         n_draws=N_DRAWS,
         max_iterations=MAX_ITERATIONS,
-        optimizer='L-BFGS-B',  # ✅ BHHH → L-BFGS-B로 변경
+        optimizer='trust-constr',  # ✅ Trust Region 사용
         use_analytic_gradient=True,
         calculate_se=True,
-        gradient_log_level='DETAILED',
+        se_method='robust',  # ✅ Sandwich Estimator (Robust SE) 사용
+        gradient_log_level='MINIMAL',  # ✅ DETAILED → MINIMAL로 변경 (속도 최적화)
         use_parameter_scaling=False,  # ✅ 스케일링 비활성화 (z-score 표준화만 테스트)
         standardize_choice_attributes=True  # ✅ z-score 표준화 활성화
     )
@@ -203,7 +204,8 @@ def main():
     print(f"    - 측정 방법: 연속형 선형 (Continuous Linear)")
     print(f"    - Halton draws: {N_DRAWS}")
     print(f"    - 최대 반복: {MAX_ITERATIONS}")
-    print(f"    - 최적화: L-BFGS-B (Analytic Gradient)")
+    print(f"    - 최적화: Trust-Constr (Analytic Gradient)")
+    print(f"    - 표준오차: Sandwich Estimator (Robust SE)")
     print(f"    - 파라미터 스케일링: ❌ 비활성화 (모든 스케일 = 1.0)")
     print(f"    - 데이터 표준화: ✅ 활성화 (z-score)")
     print(f"    - GPU 배치 처리: 활성화")
@@ -232,7 +234,7 @@ def main():
 
     # ✅ 측정모델에 CFA 결과 로드 (동시추정 전용)
     # 이 단계는 초기값 설정 전에 수행되어야 함
-    pkl_path = project_root / 'results' / 'sequential_stage_wise' / INITIAL_PARAMS_PKL
+    pkl_path = project_root / 'results' / 'final' / 'cfa_only' / INITIAL_PARAMS_PKL
 
     if pkl_path.exists():
         print(f"\n    [INFO] 측정모델에 CFA 결과 로드 중...")
@@ -488,9 +490,11 @@ def main():
     print("    [INFO] GPU 배치 처리로 파라미터를 동시에 추정합니다.")
     print("    [주의] 5-10분 정도 소요될 수 있습니다...")
 
-    # 로그 파일 경로 설정
+    # 로그 파일 경로 설정 (최종 결과 폴더)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = project_root / 'results' / f'simultaneous_estimation_log_{timestamp}.txt'
+    log_dir = project_root / 'results' / 'final' / 'simultaneous' / 'logs'
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f'simultaneous_estimation_log_{timestamp}.txt'
     print(f"    로그 파일: {log_file.name}")
 
     start_time = time.time()
@@ -546,8 +550,9 @@ def main():
 
         # 10. 결과 저장
         print("\n[10] 결과 저장:")
-        output_dir = project_root / 'results'
-        output_dir.mkdir(exist_ok=True)
+        # 최종 결과 폴더에 저장
+        output_dir = project_root / 'results' / 'final' / 'simultaneous' / 'results'
+        output_dir.mkdir(parents=True, exist_ok=True)
 
         # 파일명 생성 (순차추정과 동일한 규칙)
         csv_filename = generate_simultaneous_filename(path_name, config, timestamp)

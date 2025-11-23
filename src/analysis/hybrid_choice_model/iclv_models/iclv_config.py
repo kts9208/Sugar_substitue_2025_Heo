@@ -149,10 +149,40 @@ class ChoiceConfig:
         return len(self.lv_attribute_interactions)
 
 
+# ================================================================================
+# Optimizer 분류
+# ================================================================================
+
+# Gradient-based optimizers (gradient 필요)
+GRADIENT_BASED_OPTIMIZERS = [
+    # Quasi-Newton methods
+    'BFGS', 'L-BFGS-B',
+
+    # Newton methods
+    'Newton-CG', 'CG',
+
+    # Trust Region methods
+    'trust-constr', 'trust-ncg', 'trust-exact', 'trust-krylov', 'dogleg',
+
+    # Sequential Quadratic Programming
+    'SLSQP',
+
+    # Custom methods
+    'BHHH'  # Berndt-Hall-Hall-Hausman (Newton-CG with OPG Hessian)
+]
+
+# Gradient-free optimizers (gradient 불필요)
+GRADIENT_FREE_OPTIMIZERS = [
+    'Nelder-Mead',  # Simplex method
+    'Powell',       # Powell's method
+    'COBYLA'        # Constrained Optimization BY Linear Approximation
+]
+
+
 @dataclass
 class EstimationConfig:
     """추정 설정"""
-    
+
     # 추정 방법
     method: Literal['simultaneous', 'sequential'] = 'simultaneous'
     
@@ -201,6 +231,21 @@ class EstimationConfig:
     early_stopping: bool = False  # 조기 종료 활성화 여부
     early_stopping_patience: int = 5  # 개선 없는 연속 횟수
     early_stopping_tol: float = 1e-6  # LL 변화 허용 오차
+
+    def __post_init__(self):
+        """Optimizer 검증"""
+        all_optimizers = GRADIENT_BASED_OPTIMIZERS + GRADIENT_FREE_OPTIMIZERS
+        if self.optimizer not in all_optimizers:
+            import warnings
+            warnings.warn(
+                f"Unknown optimizer: '{self.optimizer}'. "
+                f"Supported optimizers: {all_optimizers}. "
+                f"Assuming gradient-based optimizer."
+            )
+
+    def is_gradient_based(self) -> bool:
+        """Gradient-based optimizer 여부 확인"""
+        return self.optimizer not in GRADIENT_FREE_OPTIMIZERS
 
 
 @dataclass

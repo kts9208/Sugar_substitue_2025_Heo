@@ -116,7 +116,10 @@ def main():
     # 5. 1단계 추정
     print("\n[5] 1단계 추정 실행 중...")
 
-    save_path = project_root / "results" / "sequential_stage_wise" / f"stage1_{path_name}_results.pkl"
+    # 최종 결과 폴더에 저장
+    save_dir = project_root / "results" / "final" / "sequential" / "stage1"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    save_path = save_dir / f"stage1_{path_name}_results.pkl"
 
     results = estimator.estimate_stage1_only(
         data=data,

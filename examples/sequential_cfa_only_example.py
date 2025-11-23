@@ -32,9 +32,10 @@ def main():
     
     # 1. 데이터 로드
     print("\n[1] 데이터 로드 중...")
-    data_path = project_root / "data" / "processed" / "iclv" / "integrated_data_cleaned.csv"
+    data_path = project_root / "data" / "processed" / "iclv" / "integrated_data.csv"
     data = pd.read_csv(data_path)
     print(f"✅ 데이터 로드 완료: {len(data)}행, {len(data.columns)}열")
+    print(f"   개인 수: {data['respondent_id'].nunique()}명")
     
     # 2. 설정 생성
     print("\n[2] 모델 설정 중...")
@@ -51,9 +52,12 @@ def main():
     # 4. CFA 추정
     print("\n[4] CFA 추정 실행 중...")
     print("    (측정모델만 추정, 구조모델 없음)")
-    
-    save_path = project_root / "results" / "sequential_stage_wise" / "cfa_results.pkl"
-    
+
+    # 최종 결과 폴더에 저장
+    save_dir = project_root / "results" / "final" / "cfa_only"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    save_path = save_dir / "cfa_results.pkl"
+
     results = estimator.estimate_cfa_only(
         data=data,
         measurement_model=measurement_model,

@@ -470,7 +470,9 @@ def create_sugar_substitute_multi_lv_config(
         n_cores=kwargs.get('n_cores', None),
         use_parameter_scaling=kwargs.get('use_parameter_scaling', True),  # ✅ 추가
         calculate_se=kwargs.get('calculate_se', True),
-        gradient_log_level=kwargs.get('gradient_log_level', 'SUMMARY')
+        se_method=kwargs.get('se_method', 'hessian'),  # ✅ SE 계산 방법 추가
+        gradient_log_level=kwargs.get('gradient_log_level', 'SUMMARY'),
+        standardize_choice_attributes=kwargs.get('standardize_choice_attributes', True)  # ✅ 데이터 표준화 추가
     )
 
     # 5. 전체 설정

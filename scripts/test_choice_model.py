@@ -194,6 +194,150 @@ def main():
     else:
         print("[경고] 표준오차 및 p-value를 계산할 수 없습니다.")
 
+    # 결과 저장
+    print("\n[결과 저장]")
+    from pathlib import Path
+    project_root = Path(__file__).parent.parent
+    save_dir = project_root / "results" / "final" / "choice_only"
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    # CSV 파일로 저장
+    save_file = save_dir / "choice_model_results.csv"
+
+    # 결과 데이터 준비
+    result_data = []
+
+    # 모델 적합도
+    result_data.append({
+        'section': 'Model_Fit',
+        'parameter': 'log_likelihood',
+        'estimate': results['log_likelihood'],
+        'std_error': '',
+        't_statistic': '',
+        'p_value': '',
+        'significance': ''
+    })
+    result_data.append({
+        'section': 'Model_Fit',
+        'parameter': 'AIC',
+        'estimate': results['aic'],
+        'std_error': '',
+        't_statistic': '',
+        'p_value': '',
+        'significance': ''
+    })
+    result_data.append({
+        'section': 'Model_Fit',
+        'parameter': 'BIC',
+        'estimate': results['bic'],
+        'std_error': '',
+        't_statistic': '',
+        'p_value': '',
+        'significance': ''
+    })
+    result_data.append({
+        'section': 'Model_Fit',
+        'parameter': 'n_params',
+        'estimate': results['n_params'],
+        'std_error': '',
+        't_statistic': '',
+        'p_value': '',
+        'significance': ''
+    })
+    result_data.append({
+        'section': 'Model_Fit',
+        'parameter': 'n_obs',
+        'estimate': results['n_obs'],
+        'std_error': '',
+        't_statistic': '',
+        'p_value': '',
+        'significance': ''
+    })
+
+    # 파라미터
+    params = results['params']
+    stats = results.get('parameter_statistics', {})
+
+    # Intercept
+    if 'intercept' in stats:
+        s = stats['intercept']
+        sig = "***" if s['p'] < 0.001 else "**" if s['p'] < 0.01 else "*" if s['p'] < 0.05 else ""
+        result_data.append({
+            'section': 'Parameters',
+            'parameter': 'intercept',
+            'estimate': s['estimate'],
+            'std_error': s['se'],
+            't_statistic': s['t'],
+            'p_value': s['p'],
+            'significance': sig
+        })
+    else:
+        result_data.append({
+            'section': 'Parameters',
+            'parameter': 'intercept',
+            'estimate': params['intercept'],
+            'std_error': '',
+            't_statistic': '',
+            'p_value': '',
+            'significance': ''
+        })
+
+    # Beta
+    for i, attr in enumerate(config.choice_attributes):
+        param_name = f'beta_{attr}'
+        if param_name in stats:
+            s = stats[param_name]
+            sig = "***" if s['p'] < 0.001 else "**" if s['p'] < 0.01 else "*" if s['p'] < 0.05 else ""
+            result_data.append({
+                'section': 'Parameters',
+                'parameter': param_name,
+                'estimate': s['estimate'],
+                'std_error': s['se'],
+                't_statistic': s['t'],
+                'p_value': s['p'],
+                'significance': sig
+            })
+        else:
+            result_data.append({
+                'section': 'Parameters',
+                'parameter': param_name,
+                'estimate': params['beta'][i],
+                'std_error': '',
+                't_statistic': '',
+                'p_value': '',
+                'significance': ''
+            })
+
+    # Lambda
+    if 'lambda_main' in params:
+        if 'lambda_main' in stats:
+            s = stats['lambda_main']
+            sig = "***" if s['p'] < 0.001 else "**" if s['p'] < 0.01 else "*" if s['p'] < 0.05 else ""
+            result_data.append({
+                'section': 'Parameters',
+                'parameter': 'lambda_main',
+                'estimate': s['estimate'],
+                'std_error': s['se'],
+                't_statistic': s['t'],
+                'p_value': s['p'],
+                'significance': sig
+            })
+        else:
+            result_data.append({
+                'section': 'Parameters',
+                'parameter': 'lambda_main',
+                'estimate': params['lambda_main'],
+                'std_error': '',
+                't_statistic': '',
+                'p_value': '',
+                'significance': ''
+            })
+
+    import pandas as pd
+    df_results = pd.DataFrame(result_data)
+    df_results.to_csv(save_file, index=False, encoding='utf-8-sig')
+    print(f"  ✓ 결과 저장 완료: {save_file.name}")
+
     print()
     print("=" * 70)
     print("✅ 테스트 완료!")

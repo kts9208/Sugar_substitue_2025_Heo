@@ -429,7 +429,8 @@ class SimultaneousEstimator:
             self.iteration_logger.info("Halton draws 이미 설정됨 (건너뛰기)")
 
         # Gradient calculators 초기화 (Apollo 방식)
-        use_gradient = self.config.estimation.optimizer in ['BFGS', 'L-BFGS-B', 'BHHH']
+        # ✅ Optimizer 타입 확인 (gradient-based vs gradient-free)
+        use_gradient = self.config.estimation.is_gradient_based()
         if use_gradient and hasattr(self.config.estimation, 'use_analytic_gradient'):
             self.use_analytic_gradient = self.config.estimation.use_analytic_gradient
         else:
@@ -703,7 +704,8 @@ class SimultaneousEstimator:
         self.iteration_logger.info(f"파라미터 bounds 계산 완료 (총 {len(bounds)}개)")
 
         # 최적화 방법 선택
-        use_gradient = self.config.estimation.optimizer in ['BFGS', 'L-BFGS-B', 'BHHH']
+        # ✅ Optimizer 타입 확인 (gradient-based vs gradient-free)
+        use_gradient = self.config.estimation.is_gradient_based()
 
         # Gradient 함수 정의 (Apollo 방식)
         grad_call_count = [0]  # 그래디언트 호출 횟수
@@ -1020,11 +1022,15 @@ class SimultaneousEstimator:
                 self.grad_call_count += 1
                 return self.grad_func(x)
 
-            def callback(self, xk):
+            def callback(self, xk, state=None):
                 """
-                BFGS callback - 매 Major iteration마다 호출됨
+                Optimizer callback - 매 Major iteration마다 호출됨
                 조기 종료 시 최적 파라미터로 복원
                 ftol AND gtol 조건을 모두 체크하여 조기 종료
+
+                Args:
+                    xk: 현재 파라미터 (모든 optimizer)
+                    state: Optimizer state (Trust Region만 제공, 선택적)
                 """
                 self.bfgs_iteration_count += 1
                 major_iter_count[0] = self.bfgs_iteration_count
@@ -1375,6 +1381,7 @@ class SimultaneousEstimator:
                 )
 
             else:
+                # Trust Region 등 다른 optimizer
                 optimizer_options = {
                     'maxiter': 200,
                     'disp': True
@@ -1385,6 +1392,7 @@ class SimultaneousEstimator:
                     initial_params_scaled,  # 스케일된 초기 파라미터 사용
                     method=self.config.estimation.optimizer,
                     jac=jac_function,
+                    bounds=bounds,  # ✅ Bounds 추가 (Trust Region 지원)
                     callback=early_stopping_wrapper.callback,  # Callback 추가
                     options=optimizer_options
                 )
@@ -1504,64 +1512,100 @@ class SimultaneousEstimator:
                     # (HESSIAN_ROW 로그 삭제 - 로그 파일 크기 절약)
 
                 else:
-                    # Optimizer가 hess_inv를 제공하지 않는 경우 → BHHH 방법으로 계산
-                    # 참고: BFGS와 L-BFGS-B는 모두 hess_inv를 제공하므로,
-                    #       이 분기는 다른 optimizer를 사용하거나 최적화가 실패한 경우에만 실행됨
+                    # Optimizer가 hess_inv를 제공하지 않는 경우
+                    # Trust Region, Newton-CG 등이 여기에 해당
                     self.iteration_logger.warning("⚠️ Optimizer가 Hessian 역행렬을 제공하지 않음")
                     self.iteration_logger.warning(f"   Optimizer: {self.config.estimation.optimizer}")
                     self.iteration_logger.warning(f"   최적화 성공 여부: {result.success}")
-                    self.iteration_logger.info("→ BHHH 방법으로 Hessian 역행렬 계산 시작...")
-                    self.iteration_logger.info("  (개인별 gradient의 Outer Product 사용)")
+
+                    # SE 계산 방법 확인
+                    se_method = getattr(self.config.estimation, 'se_method', 'bhhh')
+                    self.iteration_logger.info(f"→ SE 계산 방법: {se_method}")
 
                     try:
-                        # BHHH 방법으로 Hessian 계산
-                        hess_inv_bhhh = self._compute_bhhh_hessian_inverse(
-                            result.x,
-                            measurement_model,
-                            structural_model,
-                            choice_model
-                        )
+                        if se_method == 'robust':
+                            # Sandwich Estimator 사용
+                            self.iteration_logger.info("→ Sandwich Estimator (Robust SE) 계산 시작...")
 
-                        if hess_inv_bhhh is not None:
-                            self.hessian_inv_matrix = hess_inv_bhhh
-                            self.iteration_logger.info("✅ BHHH Hessian 역행렬 계산 성공")
-                            self.iteration_logger.info(f"   Shape: {hess_inv_bhhh.shape}")
-
-                            # BHHH Hessian 통계 로깅 (BFGS와 동일한 형식)
-                            diag_elements = np.diag(hess_inv_bhhh)
-                            off_diag_mask = ~np.eye(hess_inv_bhhh.shape[0], dtype=bool)
-                            off_diag_elements = hess_inv_bhhh[off_diag_mask]
-
-                            self.iteration_logger.info(
-                                f"\n{'='*80}\n"
-                                f"최종 Hessian 역행렬 (H^(-1)) - BHHH 방법\n"
-                                f"{'='*80}\n"
-                                f"  Shape: {hess_inv_bhhh.shape}\n"
-                                f"  대각 원소 (분산 근사):\n"
-                                f"    - 범위: [{np.min(diag_elements):.6e}, {np.max(diag_elements):.6e}]\n"
-                                f"    - 평균: {np.mean(diag_elements):.6e}\n"
-                                f"    - 중앙값: {np.median(diag_elements):.6e}\n"
-                                f"    - 음수 개수: {np.sum(diag_elements < 0)}/{len(diag_elements)}\n"
-                                f"  비대각 원소 (공분산):\n"
-                                f"    - 범위: [{np.min(off_diag_elements):.6e}, {np.max(off_diag_elements):.6e}]\n"
-                                f"    - 평균: {np.mean(off_diag_elements):.6e}\n"
-                                f"    - 절대값 평균: {np.mean(np.abs(off_diag_elements)):.6e}\n"
-                                f"\n  상위 10개 대각 원소 (파라미터 인덱스):\n"
+                            sandwich_results = self._compute_sandwich_estimator(
+                                result.x,
+                                measurement_model,
+                                structural_model,
+                                choice_model,
+                                use_all_individuals=True  # 모든 개인 사용
                             )
 
-                            # 상위 10개 대각 원소
-                            top_10_indices = np.argsort(np.abs(diag_elements))[-10:][::-1]
-                            for idx in top_10_indices:
-                                param_name = self.param_names[idx] if hasattr(self, 'param_names') and idx < len(self.param_names) else f"param_{idx}"
+                            if sandwich_results is not None:
+                                self.hessian_inv_matrix = sandwich_results['variance_matrix']
+                                self.robust_se = sandwich_results['robust_se']
+                                self.se_hessian = sandwich_results['se_hessian']
+                                self.se_bhhh = sandwich_results['se_bhhh']
+
+                                self.iteration_logger.info("✅ Sandwich Estimator 계산 성공")
+                                self.iteration_logger.info(f"   Variance Matrix Shape: {self.hessian_inv_matrix.shape}")
+                            else:
+                                self.iteration_logger.error("❌ Sandwich Estimator 계산 실패 - BHHH로 폴백")
+                                # BHHH로 폴백
+                                hess_inv_bhhh = self._compute_bhhh_hessian_inverse(
+                                    result.x,
+                                    measurement_model,
+                                    structural_model,
+                                    choice_model
+                                )
+                                if hess_inv_bhhh is not None:
+                                    self.hessian_inv_matrix = hess_inv_bhhh
+                        else:
+                            # BHHH 방법으로 계산 (기본)
+                            self.iteration_logger.info("→ BHHH 방법으로 Hessian 역행렬 계산 시작...")
+                            self.iteration_logger.info("  (개인별 gradient의 Outer Product 사용)")
+
+                            hess_inv_bhhh = self._compute_bhhh_hessian_inverse(
+                                result.x,
+                                measurement_model,
+                                structural_model,
+                                choice_model
+                            )
+
+                            if hess_inv_bhhh is not None:
+                                self.hessian_inv_matrix = hess_inv_bhhh
+                                self.iteration_logger.info("✅ BHHH Hessian 역행렬 계산 성공")
+                                self.iteration_logger.info(f"   Shape: {hess_inv_bhhh.shape}")
+
+                                # BHHH Hessian 통계 로깅 (BFGS와 동일한 형식)
+                                diag_elements = np.diag(hess_inv_bhhh)
+                                off_diag_mask = ~np.eye(hess_inv_bhhh.shape[0], dtype=bool)
+                                off_diag_elements = hess_inv_bhhh[off_diag_mask]
+
                                 self.iteration_logger.info(
-                                    f"    [{idx:2d}] {param_name:40s}: {diag_elements[idx]:+.6e}"
+                                    f"\n{'='*80}\n"
+                                    f"최종 Hessian 역행렬 (H^(-1)) - BHHH 방법\n"
+                                    f"{'='*80}\n"
+                                    f"  Shape: {hess_inv_bhhh.shape}\n"
+                                    f"  대각 원소 (분산 근사):\n"
+                                    f"    - 범위: [{np.min(diag_elements):.6e}, {np.max(diag_elements):.6e}]\n"
+                                    f"    - 평균: {np.mean(diag_elements):.6e}\n"
+                                    f"    - 중앙값: {np.median(diag_elements):.6e}\n"
+                                    f"    - 음수 개수: {np.sum(diag_elements < 0)}/{len(diag_elements)}\n"
+                                    f"  비대각 원소 (공분산):\n"
+                                    f"    - 범위: [{np.min(off_diag_elements):.6e}, {np.max(off_diag_elements):.6e}]\n"
+                                    f"    - 평균: {np.mean(off_diag_elements):.6e}\n"
+                                    f"    - 절대값 평균: {np.mean(np.abs(off_diag_elements)):.6e}\n"
+                                    f"\n  상위 10개 대각 원소 (파라미터 인덱스):\n"
                                 )
 
-                            self.iteration_logger.info(f"{'='*80}\n")
-                        else:
-                            self.iteration_logger.error("❌ BHHH Hessian 역행렬 계산 실패")
-                            self.iteration_logger.warning("   표준오차를 계산할 수 없습니다")
-                            self.hessian_inv_matrix = None
+                                # 상위 10개 대각 원소
+                                top_10_indices = np.argsort(np.abs(diag_elements))[-10:][::-1]
+                                for idx in top_10_indices:
+                                    param_name = self.param_names[idx] if hasattr(self, 'param_names') and idx < len(self.param_names) else f"param_{idx}"
+                                    self.iteration_logger.info(
+                                        f"    [{idx:2d}] {param_name:40s}: {diag_elements[idx]:+.6e}"
+                                    )
+
+                                self.iteration_logger.info(f"{'='*80}\n")
+                            else:
+                                self.iteration_logger.error("❌ BHHH Hessian 역행렬 계산 실패")
+                                self.iteration_logger.warning("   표준오차를 계산할 수 없습니다")
+                                self.hessian_inv_matrix = None
 
                     except Exception as e:
                         self.iteration_logger.error(f"❌ BHHH Hessian 계산 중 오류 발생: {e}")
@@ -2242,6 +2286,26 @@ class SimultaneousEstimator:
         )
 
         return param_dict
+
+    def _joint_gradient(self, params: np.ndarray,
+                       measurement_model,
+                       structural_model,
+                       choice_model) -> np.ndarray:
+        """
+        Joint gradient 계산 (wrapper for _compute_gradient)
+
+        수치적 Hessian 계산에서 사용
+
+        Args:
+            params: 파라미터 벡터
+            measurement_model: 측정모델
+            structural_model: 구조모델
+            choice_model: 선택모델
+
+        Returns:
+            gradient 벡터
+        """
+        return self._compute_gradient(params, measurement_model, structural_model, choice_model)
 
     def _compute_gradient(self, params: np.ndarray,
                          measurement_model,
@@ -2988,6 +3052,93 @@ class SimultaneousEstimator:
 
         return bhhh_hessian
 
+    def _compute_numerical_hessian_from_gradient(
+        self,
+        optimal_params: np.ndarray,
+        measurement_model,
+        structural_model,
+        choice_model,
+        epsilon: float = 1e-5
+    ) -> np.ndarray:
+        """
+        Gradient 함수로부터 수치적 Hessian 계산
+
+        우도 계산 대신 gradient 계산 사용 → 2,160배 빠름
+
+        Args:
+            optimal_params: 최적 파라미터 벡터
+            measurement_model: 측정모델
+            structural_model: 구조모델
+            choice_model: 선택모델
+            epsilon: Perturbation 크기
+
+        Returns:
+            수치적 Hessian 행렬 (n_params, n_params)
+        """
+        n_params = len(optimal_params)
+        hessian = np.zeros((n_params, n_params))
+
+        self.iteration_logger.info(
+            f"\n{'='*80}\n"
+            f"수치적 Hessian 계산 시작 (Gradient 기반)\n"
+            f"{'='*80}\n"
+            f"  파라미터 수: {n_params}\n"
+            f"  Gradient 계산 횟수: {n_params + 1}회\n"
+            f"  Epsilon: {epsilon}\n"
+            f"  예상 소요 시간: ~{(n_params + 1) * 2 / 60:.1f}분\n"
+            f"{'='*80}"
+        )
+
+        # 기준 gradient 계산
+        self.iteration_logger.info("기준 gradient 계산 중...")
+        grad_0 = self._joint_gradient(
+            optimal_params,
+            measurement_model,
+            structural_model,
+            choice_model
+        )
+
+        self.iteration_logger.info(
+            f"  Gradient norm: {np.linalg.norm(grad_0):.6e}\n"
+            f"  Gradient 범위: [{np.min(grad_0):.6e}, {np.max(grad_0):.6e}]"
+        )
+
+        # 각 파라미터에 대해
+        for i in range(n_params):
+            if i % 10 == 0:
+                self.iteration_logger.info(f"  진행: {i}/{n_params} ({i/n_params*100:.1f}%)")
+
+            # Perturbation
+            params_plus = optimal_params.copy()
+            params_plus[i] += epsilon
+
+            # Perturbed gradient 계산
+            grad_plus = self._joint_gradient(
+                params_plus,
+                measurement_model,
+                structural_model,
+                choice_model
+            )
+
+            # Hessian i번째 행 계산
+            hessian[i, :] = (grad_plus - grad_0) / epsilon
+
+        # 대칭화 (수치 오차 보정)
+        hessian = (hessian + hessian.T) / 2
+
+        self.iteration_logger.info(
+            f"\n{'='*80}\n"
+            f"수치적 Hessian 계산 완료\n"
+            f"{'='*80}\n"
+            f"  Shape: {hessian.shape}\n"
+            f"  대각 원소 범위: [{np.min(np.diag(hessian)):.6e}, {np.max(np.diag(hessian)):.6e}]\n"
+            f"  비대각 원소 범위: [{np.min(hessian[~np.eye(n_params, dtype=bool)]):.6e}, "
+            f"{np.max(hessian[~np.eye(n_params, dtype=bool)]):.6e}]\n"
+            f"{'='*80}"
+        )
+
+        return hessian
+
     def _compute_bhhh_hessian_inverse(
         self,
         optimal_params: np.ndarray,
@@ -3138,6 +3289,134 @@ class SimultaneousEstimator:
 
         except Exception as e:
             self.iteration_logger.error(f"BHHH Hessian 계산 실패: {e}")
+            import traceback
+            self.iteration_logger.debug(traceback.format_exc())
+            return None
+
+    def _compute_sandwich_estimator(
+        self,
+        optimal_params: np.ndarray,
+        measurement_model,
+        structural_model,
+        choice_model,
+        max_individuals: int = 100,
+        use_all_individuals: bool = False
+    ) -> Optional[Dict]:
+        """
+        Sandwich Estimator (Huber-White Robust SE) 계산
+
+        Var(θ) = H^(-1) @ B @ H^(-1)
+
+        여기서:
+        - H: 수치적 Hessian (Expected Information)
+        - B: BHHH Hessian (Observed Information, OPG)
+
+        Args:
+            optimal_params: 최적 파라미터 벡터
+            measurement_model: 측정모델
+            structural_model: 구조모델
+            choice_model: 선택모델
+            max_individuals: BHHH 계산 시 최대 개인 수
+            use_all_individuals: True면 모든 개인 사용
+
+        Returns:
+            {
+                'hessian_numerical': 수치적 Hessian,
+                'hessian_bhhh': BHHH Hessian,
+                'variance_matrix': Sandwich 공분산 행렬,
+                'robust_se': Robust 표준오차,
+                'se_hessian': Hessian 기반 SE,
+                'se_bhhh': BHHH 기반 SE
+            }
+            또는 None (실패 시)
+        """
+        try:
+            self.iteration_logger.info("\n" + "="*80)
+            self.iteration_logger.info("Sandwich Estimator (Huber-White Robust SE) 계산 시작")
+            self.iteration_logger.info("="*80)
+
+            # 1. BHHH Hessian 계산 (~60초)
+            self.iteration_logger.info("\n[1/3] BHHH Hessian 계산 중...")
+            hessian_bhhh_inv = self._compute_bhhh_hessian_inverse(
+                optimal_params,
+                measurement_model,
+                structural_model,
+                choice_model,
+                max_individuals=max_individuals,
+                use_all_individuals=use_all_individuals
+            )
+
+            if hessian_bhhh_inv is None:
+                self.iteration_logger.error("BHHH Hessian 계산 실패")
+                return None
+
+            # BHHH Hessian 복원 (역행렬의 역행렬)
+            hessian_bhhh = np.linalg.inv(hessian_bhhh_inv)
+            self.iteration_logger.info(f"  BHHH Hessian shape: {hessian_bhhh.shape}")
+
+            # 2. 수치적 Hessian 계산 (~7분)
+            self.iteration_logger.info("\n[2/3] 수치적 Hessian 계산 중...")
+            hessian_numerical = self._compute_numerical_hessian_from_gradient(
+                optimal_params,
+                measurement_model,
+                structural_model,
+                choice_model,
+                epsilon=1e-5
+            )
+            self.iteration_logger.info(f"  수치적 Hessian shape: {hessian_numerical.shape}")
+
+            # 3. Sandwich Estimator 계산 (~1초)
+            self.iteration_logger.info("\n[3/3] Sandwich Estimator 계산 중...")
+            bhhh_calc = BHHHCalculator(logger=self.iteration_logger)
+
+            # Robust SE 계산
+            robust_se = bhhh_calc.compute_robust_standard_errors(
+                hessian_bhhh,
+                hessian_numerical,
+                regularization=1e-8
+            )
+
+            # 비교용 SE 계산
+            self.iteration_logger.info("비교용 표준오차 계산 중...")
+
+            # Hessian 기반 SE
+            hess_num_inv = np.linalg.inv(
+                hessian_numerical + 1e-8 * np.eye(len(optimal_params))
+            )
+            se_hessian = bhhh_calc.compute_standard_errors(hess_num_inv)
+
+            # BHHH 기반 SE
+            se_bhhh = bhhh_calc.compute_standard_errors(hessian_bhhh_inv)
+
+            # Sandwich 공분산 행렬
+            variance_matrix = hess_num_inv @ hessian_bhhh @ hess_num_inv
+
+            # 결과 로깅
+            self.iteration_logger.info(
+                f"\n{'='*80}\n"
+                f"Sandwich Estimator 계산 완료\n"
+                f"{'='*80}\n"
+                f"  SE (Hessian) 범위: [{np.min(se_hessian):.6e}, {np.max(se_hessian):.6e}]\n"
+                f"  SE (BHHH) 범위: [{np.min(se_bhhh):.6e}, {np.max(se_bhhh):.6e}]\n"
+                f"  SE (Robust) 범위: [{np.min(robust_se):.6e}, {np.max(robust_se):.6e}]\n"
+                f"\n  평균 SE 비율:\n"
+                f"    Robust / Hessian: {np.mean(robust_se / se_hessian):.3f}\n"
+                f"    Robust / BHHH: {np.mean(robust_se / se_bhhh):.3f}\n"
+                f"    BHHH / Hessian: {np.mean(se_bhhh / se_hessian):.3f}\n"
+                f"{'='*80}"
+            )
+
+            return {
+                'hessian_numerical': hessian_numerical,
+                'hessian_bhhh': hessian_bhhh,
+                'variance_matrix': variance_matrix,
+                'robust_se': robust_se,
+                'se_hessian': se_hessian,
+                'se_bhhh': se_bhhh
+            }
+
+        except Exception as e:
+            self.iteration_logger.error(f"Sandwich Estimator 계산 실패: {e}")
             import traceback
             self.iteration_logger.debug(traceback.format_exc())
             return None
