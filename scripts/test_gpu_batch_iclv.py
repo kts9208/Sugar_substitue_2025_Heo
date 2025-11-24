@@ -40,7 +40,8 @@ sys.path.insert(0, str(project_root / 'examples'))
 from model_config_utils import (
     build_paths_from_config,
     build_choice_config_dict,
-    generate_simultaneous_filename,
+    generate_iclv_filename,
+    save_simultaneous_results,
     parse_csv_filename,
     parse_csv_content
 )
@@ -60,59 +61,40 @@ from src.analysis.hybrid_choice_model.iclv_models.initial_values_final import ge
 # ============================================================================
 
 # ============================================================================
-# 설정 모드: 자동 설정 (CSV 파일명에서 모든 설정 자동 추출)
-# ============================================================================
-#
-# CSV 파일명만 지정하면 경로, 선택모델 설정이 자동으로 파싱됨
-# 파일명 형식: st2_{stage1_paths}1_{stage2_config}2_results.csv
-#
-# 예시:
-# 1. st2_HC-PB_PB-PI1_NK_PI2_results.csv
-#    → 경로: HC->PB, PB->PI
-#    → 선택모델: NK, PI 주효과
-#
-# 2. st2_HC-PB_PB-PI1_PI_int_PIxhl_NKxpr2_results.csv
-#    → 경로: HC->PB, PB->PI
-#    → 선택모델: PI 주효과 + PI×health_label + NK×price 상호작용
-#
+# 설정 모드: 수동 설정
 # ============================================================================
 
-# 📌 순차추정 2단계 CSV 파일명만 지정하세요!
-INITIAL_PARAMS_CSV = 'st2_HC-PB_PB-PI1_PI2_results.csv'  # PI 주효과만
-
-# CSV 파일 경로 (최종 결과 폴더)
-csv_path = project_root / 'results' / 'final' / 'sequential' / 'stage2' / INITIAL_PARAMS_CSV
-
-# CSV 파일명과 내용에서 설정 자동 파싱
 print("\n" + "=" * 70)
-print("[AUTO] 자동 설정 모드: CSV 파일에서 설정 추출")
+print("[MANUAL] 수동 설정 모드")
 print("=" * 70)
-print(f"CSV 파일: {INITIAL_PARAMS_CSV}")
 
-# 1. 파일명에서 경로 정보 파싱
-parsed_filename = parse_csv_filename(INITIAL_PARAMS_CSV)
+# 1. 1단계 구조모델 경로 설정 (2path)
+PATHS = {
+    'HC->PB': True,   # health_concern → perceived_benefit
+    'HC->PP': False,
+    'HC->PI': False,
+    'PB->PI': True,   # perceived_benefit → purchase_intention
+    'PP->PI': False,
+    'NK->PI': False,
+}
 
-# 2. 파일 내용에서 선택모델 설정 파싱 (더 정확함)
-parsed_content = parse_csv_content(str(csv_path))
+# 2. 2단계 선택모델 설정
+MAIN_LVS = ['nutrition_knowledge', 'purchase_intention', 'perceived_price']  # NK, PI, PP 주효과
+MODERATION_LVS = []  # 조절효과 없음
+LV_ATTRIBUTE_INTERACTIONS = []  # LV-Attribute 상호작용 없음
 
-# 자동 설정 적용
-PATHS = parsed_filename['stage1_paths']  # 파일명에서 추출
-MAIN_LVS = parsed_content['main_lvs']  # 파일 내용에서 추출 (더 정확)
-MODERATION_LVS = []  # 현재 미지원
-LV_ATTRIBUTE_INTERACTIONS = parsed_content['lv_attribute_interactions']  # 파일 내용에서 추출
-
-# 파싱 결과 출력
-print(f"\n[파싱 결과]")
-print(f"  1단계 경로 (파일명): {[k for k, v in PATHS.items() if v]}")
-print(f"  주효과 LV (파일 내용): {MAIN_LVS}")
+# 설정 출력
+print(f"\n[모델 설정]")
+print(f"  1단계 경로: {[k for k, v in PATHS.items() if v]}")
+print(f"  주효과 LV: {MAIN_LVS}")
 print(f"  조절효과: {MODERATION_LVS if MODERATION_LVS else '없음'}")
-print(f"  LV-Attribute 상호작용 (파일 내용): {LV_ATTRIBUTE_INTERACTIONS if LV_ATTRIBUTE_INTERACTIONS else '없음'}")
+print(f"  LV-Attribute 상호작용: {LV_ATTRIBUTE_INTERACTIONS if LV_ATTRIBUTE_INTERACTIONS else '없음'}")
 print("=" * 70 + "\n")
 
 # ✅ CFA 결과 파일 사용 (측정모델만 추정된 결과)
 # PKL 파일명도 자동 생성
 from model_config_utils import build_paths_from_config
-_, path_name, _ = build_paths_from_config(PATHS)
+_, path_name, _, _ = build_paths_from_config(PATHS)
 # INITIAL_PARAMS_PKL = f'stage1_{path_name}_results.pkl'  # SEM 결과 (구조모델 포함)
 INITIAL_PARAMS_PKL = 'cfa_results.pkl'  # ✅ CFA 결과 (측정모델만)
 
@@ -122,7 +104,7 @@ GPU_MEMORY_THRESHOLD_MB = 7000  # GPU 메모리 임계값 (MB) - 5GB → 7GB로 
 
 # 5. 추정 설정
 N_DRAWS = 100  # Halton draws 수
-MAX_ITERATIONS = 1000  # 최대 반복 횟수
+MAX_ITERATIONS = 50  # 최대 반복 횟수 (1000 → 50으로 단축)
 
 # ============================================================================
 # 🤖 자동 처리 영역 - 수정 불필요
@@ -136,7 +118,7 @@ def main():
     """메인 실행 함수"""
 
     # 1. 경로 구성
-    hierarchical_paths, path_name, model_description = build_paths_from_config(PATHS)
+    hierarchical_paths, path_name, model_description, n_paths = build_paths_from_config(PATHS)
 
     print("=" * 70)
     print(f"동시추정 (GPU 배치): {model_description}")
@@ -554,227 +536,29 @@ def main():
         output_dir = project_root / 'results' / 'final' / 'simultaneous' / 'results'
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # 파일명 생성 (순차추정과 동일한 규칙)
-        csv_filename = generate_simultaneous_filename(path_name, config, timestamp)
+        # 파일명 생성 (순차추정과 동일한 규칙, 타임스탬프 제거)
+        csv_filename = generate_iclv_filename(
+            choice_config=config,
+            stage1_model_name=path_name,
+            estimation_type='simultaneous'
+        ) + '_results.csv'
         csv_file = output_dir / csv_filename
 
         # 파라미터 저장 (npy)
         npy_filename = csv_filename.replace('.csv', '.npy')
         params_file = output_dir / npy_filename
         np.save(params_file, result['raw_params'])
+        print(f"    ✓ 원시 파라미터 저장: {npy_filename}")
 
-        # 파라미터 통계 추출
-        print(f"    파라미터 통계 추출 중...")
-        print(f"    [DEBUG] result 딕셔너리 키: {list(result.keys())}")
-        print(f"    [DEBUG] 'parameters' in result: {'parameters' in result}")
-        print(f"    [DEBUG] 'parameter_statistics' in result: {'parameter_statistics' in result}")
-        if 'parameters' in result:
-            print(f"    [DEBUG] parameters 키: {list(result['parameters'].keys())}")
-        if 'parameter_statistics' in result:
-            print(f"    [DEBUG] parameter_statistics 키: {list(result['parameter_statistics'].keys())}")
-
-        param_list = []
-
-        # ✅ 측정모델 파라미터는 이미 로드된 CFA 결과에서 가져오기
-        print(f"    측정모델 파라미터를 CFA 결과에서 추출 중...")
-
-        if 'loadings' in cfa_results and 'measurement_errors' in cfa_results:
-            loadings_df = cfa_results['loadings']
-            errors_df = cfa_results['measurement_errors']
-
-            # 요인적재량 (loading)
-            for _, row in loadings_df.iterrows():
-                indicator = row['lval']
-                lv_name = row['rval']
-                param_list.append({
-                    'Coefficient': f'ζ_{lv_name}_{indicator}',
-                    'Estimate': row['Estimate'],
-                    'Std. Err.': row['Std. Err'] if pd.notna(row['Std. Err']) else '-',
-                    'P. Value': row['p-value'] if pd.notna(row['p-value']) else '-'
-                })
-
-            # 오차분산 (error_variance)
-            for _, row in errors_df.iterrows():
-                indicator = row['lval']
-                # lval 형식: "q10~~q10" -> "q10"으로 변환
-                indicator_clean = indicator.split('~~')[0]
-
-                # 해당 지표가 어느 잠재변수에 속하는지 찾기
-                lv_name = None
-                for lv, lv_config in config.measurement_configs.items():
-                    if indicator_clean in lv_config.indicators:
-                        lv_name = lv
-                        break
-
-                if lv_name:
-                    param_list.append({
-                        'Coefficient': f'σ²_{lv_name}_{indicator_clean}',
-                        'Estimate': row['Estimate'],
-                        'Std. Err.': row['Std. Err'] if pd.notna(row['Std. Err']) else '-',
-                        'P. Value': row['p-value'] if pd.notna(row['p-value']) else '-'
-                    })
-
-            print(f"    ✓ 측정모델 파라미터 {len(param_list)}개 추출 완료")
-        else:
-            print(f"    [WARNING] CFA 결과에 loadings 또는 measurement_errors가 없습니다.")
-            print(f"    동시추정 결과에서 추출을 시도합니다...")
-
-            # 대체: 동시추정 결과에서 추출 (표준오차 없음)
-            if 'parameter_statistics' in result and 'measurement' in result['parameter_statistics']:
-                stats = result['parameter_statistics']
-                for lv_name, lv_stats in stats['measurement'].items():
-                    # zeta (요인적재량)
-                    if 'zeta' in lv_stats:
-                        zeta_stats = lv_stats['zeta']
-                        for i in range(len(zeta_stats['estimate'])):
-                            indicator_name = config.measurement_configs[lv_name].indicators[i]
-                            param_list.append({
-                                'Coefficient': f'ζ_{lv_name}_{indicator_name}',
-                                'Estimate': zeta_stats['estimate'][i],
-                                'Std. Err.': zeta_stats.get('std_error', ['-'] * len(zeta_stats['estimate']))[i],
-                                'P. Value': zeta_stats.get('p_value', ['-'] * len(zeta_stats['estimate']))[i]
-                            })
-
-                    # sigma_sq (오차분산)
-                    if 'sigma_sq' in lv_stats:
-                        sigma_sq_stats = lv_stats['sigma_sq']
-                        for i in range(len(sigma_sq_stats['estimate'])):
-                            indicator_name = config.measurement_configs[lv_name].indicators[i]
-                            param_list.append({
-                                'Coefficient': f'σ²_{lv_name}_{indicator_name}',
-                                'Estimate': sigma_sq_stats['estimate'][i],
-                                'Std. Err.': sigma_sq_stats.get('std_error', ['-'] * len(sigma_sq_stats['estimate']))[i],
-                                'P. Value': sigma_sq_stats.get('p_value', ['-'] * len(sigma_sq_stats['estimate']))[i]
-                            })
-
-        # ✅ 구조모델 및 선택모델 파라미터는 동시추정 결과에서 추출
-        # parameter_statistics가 있으면 사용, 없으면 parameters에서 직접 추출
-        if 'parameter_statistics' in result and result['parameter_statistics']:
-            print(f"    parameter_statistics에서 구조모델/선택모델 파라미터 추출 중...")
-            stats = result['parameter_statistics']
-
-            # 구조모델 파라미터 (계층적 구조)
-            if 'structural' in stats:
-                struct = stats['structural']
-                for key, value in struct.items():
-                    if key.startswith('gamma_'):
-                        param_list.append({
-                            'Coefficient': f'γ_{key.replace("gamma_", "")}',
-                            'Estimate': value['estimate'],
-                            'Std. Err.': value.get('std_error', '-'),
-                            'P. Value': value.get('p_value', '-')
-                        })
-
-            # 선택모델 파라미터
-            if 'choice' in stats:
-                choice = stats['choice']
-
-                # ✅ 평탄화된 구조: 각 파라미터가 직접 키로 있음
-                # 예: {'asc_sugar': {...}, 'asc_sugar_free': {...}, 'beta_health_label': {...}, ...}
-                for param_name, param_stats in choice.items():
-                    # 파라미터 이름 변환 (그리스 문자 사용)
-                    if param_name.startswith('beta_'):
-                        display_name = f'β_{param_name.replace("beta_", "")}'
-                    elif param_name.startswith('theta_'):
-                        display_name = param_name  # theta는 그대로 사용
-                    else:
-                        display_name = param_name  # asc, gamma 등은 그대로 사용
-
-                    param_list.append({
-                        'Coefficient': display_name,
-                        'Estimate': param_stats['estimate'],
-                        'Std. Err.': param_stats.get('std_error', '-'),
-                        'P. Value': param_stats.get('p_value', '-')
-                    })
-
-        # parameter_statistics가 없으면 parameters에서 직접 추출 (표준오차 없음)
-        elif 'parameters' in result:
-            print(f"    [WARNING] parameter_statistics가 없습니다. parameters에서 직접 추출합니다 (표준오차 없음).")
-            params = result['parameters']
-
-            # 구조모델 파라미터
-            if 'structural' in params:
-                struct = params['structural']
-                for key, value in struct.items():
-                    if key.startswith('gamma_'):
-                        param_list.append({
-                            'Coefficient': f'γ_{key.replace("gamma_", "")}',
-                            'Estimate': value,
-                            'Std. Err.': '-',
-                            'P. Value': '-'
-                        })
-
-            # 선택모델 파라미터
-            if 'choice' in params:
-                choice = params['choice']
-
-                # ASC
-                if 'asc' in choice:
-                    for alt_name, alt_value in choice['asc'].items():
-                        param_list.append({
-                            'Coefficient': f'asc_{alt_name}',
-                            'Estimate': alt_value,
-                            'Std. Err.': '-',
-                            'P. Value': '-'
-                        })
-
-                # beta (속성 계수)
-                if 'beta' in choice:
-                    beta_values = choice['beta']
-                    if isinstance(beta_values, (list, np.ndarray)):
-                        for i, attr in enumerate(config.choice.choice_attributes):
-                            param_list.append({
-                                'Coefficient': f'β_{attr}',
-                                'Estimate': beta_values[i],
-                                'Std. Err.': '-',
-                                'P. Value': '-'
-                            })
-
-                # theta (LV 주효과)
-                if 'theta' in choice:
-                    for theta_name, theta_value in choice['theta'].items():
-                        param_list.append({
-                            'Coefficient': f'theta_{theta_name}',
-                            'Estimate': theta_value,
-                            'Std. Err.': '-',
-                            'P. Value': '-'
-                        })
-
-                # gamma (LV-속성 상호작용)
-                if 'gamma' in choice:
-                    for gamma_name, gamma_value in choice['gamma'].items():
-                        param_list.append({
-                            'Coefficient': f'gamma_{gamma_name}',
-                            'Estimate': gamma_value,
-                            'Std. Err.': '-',
-                            'P. Value': '-'
-                        })
-        else:
-            print(f"    [ERROR] parameters와 parameter_statistics 모두 없습니다!")
-
-        print(f"    ✓ 총 {len(param_list)}개 파라미터 추출 완료")
-
-        # DataFrame 생성
-        df_params = pd.DataFrame(param_list)
-
-        # Estimation statistics 추가
-        n_iter = result.get('n_iterations', result.get('iterations', 'N/A'))
-        stats_list = [
-            {'Coefficient': '', 'Estimate': '', 'Std. Err.': '', 'P. Value': ''},
-            {'Coefficient': 'Estimation statistics', 'Estimate': '', 'Std. Err.': '', 'P. Value': ''},
-            {'Coefficient': 'Iterations', 'Estimate': n_iter,
-             'Std. Err.': 'LL (final)', 'P. Value': f"{result['log_likelihood']:.2f}"},
-            {'Coefficient': 'AIC', 'Estimate': f"{result['aic']:.2f}",
-             'Std. Err.': 'BIC', 'P. Value': f"{result['bic']:.2f}"}
-        ]
-
-        df_stats = pd.DataFrame(stats_list)
-        df_combined = pd.concat([df_params, df_stats], ignore_index=True)
-
-        # CSV 저장 (상세 파라미터)
-        df_combined.to_csv(csv_file, index=False, encoding='utf-8-sig')
+        # CSV 저장 (범용 함수 사용)
+        print(f"    CSV 결과 저장 중...")
+        save_simultaneous_results(
+            results=result,
+            save_path=csv_file,
+            cfa_results=cfa_results,
+            config=config
+        )
         print(f"    ✓ 결과 저장 완료: {csv_filename}")
-        print(f"      - 파라미터 수: {len(param_list)}")
         print(f"      - 최종 LL: {result['log_likelihood']:.2f}")
         print(f"      - AIC: {result['aic']:.2f}, BIC: {result['bic']:.2f}")
 

@@ -1041,11 +1041,13 @@ class SimultaneousEstimator:
                 if not hasattr(self, 'prev_grad'):
                     self.prev_grad = None
 
-                # ✅ ftol AND gtol 조건 체크를 위한 변수
+                # ✅ ftol AND 파라미터 변화량 조건 체크를 위한 변수
                 if not hasattr(self, 'ftol_threshold'):
                     self.ftol_threshold = 1e-6  # ftol 기준
                 if not hasattr(self, 'gtol_threshold'):
-                    self.gtol_threshold = 1e-5  # gtol 기준
+                    self.gtol_threshold = 1e-5  # gtol 기준 (참고용, 동시추정에서는 사용 안 함)
+                if not hasattr(self, 'param_change_threshold'):
+                    self.param_change_threshold = 1e-6  # 파라미터 변화량 기준
 
                 # Major iteration 완료 로깅
                 if self.iteration_logger:
@@ -1190,38 +1192,49 @@ class SimultaneousEstimator:
                         f"{'='*80}"
                     )
 
-                    # ✅ ftol AND gtol 조건 체크 (둘 다 만족해야 조기 종료)
+                    # ✅ ftol AND 파라미터 변화량 조건 체크 (둘 다 만족해야 조기 종료)
+                    # 동시추정: gtol 대신 파라미터 변화량 사용 (측정모델 고정으로 gtol 수렴 어려움)
                     ftol_satisfied = False
-                    gtol_satisfied = False
+                    param_change_satisfied = False
+                    gtol_satisfied = False  # 참고용
 
+                    # ftol 체크
                     if last_major_iter_func_value[0] is not None:
                         f_prev = last_major_iter_func_value[0]
                         f_curr = current_f
                         rel_change = abs(f_prev - f_curr) / max(abs(f_prev), abs(f_curr), 1.0)
                         ftol_satisfied = (rel_change <= self.ftol_threshold)
 
+                    # 파라미터 변화량 체크
+                    if self.prev_xk is not None:
+                        param_change_norm = np.linalg.norm(xk - self.prev_xk)
+                        param_change_satisfied = (param_change_norm <= self.param_change_threshold)
+
+                    # gtol 체크 (참고용, 로깅만)
                     if self.grad_func:
                         grad = self.grad_func(xk)
                         grad_norm_active = np.linalg.norm(grad[np.abs(grad) > 1e-10], ord=np.inf) if np.any(np.abs(grad) > 1e-10) else 0.0
                         gtol_satisfied = (grad_norm_active <= self.gtol_threshold)
 
-                    # ftol AND gtol 모두 만족하면 조기 종료
-                    if ftol_satisfied and gtol_satisfied:
+                    # ftol AND 파라미터 변화량 모두 만족하면 조기 종료
+                    if ftol_satisfied and param_change_satisfied:
                         self.early_stopped = True
                         self.best_x = xk.copy()
                         msg = (
                             f"\n{'='*80}\n"
-                            f"✅ 수렴 완료: ftol AND gtol 조건 모두 만족\n"
+                            f"✅ 수렴 완료: ftol AND 파라미터 변화량 조건 모두 만족\n"
                             f"  - ftol: {rel_change:.6e} <= {self.ftol_threshold:.6e} ✓\n"
-                            f"  - gtol: {grad_norm_active:.6e} <= {self.gtol_threshold:.6e} ✓\n"
+                            f"  - 파라미터 변화량: {param_change_norm:.6e} <= {self.param_change_threshold:.6e} ✓\n"
+                            f"  - gtol (참고): {grad_norm_active:.6e} (기준: {self.gtol_threshold:.6e}) {'✓' if gtol_satisfied else '✗'}\n"
                             f"  - Major iteration: {self.bfgs_iteration_count}\n"
                             f"  - 최종 LL: {current_ll:.4f}\n"
+                            f"  💡 동시추정: 측정모델 고정으로 gtol 수렴 어려움 → 파라미터 변화량으로 판단\n"
                             f"{'='*80}"
                         )
                         if self.iteration_logger:
                             self.iteration_logger.info(msg)
-                        # StopIteration 대신 early_stopped 플래그 설정
-                        # 다음 objective/gradient 호출 시 큰 값/0 벡터 반환하여 종료 유도
+                        # ✅ scipy callback에서 True를 반환하면 최적화가 중단됨
+                        return True
 
                     # 다음 major iteration을 위한 준비
                     last_major_iter_func_value[0] = current_f
@@ -1362,11 +1375,12 @@ class SimultaneousEstimator:
                     f"  - pgtol: 기본값 (1e-05)\n"
                     f"  - maxls: {optimizer_options['maxls']} (line search 최대 횟수)\n"
                     f"\n"
-                    f"  ✅ 커스텀 수렴 조건 (callback에서 ftol AND gtol 모두 체크):\n"
+                    f"  ✅ 커스텀 수렴 조건 (callback에서 ftol AND 파라미터 변화량 체크):\n"
                     f"    1. ftol 조건: (f^k - f^{{k+1}})/max{{|f^k|,|f^{{k+1}}|,1}} <= 1e-6\n"
-                    f"    2. gtol 조건: max{{|proj g_i|}} <= 1e-5\n"
+                    f"    2. 파라미터 변화량: ||x^k - x^{{k-1}}|| <= 1e-6\n"
                     f"    → 두 조건을 모두 만족해야 조기 종료\n"
                     f"\n"
+                    f"  💡 동시추정: 측정모델 고정으로 gtol 수렴 어려움 → 파라미터 변화량으로 판단\n"
                     f"  💡 scipy의 기본 수렴 조건과 병행하여 사용합니다."
                 )
 
@@ -2469,9 +2483,16 @@ class SimultaneousEstimator:
         """
         missing_params = []
 
+        # ✅ 동시추정 여부 확인 (측정모델 gradient가 없으면 동시추정)
+        is_simultaneous = 'measurement' not in grad_dict or not grad_dict['measurement']
+
         for name in param_names:
             # 측정모델 파라미터
             if name.startswith('zeta_'):
+                # ✅ 동시추정에서는 측정모델 파라미터 검증 스킵
+                if is_simultaneous:
+                    continue
+
                 # ✅ indicator 이름 파싱 (예: zeta_health_concern_q7)
                 parts = name.split('_')
                 lv_name = '_'.join(parts[1:-1])  # 'health_concern'
@@ -2486,6 +2507,10 @@ class SimultaneousEstimator:
                     missing_params.append(name)
 
             elif name.startswith('sigma_sq_'):
+                # ✅ 동시추정에서는 측정모델 파라미터 검증 스킵
+                if is_simultaneous:
+                    continue
+
                 # ✅ indicator 이름 파싱 (예: sigma_sq_health_concern_q7)
                 parts = name.split('_')
                 lv_name = '_'.join(parts[2:-1])  # 'sigma_sq' 제외
@@ -2500,6 +2525,10 @@ class SimultaneousEstimator:
                     missing_params.append(name)
 
             elif name.startswith('tau_'):
+                # ✅ 동시추정에서는 측정모델 파라미터 검증 스킵
+                if is_simultaneous:
+                    continue
+
                 # ✅ indicator 이름 파싱 (예: tau_health_concern_q7_1)
                 parts = name.split('_')
                 lv_name = '_'.join(parts[1:-2])  # 'tau' 제외, indicator와 tau_idx 제외

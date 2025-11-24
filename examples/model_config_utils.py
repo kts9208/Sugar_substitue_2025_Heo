@@ -422,25 +422,63 @@ def build_choice_config_dict(
 # 결과 저장 함수
 # ============================================================================
 
-def _get_significance(p_value: float) -> str:
+def _get_significance(p_value) -> str:
     """p-value에서 유의성 기호 반환"""
-    if p_value < 0.001:
-        return '***'
-    elif p_value < 0.01:
-        return '**'
-    elif p_value < 0.05:
-        return '*'
-    else:
+    import math
+
+    # p_value가 문자열인 경우 float로 변환
+    if isinstance(p_value, str):
+        try:
+            p_value = float(p_value)
+        except (ValueError, TypeError):
+            return ''
+
+    # None이거나 NaN인 경우
+    if p_value is None:
+        return ''
+
+    # float인 경우 NaN/Inf 체크
+    if isinstance(p_value, (float, int)):
+        if math.isnan(float(p_value)) or math.isinf(float(p_value)):
+            return ''
+
+    # 유의성 판단
+    try:
+        p_value = float(p_value)
+        if p_value < 0.001:
+            return '***'
+        elif p_value < 0.01:
+            return '**'
+        elif p_value < 0.05:
+            return '*'
+        else:
+            return ''
+    except (ValueError, TypeError):
         return ''
 
 
-def save_stage2_results(results: Dict, save_path: Path) -> None:
+def save_iclv_results(
+    results: Dict,
+    save_path: Path,
+    estimation_type: str = 'sequential',
+    cfa_results: Dict = None,
+    config = None
+) -> None:
     """
-    2단계 추정 결과를 CSV 파일로 저장
+    ICLV 모델 결과를 CSV 파일로 저장 (순차추정 및 동시추정 통합)
 
     Args:
-        results: estimate_stage2_only() 또는 estimate_stage2()의 반환값
+        results: 추정 결과 딕셔너리
+            - estimate_stage2_only() 또는 estimate_stage2()의 반환값 (순차추정)
+            - 동시추정 결과 딕셔너리 (동시추정)
         save_path: 저장할 CSV 파일 경로
+        estimation_type: 'sequential' (순차추정) 또는 'simultaneous' (동시추정)
+        cfa_results: CFA 결과 딕셔너리 (동시추정에서 측정모델 파라미터 추출용)
+        config: MultiLatentConfig 객체 (동시추정에서 측정모델 파라미터 추출용)
+
+    Note:
+        - 순차추정: 선택모델 파라미터만 저장
+        - 동시추정: 측정모델 + 구조모델 + 선택모델 파라미터 모두 저장
     """
     import pandas as pd
     import numpy as np
@@ -448,7 +486,75 @@ def save_stage2_results(results: Dict, save_path: Path) -> None:
     # 통합 결과 저장 (적합도 + 파라미터)
     combined_data = []
 
-    # 1. 적합도 지수 추가 (섹션: Model_Fit)
+    # ========================================================================
+    # 동시추정: 측정모델 파라미터 추가
+    # ========================================================================
+    if estimation_type == 'simultaneous' and cfa_results and config:
+        # CFA 결과에서 측정모델 파라미터 추출
+        if 'loadings' in cfa_results and 'measurement_errors' in cfa_results:
+            loadings_df = cfa_results['loadings']
+            errors_df = cfa_results['measurement_errors']
+
+            # 요인적재량 (loading)
+            for _, row in loadings_df.iterrows():
+                indicator = row['lval']
+                lv_name = row['rval']
+                combined_data.append({
+                    'section': 'Measurement_Model',
+                    'parameter': f'zeta_{lv_name}_{indicator}',
+                    'estimate': row['Estimate'],
+                    'std_error': row['Std. Err'] if pd.notna(row['Std. Err']) else '',
+                    't_statistic': '',
+                    'p_value': row['p-value'] if pd.notna(row['p-value']) else '',
+                    'significance': _get_significance(row['p-value']) if pd.notna(row['p-value']) else '',
+                    'description': f'{lv_name} → {indicator} (요인적재량)'
+                })
+
+            # 오차분산 (error_variance)
+            for _, row in errors_df.iterrows():
+                indicator = row['lval']
+                # lval 형식: "q10~~q10" -> "q10"으로 변환
+                indicator_clean = indicator.split('~~')[0]
+
+                # 해당 지표가 어느 잠재변수에 속하는지 찾기
+                lv_name = None
+                for lv, lv_config in config.measurement_configs.items():
+                    if indicator_clean in lv_config.indicators:
+                        lv_name = lv
+                        break
+
+                if lv_name:
+                    combined_data.append({
+                        'section': 'Measurement_Model',
+                        'parameter': f'sigma_sq_{lv_name}_{indicator_clean}',
+                        'estimate': row['Estimate'],
+                        'std_error': row['Std. Err'] if pd.notna(row['Std. Err']) else '',
+                        't_statistic': '',
+                        'p_value': row['p-value'] if pd.notna(row['p-value']) else '',
+                        'significance': _get_significance(row['p-value']) if pd.notna(row['p-value']) else '',
+                        'description': f'{lv_name}_{indicator_clean} 오차분산'
+                    })
+
+        # 구조모델 파라미터 추가 (동시추정)
+        if 'parameter_statistics' in results and 'structural' in results['parameter_statistics']:
+            struct = results['parameter_statistics']['structural']
+            for key, value in struct.items():
+                if key.startswith('gamma_'):
+                    combined_data.append({
+                        'section': 'Structural_Model',
+                        'parameter': key,
+                        'estimate': value['estimate'],
+                        'std_error': value.get('std_error', ''),
+                        't_statistic': value.get('t', ''),
+                        'p_value': value.get('p_value', ''),
+                        'significance': _get_significance(value.get('p_value', 1.0)) if 'p_value' in value else '',
+                        'description': key.replace('gamma_', '').replace('_', ' → ')
+                    })
+
+    # ========================================================================
+    # 적합도 지수 (공통)
+    # ========================================================================
+
     combined_data.append({
         'section': 'Model_Fit',
         'parameter': 'log_likelihood',
@@ -480,7 +586,9 @@ def save_stage2_results(results: Dict, save_path: Path) -> None:
         'description': 'Bayesian Information Criterion'
     })
 
-    # 2. 파라미터 추가 (섹션: Parameters)
+    # ========================================================================
+    # 선택모델 파라미터 (공통)
+    # ========================================================================
     if 'parameter_statistics' in results and results['parameter_statistics'] is not None:
         param_stats = results['parameter_statistics']
 
@@ -761,6 +869,48 @@ def save_stage2_results(results: Dict, save_path: Path) -> None:
     combined_df.to_csv(save_path, index=False, encoding='utf-8-sig')
 
 
+def save_stage2_results(results: Dict, save_path: Path) -> None:
+    """
+    순차추정 2단계 결과를 CSV 파일로 저장 (하위 호환용)
+
+    Args:
+        results: estimate_stage2_only() 또는 estimate_stage2()의 반환값
+        save_path: 저장할 CSV 파일 경로
+
+    Note:
+        이 함수는 하위 호환성을 위해 유지됩니다.
+        새로운 코드에서는 save_iclv_results()를 사용하세요.
+    """
+    save_iclv_results(results, save_path, estimation_type='sequential')
+
+
+def save_simultaneous_results(
+    results: Dict,
+    save_path: Path,
+    cfa_results: Dict,
+    config
+) -> None:
+    """
+    동시추정 결과를 CSV 파일로 저장
+
+    Args:
+        results: 동시추정 결과 딕셔너리
+        save_path: 저장할 CSV 파일 경로
+        cfa_results: CFA 결과 딕셔너리 (측정모델 파라미터 추출용)
+        config: MultiLatentConfig 객체
+
+    Note:
+        내부적으로 save_iclv_results()를 호출합니다.
+    """
+    save_iclv_results(
+        results,
+        save_path,
+        estimation_type='simultaneous',
+        cfa_results=cfa_results,
+        config=config
+    )
+
+
 # ============================================================================
 # 파일명 생성 함수
 # ============================================================================
@@ -793,19 +943,32 @@ def extract_stage1_model_name(stage1_filename: str) -> str:
     return name
 
 
-def generate_stage2_filename(
+def generate_iclv_filename(
     choice_config,
-    stage1_model_name: str = None
+    stage1_model_name: str = None,
+    estimation_type: str = 'sequential'
 ) -> str:
     """
-    선택모델 설정을 기반으로 2단계 결과 파일명 생성
+    ICLV 모델 결과 파일명 생성 (순차추정 및 동시추정 통합)
 
     Args:
         choice_config: ChoiceConfig 또는 MultiLatentConfig 객체
-        stage1_model_name: 1단계 모델 이름 (예: "2path", "3path")
+        stage1_model_name: 1단계 모델 이름 (예: "2path", "3path", "HC-PB_PB-PI")
+        estimation_type: 'sequential' (순차추정) 또는 'simultaneous' (동시추정)
 
     Returns:
-        파일명 접두사 (예: "st2_2path_PI_NK_PP", "st2_3path_PI_NKxlabel_PPxprice")
+        파일명 접두사
+        - 순차추정: "st2_2path_PI_NK_PP"
+        - 동시추정: "simul_2path_PI_NK_PP"
+
+    Examples:
+        >>> # 순차추정
+        >>> generate_iclv_filename(config, "2path", "sequential")
+        'st2_2path_NK_PI'
+
+        >>> # 동시추정
+        >>> generate_iclv_filename(config, "2path", "simultaneous")
+        'simul_2path_NK_PI'
     """
     # config가 MultiLatentConfig인 경우 choice 속성 추출
     if hasattr(choice_config, 'choice'):
@@ -850,88 +1013,74 @@ def generate_stage2_filename(
                 if abbr:
                     parts.append(f"{abbr}_mod")
 
-    # 최종 파일명: st2_{stage1_name}_{parts}
+    # 추정 방법에 따른 접두사 선택
+    prefix = 'st2' if estimation_type == 'sequential' else 'simul'
+
+    # 최종 파일명: {prefix}_{stage1_name}_{parts}
     if parts:
         stage2_name = '_'.join(parts)
-        filename = f"st2_{stage1_name}_{stage2_name}"
+        filename = f"{prefix}_{stage1_name}_{stage2_name}"
     else:
         # 잠재변수가 전혀 없으면 base만
-        filename = f"st2_{stage1_name}_base"
+        filename = f"{prefix}_{stage1_name}_base"
 
     return filename
 
 
-def generate_simultaneous_filename(
-    path_name: str,
+def generate_stage2_filename(
     choice_config,
+    stage1_model_name: str = None
+) -> str:
+    """
+    순차추정 2단계 결과 파일명 생성 (하위 호환용)
+
+    Args:
+        choice_config: ChoiceConfig 또는 MultiLatentConfig 객체
+        stage1_model_name: 1단계 모델 이름 (예: "2path", "3path")
+
+    Returns:
+        파일명 접두사 (예: "st2_2path_PI_NK_PP", "st2_3path_PI_NKxlabel_PPxprice")
+
+    Note:
+        이 함수는 하위 호환성을 위해 유지됩니다.
+        새로운 코드에서는 generate_iclv_filename()을 사용하세요.
+    """
+    return generate_iclv_filename(choice_config, stage1_model_name, 'sequential')
+
+
+def generate_simultaneous_filename(
+    choice_config,
+    stage1_model_name: str = None,
+    include_timestamp: bool = False,
     timestamp: str = None
 ) -> str:
     """
-    동시추정 결과 파일명 생성
+    동시추정 결과 파일명 생성 (하위 호환용)
 
     Args:
-        path_name: 경로 이름 (예: "HC-PB_PB-PI" 또는 "base_model")
         choice_config: ChoiceConfig 또는 MultiLatentConfig 객체
-        timestamp: 타임스탬프 (예: "20251117_123456"), None이면 타임스탬프 없음
+        stage1_model_name: 1단계 모델 이름 (예: "2path", "HC-PB_PB-PI")
+        include_timestamp: 타임스탬프 포함 여부 (기본값: False)
+        timestamp: 타임스탬프 (예: "20251117_123456")
 
     Returns:
-        파일명 (예: "simultaneous_HC-PB_PB-PI_NK_results_20251117_123456.csv")
+        파일명 (예: "simul_2path_NK_PI_results.csv")
+
+    Note:
+        이 함수는 하위 호환성을 위해 유지됩니다.
+        새로운 코드에서는 generate_iclv_filename()을 사용하세요.
+
+        기존 시그니처와의 호환성:
+        - path_name → stage1_model_name으로 변경
+        - 타임스탬프는 기본적으로 제거 (include_timestamp=False)
     """
-    # config가 MultiLatentConfig인 경우 choice 속성 추출
-    if hasattr(choice_config, 'choice'):
-        choice_config = choice_config.choice
+    filename_prefix = generate_iclv_filename(choice_config, stage1_model_name, 'simultaneous')
 
-    # 선택모델 LV 약어 추출
-    lv_abbrs = set()
-
-    # 주효과 LV 추가
-    if getattr(choice_config, 'all_lvs_as_main', False):
-        main_lvs = getattr(choice_config, 'main_lvs', None)
-        if main_lvs:
-            for lv in main_lvs:
-                abbr = LV_ABBR.get(lv)
-                if abbr:
-                    lv_abbrs.add(abbr)
-
-    # 조절효과 LV 추가
-    if getattr(choice_config, 'moderation_enabled', False):
-        moderator_lvs = getattr(choice_config, 'moderator_lvs', None)
-        if moderator_lvs:
-            for lv in moderator_lvs:
-                abbr = LV_ABBR.get(lv)
-                if abbr:
-                    lv_abbrs.add(abbr)
-
-    # LV-Attribute 상호작용 LV 추가
-    lv_attr_interactions = getattr(choice_config, 'lv_attribute_interactions', None)
-    if lv_attr_interactions:
-        for interaction in lv_attr_interactions:
-            lv = interaction.get('lv') if isinstance(interaction, dict) else interaction[0]
-            abbr = LV_ABBR.get(lv)
-            if abbr:
-                lv_abbrs.add(abbr)
-
-    # 파일명 구성 요소
-    parts = ['simultaneous']
-
-    # 경로 이름 추가
-    if path_name and path_name != 'base_model':
-        parts.append(path_name)
-
-    # 선택모델 LV 추가
-    if lv_abbrs:
-        lv_part = '_'.join(sorted(lv_abbrs))
-        parts.append(lv_part)
-
-    # 'results' 추가
-    parts.append('results')
-
-    # 타임스탬프 추가
-    if timestamp:
-        parts.append(timestamp)
-
-    # 최종 파일명
-    filename = '_'.join(parts) + '.csv'
+    # 타임스탬프 추가 (선택적)
+    if include_timestamp and timestamp:
+        filename = f"{filename_prefix}_results_{timestamp}.csv"
+    else:
+        filename = f"{filename_prefix}_results.csv"
 
     return filename
 
