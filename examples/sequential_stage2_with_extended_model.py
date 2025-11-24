@@ -63,7 +63,9 @@ import numpy as np
 from model_config_utils import (
     build_choice_config_dict,
     extract_stage1_model_name,
-    generate_stage2_filename
+    generate_stage2_filename,
+    LV_ABBR,
+    ATTR_ABBR
 )
 
 
@@ -94,7 +96,7 @@ def main():
     # ═══════════════════════════════════════════════════════════════════
 
     # 📌 1단계 결과 파일명 (1단계에서 생성된 파일명)
-    STAGE1_RESULT_FILE = "stage1_HC-PB_HC-PP_PB-PI_PP-PI_results.pkl"
+    STAGE1_RESULT_FILE = "stage1_2path_results.pkl"
 
     # 📌 요인점수 변환 방법
     # 'zscore': Z-score 표준화 (평균 0, 표준편차 1) - 기본값
@@ -106,20 +108,14 @@ def main():
     CHOICE_TYPE = 'multinomial'  # 'binary' 또는 'multinomial' - 3개 대안이므로 multinomial 사용
     PRICE_VARIABLE = 'price'  # 가격 변수명
 
-    # 📌 잠재변수 주효과 (원하는 잠재변수만 추가)
-    # 예시: [] = Base Model (잠재변수 없음)
-    #      ['purchase_intention'] = Base + PI 주효과
-    #      ['purchase_intention', 'nutrition_knowledge'] = Base + PI + NK 주효과
-    MAIN_LVS = ['purchase_intention', 'nutrition_knowledge']  # Auto-generated
+    # 📌 잠재변수 주효과: PI + NK + PP
+    MAIN_LVS = ['purchase_intention', 'nutrition_knowledge', 'perceived_price']
 
     # 📌 조절효과 (잠재변수 2개 세트)
-    # 예시: [('perceived_price', 'nutrition_knowledge')] = PP와 NK의 조절효과
-    MODERATION_LVS = []  # Auto-generated
+    MODERATION_LVS = []
 
-    # 📌 LV-Attribute 상호작용 (잠재변수-속성 2개 세트)
-    # 예시: [('purchase_intention', 'price')] = PI × price 상호작용
-    #      [('purchase_intention', 'price'), ('nutrition_knowledge', 'health_label')]
-    LV_ATTRIBUTE_INTERACTIONS = [('purchase_intention', 'health_label'), ('nutrition_knowledge', 'price')]  # Auto-generated
+    # 📌 LV-Attribute 상호작용: 없음
+    LV_ATTRIBUTE_INTERACTIONS = []
 
     # ═══════════════════════════════════════════════════════════════════
     # 🤖 자동 처리 영역 - 수정 불필요
@@ -151,8 +147,13 @@ def main():
 
     # 2. 1단계 결과 로드
     print("\n[2] 1단계 결과 로드 중...")
-    # 최종 결과 폴더에서 로드
-    stage1_path = project_root / "results" / "final" / "sequential" / "stage1" / STAGE1_RESULT_FILE
+
+    # 파일명에서 경로 이름 추출 (예: "stage1_2path_results.pkl" → "2path")
+    stage1_filename = STAGE1_RESULT_FILE
+    path_name = extract_stage1_model_name(stage1_filename)
+
+    # 최종 결과 폴더에서 로드 (경로별 폴더 구조)
+    stage1_path = project_root / "results" / "final" / "sequential" / path_name / "stage1" / STAGE1_RESULT_FILE
 
     if not stage1_path.exists():
         raise FileNotFoundError(f"1단계 결과 파일이 없습니다: {stage1_path}")
@@ -386,18 +387,34 @@ def main():
     print("결과 저장")
     print("=" * 70)
 
-    # 최종 결과 폴더에 저장
-    save_dir = project_root / "results" / "final" / "sequential" / "stage2"
+    # 최종 결과 폴더에 저장 (경로별 폴더 구조)
+    save_dir = project_root / "results" / "final" / "sequential" / path_name / "stage2"
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1단계 모델 이름 추출
-    stage1_model_name = extract_stage1_model_name(STAGE1_RESULT_FILE)
-
     # 동적 파일명 생성 (1단계 + 2단계 정보 포함)
-    filename_prefix = generate_stage2_filename(config, stage1_model_name)
-    print(f"\n파일명 접두사: {filename_prefix}")
-    print(f"  - 1단계 모델: {stage1_model_name}")
-    print(f"  - 2단계 모델: {filename_prefix.split('1_')[1].replace('2', '')}")
+    filename_prefix = generate_stage2_filename(config, path_name)
+    print(f"\n파일명: {filename_prefix}_results.csv")
+
+    # 2단계 모델 설명 생성
+    stage2_desc_parts = []
+    if MAIN_LVS:
+        lv_abbr_map = {'purchase_intention': 'PI', 'nutrition_knowledge': 'NK',
+                       'perceived_benefit': 'PB', 'perceived_price': 'PP', 'health_concern': 'HC'}
+        main_abbrs = [lv_abbr_map.get(lv, lv) for lv in MAIN_LVS]
+        stage2_desc_parts.append(f"주효과: {', '.join(main_abbrs)}")
+    if LV_ATTRIBUTE_INTERACTIONS:
+        int_strs = []
+        for lv, attr in LV_ATTRIBUTE_INTERACTIONS:
+            lv_abbr = LV_ABBR.get(lv, lv)
+            attr_abbr = ATTR_ABBR.get(attr, attr)
+            int_strs.append(f"{lv_abbr}×{attr_abbr}")
+        stage2_desc_parts.append(f"상호작용: {', '.join(int_strs)}")
+
+    print(f"  - 1단계: {path_name}")
+    if stage2_desc_parts:
+        print(f"  - 2단계: {' + '.join(stage2_desc_parts)}")
+    else:
+        print(f"  - 2단계: Base Model")
 
     # 통합 결과 저장 (적합도 + 파라미터)
     combined_data = []

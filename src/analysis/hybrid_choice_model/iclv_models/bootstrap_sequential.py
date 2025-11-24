@@ -252,14 +252,14 @@ class SequentialBootstrap:
         print(f"  신뢰수준: {self.confidence_level}")
         print(f"  개인 수: {n_individuals}")
 
-        # ✅ Sign Correction을 위한 원본 요인적재량 추출
+        # ✅ Sign Correction을 위한 원본 적재량 추출
         logger.info("\n원본 데이터로 1단계 추정 중 (Sign Correction 기준점)...")
         original_sem_results = _run_stage1(data, measurement_model, structural_model)
-        original_loadings = original_sem_results['loadings']  # DataFrame 형식
-        logger.info(f"원본 요인적재량 추출 완료: {original_loadings['lval'].unique().tolist()}")
+        original_loadings = original_sem_results['loadings']  # DataFrame
+        logger.info(f"원본 적재량 추출 완료")
         logger.info("✅ Sign Correction 활성화됨 (요인적재량 내적 기반)")
 
-        # 워커 함수 인자 준비 (원본 요인적재량 추가)
+        # 워커 함수 인자 준비 (원본 적재량 추가)
         worker_args = [
             (i, data, individual_ids, measurement_model, structural_model, choice_model,
              self.random_seed, 'both', original_loadings)
@@ -565,14 +565,14 @@ def _bootstrap_worker(args: Tuple) -> Optional[Dict]:
             original_loadings = None
         elif len(args) == 9:
             # both (with Sign Correction) 또는 stage2
-            sample_idx, data, individual_ids, measurement_model, structural_model, choice_model, random_seed, mode, factor_scores_or_original = args
+            sample_idx, data, individual_ids, measurement_model, structural_model, choice_model, random_seed, mode, loadings_or_scores = args
             if mode == 'both':
-                # both 모드: factor_scores_or_original은 원본 요인적재량 DataFrame
-                original_loadings = factor_scores_or_original
+                # both 모드: loadings_or_scores는 원본 적재량 DataFrame
+                original_loadings = loadings_or_scores
                 factor_scores = None
             else:
-                # stage2 모드: factor_scores_or_original은 요인점수
-                factor_scores = factor_scores_or_original
+                # stage2 모드: loadings_or_scores는 요인점수
+                factor_scores = loadings_or_scores
                 original_loadings = None
         else:
             raise ValueError(f"잘못된 인자 개수: {len(args)}")
@@ -603,36 +603,59 @@ def _bootstrap_worker(args: Tuple) -> Optional[Dict]:
                 # 요인점수 추출
                 factor_scores = stage1_result['factor_scores']
 
-                # ✅ Sign Correction 적용 (요인적재량 기반)
-                if original_loadings is not None:
-                    from .sign_correction import align_loadings_dataframe
+                # ✅ Sign Correction 적용 (요인적재량 내적 기반)
+                if original_loadings is not None and len(original_loadings) > 0:
+                    flip_status = {}
+                    debug_info = {}  # 디버깅 정보 저장
+                    correlations = {}  # 내적 값 저장
 
-                    # 부트스트랩 요인적재량 추출
-                    bootstrap_loadings = stage1_result['loadings']
+                    # 부트스트랩 적재량
+                    boot_loadings = stage1_result['loadings']
 
-                    # 요인적재량 부호 정렬
-                    aligned_loadings, flip_status = align_loadings_dataframe(
-                        original_loadings,
-                        bootstrap_loadings,
-                        lv_column='lval',
-                        indicator_column='rval',
-                        estimate_column='Estimate'
-                    )
+                    # 각 잠재변수별로 원본 적재량과 부트스트랩 적재량의 내적 계산
+                    for lv_name in factor_scores.keys():
+                        # 원본 적재량 (해당 잠재변수)
+                        orig_lv_loadings = original_loadings[
+                            (original_loadings['op'] == '~') &
+                            (original_loadings['rval'] == lv_name)
+                        ].copy()
 
-                    # 요인점수에 부호 반전 적용
-                    for lv_name, flipped in flip_status.items():
-                        if flipped and lv_name in factor_scores:
-                            factor_scores[lv_name] = -factor_scores[lv_name]
-                            logger.info(f"  ✅ 부호 반전: {lv_name}")
+                        # 부트스트랩 적재량 (해당 잠재변수)
+                        boot_lv_loadings = boot_loadings[
+                            (boot_loadings['op'] == '~') &
+                            (boot_loadings['rval'] == lv_name)
+                        ].copy()
+
+                        # Marker Variable 제외 (첫 번째 지표는 1.0으로 고정)
+                        orig_lv_loadings = orig_lv_loadings.iloc[1:]
+                        boot_lv_loadings = boot_lv_loadings.iloc[1:]
+
+                        # 적재량의 내적 계산
+                        if len(orig_lv_loadings) > 0:
+                            dot_product = np.dot(
+                                orig_lv_loadings['Estimate'].values,
+                                boot_lv_loadings['Estimate'].values
+                            )
+                            correlations[lv_name] = dot_product
+
+                            # 내적이 음수면 부호 반전
+                            if dot_product < 0:
+                                factor_scores[lv_name] = -factor_scores[lv_name]
+                                flip_status[lv_name] = True
+                                if sample_idx < 5:
+                                    debug_info[f'{lv_name}_flipped'] = True
+                                    debug_info[f'{lv_name}_dot_product'] = dot_product
+                            else:
+                                flip_status[lv_name] = False
+                        else:
+                            # 지표가 1개뿐이면 부호 반전 불가
+                            correlations[lv_name] = 1.0
+                            flip_status[lv_name] = False
 
                     result['sign_flip_status'] = flip_status
-
-                    # 디버깅: flip_status 출력
-                    flipped_lvs = [lv for lv, f in flip_status.items() if f]
-                    if flipped_lvs:
-                        logger.info(f"  부호 반전된 잠재변수: {flipped_lvs}")
-                    else:
-                        logger.debug(f"  부호 반전 없음 (샘플 {sample_idx})")
+                    result['dot_products'] = correlations  # 내적 값 저장
+                    if sample_idx < 5:
+                        result['debug_info'] = debug_info  # 디버깅 정보 저장
 
         if mode in ['stage2', 'both']:
             # 2단계 추정

@@ -41,13 +41,13 @@ from src.analysis.hybrid_choice_model.iclv_models.multi_latent_config import cre
 # 🎯 사용자 설정 영역 - 여기만 수정하세요!
 # ============================================================================
 
-# 경로 설정: True/False로 간단하게 켜고 끄기
+# 경로 설정: 3경로 모델 (HC→PB→PI + HC→PP)
 PATHS = {
     'HC->PB': True,   # 건강관심도 → 건강유익성
-    'HC->PP': True,   # 건강관심도 → 가격수준  ✅ 추가
+    'HC->PP': True,   # 건강관심도 → 가격수준
     'HC->PI': False,  # 건강관심도 → 구매의도
     'PB->PI': True,   # 건강유익성 → 구매의도
-    'PP->PI': True,   # 가격수준 → 구매의도  ✅ 추가
+    'PP->PI': False,  # 가격수준 → 구매의도
     'NK->PI': False,  # 영양지식 → 구매의도
 }
 
@@ -66,7 +66,7 @@ CALCULATE_MODIFICATION_INDICES = False
 
 def main():
     # 1. 경로 구성
-    hierarchical_paths, path_name, model_description = build_paths_from_config(PATHS)
+    hierarchical_paths, path_name, model_description, n_paths = build_paths_from_config(PATHS)
 
     print("=" * 70)
     print(f"1단계 추정: {model_description}")
@@ -116,8 +116,8 @@ def main():
     # 5. 1단계 추정
     print("\n[5] 1단계 추정 실행 중...")
 
-    # 최종 결과 폴더에 저장
-    save_dir = project_root / "results" / "final" / "sequential" / "stage1"
+    # 최종 결과 폴더에 저장 (경로 개수별로 폴더 분리)
+    save_dir = project_root / "results" / "final" / "sequential" / path_name / "stage1"
     save_dir.mkdir(parents=True, exist_ok=True)
     save_path = save_dir / f"stage1_{path_name}_results.pkl"
 

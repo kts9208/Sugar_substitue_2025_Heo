@@ -44,27 +44,27 @@ from src.analysis.hybrid_choice_model.iclv_models.iclv_config import ChoiceConfi
 # 🎯 설정 불러오기 - sequential_stage1.py와 동일한 설정
 # ============================================================================
 
-# sequential_stage1.py의 PATHS 설정
+# 📌 1단계 경로 설정: 2경로 모델 (HC→PB→PI)
 PATHS = {
     'HC->PB': True,   # 건강관심도 → 건강유익성
-    'HC->PP': True,   # 건강관심도 → 가격수준
+    'HC->PP': False,  # 건강관심도 → 가격수준
     'HC->PI': False,  # 건강관심도 → 구매의도
     'PB->PI': True,   # 건강유익성 → 구매의도
-    'PP->PI': True,   # 가격수준 → 구매의도
+    'PP->PI': False,  # 가격수준 → 구매의도
     'NK->PI': False,  # 영양지식 → 구매의도
 }
 
-# sequential_stage2_with_extended_model.py의 선택모델 설정
+# 📌 2단계 선택모델 설정: NK + PI + PP 주효과만 (상호작용 없음)
 CHOICE_ATTRIBUTES = ['health_label', 'price']
 CHOICE_TYPE = 'multinomial'
 PRICE_VARIABLE = 'price'
-MAIN_LVS = ['purchase_intention', 'nutrition_knowledge']
+MAIN_LVS = ['nutrition_knowledge', 'purchase_intention', 'perceived_price']  # NK, PI, PP 주효과
 MODERATION_LVS = []
-LV_ATTRIBUTE_INTERACTIONS = [('purchase_intention', 'health_label'), ('nutrition_knowledge', 'price')]
+LV_ATTRIBUTE_INTERACTIONS = []  # 상호작용 없음
 
 # 부트스트래핑 설정
-N_BOOTSTRAP = 10    # 부트스트랩 샘플 수 (테스트용: 10개, 실제: 1000개)
-N_WORKERS = 4       # 병렬 처리 워커 수
+N_BOOTSTRAP = 10  # 부트스트랩 샘플 수 (테스트용)
+N_WORKERS = 2       # 병렬 처리 워커 수
 CONFIDENCE_LEVEL = 0.95
 RANDOM_SEED = 42
 
@@ -75,7 +75,7 @@ def main():
     print("=" * 80)
     
     # 1. 경로 구성 (sequential_stage1.py와 동일)
-    hierarchical_paths, path_name, model_description = build_paths_from_config(PATHS)
+    hierarchical_paths, path_name, model_description, n_paths = build_paths_from_config(PATHS)
     
     print(f"\n[1단계 설정] {model_description}")
     if hierarchical_paths:
@@ -160,7 +160,31 @@ def main():
     print(f"   - 실패: {results['n_failed']}/{N_BOOTSTRAP}")
     print(f"   - 성공률: {results['n_successful']/N_BOOTSTRAP*100:.1f}%")
 
-    # 6. 결과 출력
+    # 6. 디버깅 정보 출력
+    print("\n[Sign Correction 디버깅]")
+    if 'bootstrap_estimates' in results and len(results['bootstrap_estimates']) > 0:
+        first_sample = results['bootstrap_estimates'][0]
+        if 'debug_info' in first_sample:
+            print("첫 번째 샘플 디버깅 정보:")
+            for key, value in first_sample['debug_info'].items():
+                print(f"  {key}: {value}")
+
+        if 'dot_products' in first_sample:
+            print("\n첫 번째 샘플 내적 값:")
+            for lv, dot in first_sample['dot_products'].items():
+                print(f"  {lv}: {dot:.6f}")
+
+        # 첫 5개 샘플의 내적 값 확인
+        print("\n첫 5개 샘플의 내적 값 (Marker Variable 제외):")
+        for i in range(min(5, len(results['bootstrap_estimates']))):
+            sample = results['bootstrap_estimates'][i]
+            if 'dot_products' in sample:
+                print(f"\n샘플 {i}:")
+                for lv, dot in sample['dot_products'].items():
+                    flip = "✅ 반전" if sample.get('sign_flip_status', {}).get(lv, False) else "  유지"
+                    print(f"  {lv:30s}: {dot:10.4f}  {flip}")
+
+    # 7. 결과 출력
     print(f"\n[부트스트래핑 결과]")
     print(f"\n신뢰구간 (상위 20개):")
     print(results['confidence_intervals'].head(20).to_string(index=False))

@@ -13,6 +13,7 @@ Date: 2025-11-17
 """
 
 from typing import Dict, List, Tuple, Optional
+from pathlib import Path
 
 
 # ============================================================================
@@ -308,45 +309,49 @@ def validate_csv_config_match(
 # 경로 설정 함수
 # ============================================================================
 
-def build_paths_from_config(paths_config: Dict[str, bool]) -> Tuple[Optional[List[Dict]], str, str]:
+def build_paths_from_config(paths_config: Dict[str, bool]) -> Tuple[Optional[List[Dict]], str, str, int]:
     """
     경로 설정에서 hierarchical_paths 생성
-    
+
     Args:
         paths_config: {'HC->PB': True, ...} 형태의 딕셔너리
-    
+
     Returns:
         hierarchical_paths: [{'target': ..., 'predictors': [...]}, ...] or None
-        path_name: 파일명용 경로 이름 (예: 'HC-PB_PB-PI' 또는 'base_model')
+        path_name: 파일명용 경로 이름 (예: '2path' 또는 '3path')
         model_description: 모델 설명 (예: 'HC→PB + PB→PI' 또는 'Base Model (경로 없음)')
+        n_paths: 경로 개수
     """
     # 활성화된 경로만 필터링
     active_paths = {k: v for k, v in paths_config.items() if v}
-    
+
+    # 경로 개수
+    n_paths = len(active_paths)
+
     # 경로가 없으면 base_model
     if not active_paths:
-        return None, "base_model", "Base Model (경로 없음)"
-    
+        return None, "base_model", "Base Model (경로 없음)", 0
+
     # 경로를 target별로 그룹화
     target_predictors = {}
-    
+
     for path_str in active_paths.keys():
         # 'HC->PB' 형태를 파싱
         parts = path_str.split('->')
         if len(parts) != 2:
             raise ValueError(f"잘못된 경로 형식: {path_str}. 'LV1->LV2' 형태여야 합니다.")
-        
+
         predictor_abbr, target_abbr = parts
         predictor = LV_NAMES.get(predictor_abbr)
         target = LV_NAMES.get(target_abbr)
-        
+
         if predictor is None or target is None:
             raise ValueError(f"알 수 없는 잠재변수: {path_str}")
-        
+
         if target not in target_predictors:
             target_predictors[target] = []
         target_predictors[target].append(predictor)
-    
+
     # hierarchical_paths 생성
     hierarchical_paths = []
     for target, predictors in target_predictors.items():
@@ -354,14 +359,14 @@ def build_paths_from_config(paths_config: Dict[str, bool]) -> Tuple[Optional[Lis
             'target': target,
             'predictors': predictors
         })
-    
-    # 파일명용 경로 이름 생성 (예: 'HC-PB_PB-PI')
-    path_name = '_'.join(sorted(active_paths.keys())).replace('->', '-')
-    
+
+    # 파일명용 경로 이름 생성 (예: '2path', '3path')
+    path_name = f"{n_paths}path"
+
     # 모델 설명 생성 (예: 'HC→PB + PB→PI')
     model_description = ' + '.join(sorted(active_paths.keys())).replace('->', '→')
-    
-    return hierarchical_paths, path_name, model_description
+
+    return hierarchical_paths, path_name, model_description, n_paths
 
 
 # ============================================================================
@@ -414,6 +419,349 @@ def build_choice_config_dict(
 
 
 # ============================================================================
+# 결과 저장 함수
+# ============================================================================
+
+def _get_significance(p_value: float) -> str:
+    """p-value에서 유의성 기호 반환"""
+    if p_value < 0.001:
+        return '***'
+    elif p_value < 0.01:
+        return '**'
+    elif p_value < 0.05:
+        return '*'
+    else:
+        return ''
+
+
+def save_stage2_results(results: Dict, save_path: Path) -> None:
+    """
+    2단계 추정 결과를 CSV 파일로 저장
+
+    Args:
+        results: estimate_stage2_only() 또는 estimate_stage2()의 반환값
+        save_path: 저장할 CSV 파일 경로
+    """
+    import pandas as pd
+    import numpy as np
+
+    # 통합 결과 저장 (적합도 + 파라미터)
+    combined_data = []
+
+    # 1. 적합도 지수 추가 (섹션: Model_Fit)
+    combined_data.append({
+        'section': 'Model_Fit',
+        'parameter': 'log_likelihood',
+        'estimate': results['log_likelihood'],
+        'std_error': '',
+        't_statistic': '',
+        'p_value': '',
+        'significance': '',
+        'description': 'Log-Likelihood'
+    })
+    combined_data.append({
+        'section': 'Model_Fit',
+        'parameter': 'AIC',
+        'estimate': results['aic'],
+        'std_error': '',
+        't_statistic': '',
+        'p_value': '',
+        'significance': '',
+        'description': 'Akaike Information Criterion'
+    })
+    combined_data.append({
+        'section': 'Model_Fit',
+        'parameter': 'BIC',
+        'estimate': results['bic'],
+        'std_error': '',
+        't_statistic': '',
+        'p_value': '',
+        'significance': '',
+        'description': 'Bayesian Information Criterion'
+    })
+
+    # 2. 파라미터 추가 (섹션: Parameters)
+    if 'parameter_statistics' in results and results['parameter_statistics'] is not None:
+        param_stats = results['parameter_statistics']
+
+        # ASC (대안별 상수)
+        asc_descriptions = {
+            'asc_sugar': '일반당 상수',
+            'ASC_sugar': '일반당 상수',
+            'asc_sugar_free': '무설탕 상수',
+            'ASC_sugar_free': '무설탕 상수',
+            'asc_A': '대안 A 상수',
+            'ASC_A': '대안 A 상수',
+            'asc_B': '대안 B 상수',
+            'ASC_B': '대안 B 상수'
+        }
+
+        for key, desc in asc_descriptions.items():
+            if key in param_stats:
+                stat = param_stats[key]
+                combined_data.append({
+                    'section': 'Parameters',
+                    'parameter': key,
+                    'estimate': stat['estimate'],
+                    'std_error': stat['se'],
+                    't_statistic': stat['t'],
+                    'p_value': stat['p'],
+                    'significance': _get_significance(stat['p']),
+                    'description': desc
+                })
+
+        # intercept (대안별 모델이 아닌 경우)
+        if 'intercept' in param_stats:
+            stat = param_stats['intercept']
+            combined_data.append({
+                'section': 'Parameters',
+                'parameter': 'intercept',
+                'estimate': stat['estimate'],
+                'std_error': stat['se'],
+                't_statistic': stat['t'],
+                'p_value': stat['p'],
+                'significance': _get_significance(stat['p']),
+                'description': '절편'
+            })
+
+        # beta (속성 계수)
+        if 'beta' in param_stats:
+            for attr_name, stat in param_stats['beta'].items():
+                combined_data.append({
+                    'section': 'Parameters',
+                    'parameter': f'beta_{attr_name}',
+                    'estimate': stat['estimate'],
+                    'std_error': stat['se'],
+                    't_statistic': stat['t'],
+                    'p_value': stat['p'],
+                    'significance': _get_significance(stat['p']),
+                    'description': attr_name
+                })
+
+        # theta (대안별 잠재변수 계수)
+        theta_descriptions = {
+            'theta_sugar_purchase_intention': '일반당 × 구매의도',
+            'theta_sugar_nutrition_knowledge': '일반당 × 영양지식',
+            'theta_sugar_perceived_price': '일반당 × 가격수준',
+            'theta_sugar_perceived_benefit': '일반당 × 건강유익성',
+            'theta_sugar_free_purchase_intention': '무설탕 × 구매의도',
+            'theta_sugar_free_nutrition_knowledge': '무설탕 × 영양지식',
+            'theta_sugar_free_perceived_price': '무설탕 × 가격수준',
+            'theta_sugar_free_perceived_benefit': '무설탕 × 건강유익성',
+            'theta_A_purchase_intention': '대안 A × 구매의도',
+            'theta_A_nutrition_knowledge': '대안 A × 영양지식',
+            'theta_B_purchase_intention': '대안 B × 구매의도',
+            'theta_B_nutrition_knowledge': '대안 B × 영양지식'
+        }
+
+        for key in sorted([k for k in param_stats.keys() if k.startswith('theta_')]):
+            stat = param_stats[key]
+            desc = theta_descriptions.get(key, key)
+            combined_data.append({
+                'section': 'Parameters',
+                'parameter': key,
+                'estimate': stat['estimate'],
+                'std_error': stat['se'],
+                't_statistic': stat['t'],
+                'p_value': stat['p'],
+                'significance': _get_significance(stat['p']),
+                'description': desc
+            })
+
+        # lambda (잠재변수 주 효과 - 대안별 모델이 아닌 경우)
+        lambda_descriptions = {
+            'lambda_purchase_intention': '구매의도 (PI)',
+            'lambda_nutrition_knowledge': '영양지식 (NK)',
+            'lambda_main': '주 효과',
+            'lambda_mod_perceived_price': '가격 조절',
+            'lambda_mod_nutrition_knowledge': '지식 조절'
+        }
+
+        for key, desc in lambda_descriptions.items():
+            if key in param_stats:
+                stat = param_stats[key]
+                combined_data.append({
+                    'section': 'Parameters',
+                    'parameter': key,
+                    'estimate': stat['estimate'],
+                    'std_error': stat['se'],
+                    't_statistic': stat['t'],
+                    'p_value': stat['p'],
+                    'significance': _get_significance(stat['p']),
+                    'description': desc
+                })
+
+        # gamma (LV-Attribute 상호작용, 대안별)
+        gamma_descriptions = {
+            'gamma_sugar_purchase_intention_price': '일반당: PI × price',
+            'gamma_sugar_purchase_intention_health_label': '일반당: PI × health_label',
+            'gamma_sugar_nutrition_knowledge_price': '일반당: NK × price',
+            'gamma_sugar_nutrition_knowledge_health_label': '일반당: NK × health_label',
+            'gamma_sugar_perceived_price_price': '일반당: PP × price',
+            'gamma_sugar_perceived_price_health_label': '일반당: PP × health_label',
+            'gamma_sugar_free_purchase_intention_price': '무설탕: PI × price',
+            'gamma_sugar_free_purchase_intention_health_label': '무설탕: PI × health_label',
+            'gamma_sugar_free_nutrition_knowledge_price': '무설탕: NK × price',
+            'gamma_sugar_free_nutrition_knowledge_health_label': '무설탕: NK × health_label',
+            'gamma_sugar_free_perceived_price_price': '무설탕: PP × price',
+            'gamma_sugar_free_perceived_price_health_label': '무설탕: PP × health_label'
+        }
+
+        for key in sorted([k for k in param_stats.keys() if k.startswith('gamma_')]):
+            stat = param_stats[key]
+            desc = gamma_descriptions.get(key, key)
+            combined_data.append({
+                'section': 'Parameters',
+                'parameter': key,
+                'estimate': stat['estimate'],
+                'std_error': stat['se'],
+                't_statistic': stat['t'],
+                'p_value': stat['p'],
+                'significance': _get_significance(stat['p']),
+                'description': desc
+            })
+
+    elif 'params' in results:
+        # 통계량이 없는 경우 파라미터만 저장 (간소화된 형식)
+        params = results['params']
+        beta_names = ['sugar_free', 'health_label', 'price']
+
+        # intercept
+        if 'intercept' in params:
+            combined_data.append({
+                'section': 'Parameters',
+                'parameter': 'intercept',
+                'estimate': params['intercept'],
+                'std_error': '',
+                't_statistic': '',
+                'p_value': '',
+                'significance': '',
+                'description': '절편'
+            })
+
+        # beta
+        if 'beta' in params:
+            beta = params['beta']
+            if isinstance(beta, np.ndarray):
+                for i, val in enumerate(beta):
+                    name = beta_names[i] if i < len(beta_names) else f'beta_{i}'
+                    combined_data.append({
+                        'section': 'Parameters',
+                        'parameter': f'beta_{name}',
+                        'estimate': val,
+                        'std_error': '',
+                        't_statistic': '',
+                        'p_value': '',
+                        'significance': '',
+                        'description': name
+                    })
+            else:
+                combined_data.append({
+                    'section': 'Parameters',
+                    'parameter': 'beta',
+                    'estimate': beta,
+                    'std_error': '',
+                    't_statistic': '',
+                    'p_value': '',
+                    'significance': '',
+                    'description': '속성계수'
+                })
+
+        # lambda (잠재변수 주 효과)
+        if 'lambda_purchase_intention' in params:
+            combined_data.append({
+                'section': 'Parameters',
+                'parameter': 'lambda_purchase_intention',
+                'estimate': params['lambda_purchase_intention'],
+                'std_error': '',
+                't_statistic': '',
+                'p_value': '',
+                'significance': '',
+                'description': '구매의도 (PI)'
+            })
+
+        if 'lambda_nutrition_knowledge' in params:
+            combined_data.append({
+                'section': 'Parameters',
+                'parameter': 'lambda_nutrition_knowledge',
+                'estimate': params['lambda_nutrition_knowledge'],
+                'std_error': '',
+                't_statistic': '',
+                'p_value': '',
+                'significance': '',
+                'description': '영양지식 (NK)'
+            })
+
+        # 기타 lambda (하위 호환)
+        if 'lambda_main' in params:
+            combined_data.append({
+                'section': 'Parameters',
+                'parameter': 'lambda_main',
+                'estimate': params['lambda_main'],
+                'std_error': '',
+                't_statistic': '',
+                'p_value': '',
+                'significance': '',
+                'description': '주 효과'
+            })
+        if 'lambda_mod_perceived_price' in params:
+            combined_data.append({
+                'section': 'Parameters',
+                'parameter': 'lambda_mod_perceived_price',
+                'estimate': params['lambda_mod_perceived_price'],
+                'std_error': '',
+                't_statistic': '',
+                'p_value': '',
+                'significance': '',
+                'description': '가격 조절'
+            })
+        if 'lambda_mod_nutrition_knowledge' in params:
+            combined_data.append({
+                'section': 'Parameters',
+                'parameter': 'lambda_mod_nutrition_knowledge',
+                'estimate': params['lambda_mod_nutrition_knowledge'],
+                'std_error': '',
+                't_statistic': '',
+                'p_value': '',
+                'significance': '',
+                'description': '지식 조절'
+            })
+
+        # gamma (LV-Attribute 상호작용, 대안별)
+        gamma_descriptions = {
+            'gamma_sugar_purchase_intention_price': '일반당: PI × price',
+            'gamma_sugar_purchase_intention_health_label': '일반당: PI × health_label',
+            'gamma_sugar_nutrition_knowledge_price': '일반당: NK × price',
+            'gamma_sugar_nutrition_knowledge_health_label': '일반당: NK × health_label',
+            'gamma_sugar_perceived_price_price': '일반당: PP × price',
+            'gamma_sugar_perceived_price_health_label': '일반당: PP × health_label',
+            'gamma_sugar_free_purchase_intention_price': '무설탕: PI × price',
+            'gamma_sugar_free_purchase_intention_health_label': '무설탕: PI × health_label',
+            'gamma_sugar_free_nutrition_knowledge_price': '무설탕: NK × price',
+            'gamma_sugar_free_nutrition_knowledge_health_label': '무설탕: NK × health_label',
+            'gamma_sugar_free_perceived_price_price': '무설탕: PP × price',
+            'gamma_sugar_free_perceived_price_health_label': '무설탕: PP × health_label'
+        }
+
+        for key, desc in gamma_descriptions.items():
+            if key in params:
+                combined_data.append({
+                    'section': 'Parameters',
+                    'parameter': key,
+                    'estimate': params[key],
+                    'std_error': '',
+                    't_statistic': '',
+                    'p_value': '',
+                    'significance': '',
+                    'description': desc
+                })
+
+    # 통합 결과 저장 (하나의 CSV 파일)
+    combined_df = pd.DataFrame(combined_data)
+    combined_df.to_csv(save_path, index=False, encoding='utf-8-sig')
+
+
+# ============================================================================
 # 파일명 생성 함수
 # ============================================================================
 
@@ -454,10 +802,10 @@ def generate_stage2_filename(
 
     Args:
         choice_config: ChoiceConfig 또는 MultiLatentConfig 객체
-        stage1_model_name: 1단계 모델 이름 (예: "HC-PB_PB-PI" 또는 "base")
+        stage1_model_name: 1단계 모델 이름 (예: "2path", "3path")
 
     Returns:
-        파일명 접두사 (예: "st2_base1_base2", "st2_HC-PB_PB-PI1_NK2")
+        파일명 접두사 (예: "st2_2path_PI_NK_PP", "st2_3path_PI_NKxlabel_PPxprice")
     """
     # config가 MultiLatentConfig인 경우 choice 속성 추출
     if hasattr(choice_config, 'choice'):
@@ -467,66 +815,48 @@ def generate_stage2_filename(
     stage1_name = stage1_model_name if stage1_model_name else "base"
 
     # 2단계 모델 이름 생성
-    # 1. 잠재변수가 없는 경우 -> base
-    has_lvs = False
+    parts = []
 
-    # 주효과 LV 확인
-    if getattr(choice_config, 'all_lvs_as_main', False):
-        main_lvs = getattr(choice_config, 'main_lvs', None)
-        if main_lvs and len(main_lvs) > 0:
-            has_lvs = True
+    # 주효과 LV 추가
+    main_lvs = getattr(choice_config, 'main_lvs', None)
+    if main_lvs and len(main_lvs) > 0:
+        main_abbrs = []
+        for lv in main_lvs:
+            abbr = LV_ABBR.get(lv)
+            if abbr:
+                main_abbrs.append(abbr)
+        if main_abbrs:
+            parts.extend(sorted(main_abbrs))
 
-    # 조절효과 확인
-    if getattr(choice_config, 'moderation_enabled', False):
-        has_lvs = True
-
-    # LV-Attribute 상호작용 확인 (주효과 없이 상호작용만 있을 수도 있음)
+    # LV-Attribute 상호작용 추가
     lv_attr_interactions = getattr(choice_config, 'lv_attribute_interactions', None)
-    if lv_attr_interactions and len(lv_attr_interactions) > 0:
-        has_lvs = True
+    if lv_attr_interactions:
+        for interaction in lv_attr_interactions:
+            lv = interaction.get('lv') if isinstance(interaction, dict) else interaction[0]
+            attr = interaction.get('attribute') if isinstance(interaction, dict) else interaction[1]
 
-    # 잠재변수가 전혀 없으면 base
-    if not has_lvs:
-        stage2_name = "base"
-    else:
-        # 2. 잠재변수가 있는 경우 -> 약어 조합
-        lv_abbrs = set()
+            lv_abbr = LV_ABBR.get(lv)
+            attr_abbr = ATTR_ABBR.get(attr)
 
-        # 주효과 LV 추가
-        if getattr(choice_config, 'all_lvs_as_main', False):
-            main_lvs = getattr(choice_config, 'main_lvs', None)
-            if main_lvs:
-                for lv in main_lvs:
-                    abbr = LV_ABBR.get(lv)
-                    if abbr:
-                        lv_abbrs.add(abbr)
+            if lv_abbr and attr_abbr:
+                parts.append(f"{lv_abbr}x{attr_abbr}")
 
-        # 조절효과 LV 추가
-        if getattr(choice_config, 'moderation_enabled', False):
-            moderator_lvs = getattr(choice_config, 'moderator_lvs', None)
-            if moderator_lvs:
-                for lv in moderator_lvs:
-                    abbr = LV_ABBR.get(lv)
-                    if abbr:
-                        lv_abbrs.add(abbr)
-
-        # LV-Attribute 상호작용 LV 추가
-        if lv_attr_interactions:
-            for interaction in lv_attr_interactions:
-                lv = interaction.get('lv') if isinstance(interaction, dict) else interaction[0]
+    # 조절효과 추가 (필요시)
+    if getattr(choice_config, 'moderation_enabled', False):
+        moderator_lvs = getattr(choice_config, 'moderator_lvs', None)
+        if moderator_lvs:
+            for lv in moderator_lvs:
                 abbr = LV_ABBR.get(lv)
                 if abbr:
-                    lv_abbrs.add(abbr)
+                    parts.append(f"{abbr}_mod")
 
-        # 약어를 알파벳 순으로 정렬하여 조합
-        stage2_name = '_'.join(sorted(lv_abbrs))
-
-        # 약어가 없으면 base
-        if not stage2_name:
-            stage2_name = "base"
-
-    # 최종 파일명: st2_{stage1_name}1_{stage2_name}2
-    filename = f"st2_{stage1_name}1_{stage2_name}2"
+    # 최종 파일명: st2_{stage1_name}_{parts}
+    if parts:
+        stage2_name = '_'.join(parts)
+        filename = f"st2_{stage1_name}_{stage2_name}"
+    else:
+        # 잠재변수가 전혀 없으면 base만
+        filename = f"st2_{stage1_name}_base"
 
     return filename
 
