@@ -539,17 +539,111 @@ def save_iclv_results(
         if 'parameter_statistics' in results and 'structural' in results['parameter_statistics']:
             struct = results['parameter_statistics']['structural']
             for key, value in struct.items():
-                if key.startswith('gamma_'):
-                    combined_data.append({
-                        'section': 'Structural_Model',
-                        'parameter': key,
-                        'estimate': value['estimate'],
-                        'std_error': value.get('std_error', ''),
-                        't_statistic': value.get('t', ''),
-                        'p_value': value.get('p_value', ''),
-                        'significance': _get_significance(value.get('p_value', 1.0)) if 'p_value' in value else '',
-                        'description': key.replace('gamma_', '').replace('_', ' → ')
-                    })
+                # ✅ 모든 구조모델 파라미터 저장 (gamma로 시작하는 것만 아니라 모두)
+                combined_data.append({
+                    'section': 'Structural_Model',
+                    'parameter': key,
+                    'estimate': value['estimate'],
+                    'std_error': value.get('std_error', ''),
+                    't_statistic': value.get('t', value.get('t_statistic', '')),
+                    'p_value': value.get('p_value', ''),
+                    'significance': _get_significance(value.get('p_value', 1.0)) if 'p_value' in value else '',
+                    'description': key.replace('gamma_', '').replace('_', ' → ')
+                })
+
+        # ✅ 선택모델 파라미터 추가 (동시추정 - 계층 구조)
+        if 'parameter_statistics' in results and 'choice' in results['parameter_statistics']:
+            choice = results['parameter_statistics']['choice']
+
+            # ASC 파라미터
+            asc_descriptions = {
+                'asc_sugar': '일반당 상수',
+                'asc_sugar_free': '무설탕 상수',
+                'asc_A': '대안 A 상수',
+                'asc_B': '대안 B 상수'
+            }
+
+            for key in sorted([k for k in choice.keys() if k.startswith('asc_')]):
+                value = choice[key]
+                combined_data.append({
+                    'section': 'Choice_Model',
+                    'parameter': key,
+                    'estimate': value['estimate'],
+                    'std_error': value.get('std_error', ''),
+                    't_statistic': value.get('t', value.get('t_statistic', '')),
+                    'p_value': value.get('p_value', ''),
+                    'significance': _get_significance(value.get('p_value', 1.0)) if 'p_value' in value else '',
+                    'description': asc_descriptions.get(key, key)
+                })
+
+            # Beta 파라미터 (속성 계수)
+            for key in sorted([k for k in choice.keys() if k.startswith('beta_')]):
+                value = choice[key]
+                attr_name = key.replace('beta_', '')
+                combined_data.append({
+                    'section': 'Choice_Model',
+                    'parameter': key,
+                    'estimate': value['estimate'],
+                    'std_error': value.get('std_error', ''),
+                    't_statistic': value.get('t', value.get('t_statistic', '')),
+                    'p_value': value.get('p_value', ''),
+                    'significance': _get_significance(value.get('p_value', 1.0)) if 'p_value' in value else '',
+                    'description': attr_name
+                })
+
+            # Theta 파라미터 (대안별 잠재변수 계수)
+            theta_descriptions = {
+                'theta_sugar_purchase_intention': '일반당 × 구매의도',
+                'theta_sugar_nutrition_knowledge': '일반당 × 영양지식',
+                'theta_sugar_perceived_price': '일반당 × 가격수준',
+                'theta_sugar_perceived_benefit': '일반당 × 건강유익성',
+                'theta_sugar_free_purchase_intention': '무설탕 × 구매의도',
+                'theta_sugar_free_nutrition_knowledge': '무설탕 × 영양지식',
+                'theta_sugar_free_perceived_price': '무설탕 × 가격수준',
+                'theta_sugar_free_perceived_benefit': '무설탕 × 건강유익성',
+            }
+
+            for key in sorted([k for k in choice.keys() if k.startswith('theta_')]):
+                value = choice[key]
+                combined_data.append({
+                    'section': 'Choice_Model',
+                    'parameter': key,
+                    'estimate': value['estimate'],
+                    'std_error': value.get('std_error', ''),
+                    't_statistic': value.get('t', value.get('t_statistic', '')),
+                    'p_value': value.get('p_value', ''),
+                    'significance': _get_significance(value.get('p_value', 1.0)) if 'p_value' in value else '',
+                    'description': theta_descriptions.get(key, key)
+                })
+
+            # Gamma 파라미터 (LV-Attribute 상호작용)
+            gamma_descriptions = {
+                'gamma_sugar_purchase_intention_price': '일반당: PI × price',
+                'gamma_sugar_purchase_intention_health_label': '일반당: PI × health_label',
+                'gamma_sugar_nutrition_knowledge_price': '일반당: NK × price',
+                'gamma_sugar_nutrition_knowledge_health_label': '일반당: NK × health_label',
+                'gamma_sugar_perceived_price_price': '일반당: PP × price',
+                'gamma_sugar_perceived_price_health_label': '일반당: PP × health_label',
+                'gamma_sugar_free_purchase_intention_price': '무설탕: PI × price',
+                'gamma_sugar_free_purchase_intention_health_label': '무설탕: PI × health_label',
+                'gamma_sugar_free_nutrition_knowledge_price': '무설탕: NK × price',
+                'gamma_sugar_free_nutrition_knowledge_health_label': '무설탕: NK × health_label',
+                'gamma_sugar_free_perceived_price_price': '무설탕: PP × price',
+                'gamma_sugar_free_perceived_price_health_label': '무설탕: PP × health_label'
+            }
+
+            for key in sorted([k for k in choice.keys() if k.startswith('gamma_')]):
+                value = choice[key]
+                combined_data.append({
+                    'section': 'Choice_Model',
+                    'parameter': key,
+                    'estimate': value['estimate'],
+                    'std_error': value.get('std_error', ''),
+                    't_statistic': value.get('t', value.get('t_statistic', '')),
+                    'p_value': value.get('p_value', ''),
+                    'significance': _get_significance(value.get('p_value', 1.0)) if 'p_value' in value else '',
+                    'description': gamma_descriptions.get(key, key)
+                })
 
     # ========================================================================
     # 적합도 지수 (공통)

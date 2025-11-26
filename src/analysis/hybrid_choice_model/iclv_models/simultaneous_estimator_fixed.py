@@ -505,7 +505,8 @@ class SimultaneousEstimator:
                     self.choice_grad,
                     use_gpu=use_gpu_gradient,
                     gpu_measurement_model=gpu_measurement_model,
-                    use_full_parallel=use_full_parallel
+                    use_full_parallel=use_full_parallel,
+                    measurement_params_fixed=True  # ✅ 동시추정: 측정모델 파라미터 고정
                 )
                 # ✅ iteration_logger와 config 전달
                 self.joint_grad.iteration_logger = self.iteration_logger
@@ -2559,6 +2560,17 @@ class SimultaneousEstimator:
                     missing_params.append(name)
 
             elif name.startswith('lambda_'):
+                # Binary Probit용 LV 계수
+                if 'choice' not in grad_dict or name not in grad_dict['choice']:
+                    missing_params.append(name)
+
+            elif name.startswith('theta_'):
+                # ✅ MNL용 LV 계수 (theta_sugar_nutrition_knowledge 등)
+                if 'choice' not in grad_dict or name not in grad_dict['choice']:
+                    missing_params.append(name)
+
+            elif name.startswith('asc_'):
+                # ✅ ASC 파라미터 (Alternative Specific Constants)
                 if 'choice' not in grad_dict or name not in grad_dict['choice']:
                     missing_params.append(name)
 
@@ -2638,23 +2650,43 @@ class SimultaneousEstimator:
         # 표준오차 계산 (Hessian 기반)
         if self.config.estimation.calculate_se:
             try:
-                # BFGS는 hess_inv를 반환 (역 Hessian)
-                # 표준오차 = sqrt(diag(H^-1))
-                if hasattr(optimization_result, 'hess_inv'):
+                hess_inv = None
+                se = None
+
+                # ✅ 1순위: Sandwich Estimator 결과 (self.hessian_inv_matrix)
+                if hasattr(self, 'hessian_inv_matrix') and self.hessian_inv_matrix is not None:
+                    self.iteration_logger.info("✅ Sandwich Estimator 결과 사용")
+                    hess_inv = self.hessian_inv_matrix
+
+                    # Robust SE 사용
+                    if hasattr(self, 'robust_se') and self.robust_se is not None:
+                        se = self.robust_se
+                        self.iteration_logger.info(f"   Robust SE 범위: [{se.min():.6e}, {se.max():.6e}]")
+                    else:
+                        # Hessian 역행렬에서 SE 계산
+                        variances = np.diag(hess_inv)
+                        variances = np.maximum(variances, 1e-10)
+                        se = np.sqrt(variances)
+                        self.iteration_logger.info(f"   Hessian SE 범위: [{se.min():.6e}, {se.max():.6e}]")
+
+                # 2순위: Optimizer가 제공한 hess_inv
+                elif hasattr(optimization_result, 'hess_inv'):
+                    self.iteration_logger.info("✅ Optimizer hess_inv 사용")
                     hess_inv = optimization_result.hess_inv
                     if hasattr(hess_inv, 'todense'):
                         hess_inv = hess_inv.todense()
-
-                    # ✅ Hessian 역행렬을 결과에 저장
-                    results['hessian_inv'] = np.array(hess_inv)
+                    hess_inv = np.array(hess_inv)
 
                     # 대각 원소 추출 (분산)
                     variances = np.diag(hess_inv)
-
-                    # 음수 분산 처리 (수치 오류)
                     variances = np.maximum(variances, 1e-10)
-
                     se = np.sqrt(variances)
+                    self.iteration_logger.info(f"   SE 범위: [{se.min():.6e}, {se.max():.6e}]")
+
+                # SE 계산 성공 시 통계량 생성
+                if hess_inv is not None and se is not None:
+                    # ✅ Hessian 역행렬을 결과에 저장
+                    results['hessian_inv'] = hess_inv
                     results['standard_errors'] = se
 
                     # t-통계량
@@ -3228,34 +3260,37 @@ class SimultaneousEstimator:
             is_multi_latent = isinstance(self.config, MultiLatentConfig)
 
             if is_multi_latent:
-                # 다중 잠재변수: compute_individual_gradient 사용
+                # ✅ 다중 잠재변수: Full Batch 경로 사용 (MNL 지원)
                 from .multi_latent_gradient import MultiLatentJointGradient
 
-                for i, ind_id in enumerate(sampled_ids):
-                    if i % 10 == 0:
-                        self.iteration_logger.info(f"  진행: {i}/{n_individuals}")
-
-                    # 개인 데이터
+                # 개인별 데이터 준비
+                all_ind_data = []
+                all_ind_draws = []
+                for ind_id in sampled_ids:
                     ind_data = self.data[
                         self.data[self.config.individual_id_column] == ind_id
                     ]
-
-                    # 개인 draws
                     ind_idx = np.where(individual_ids == ind_id)[0][0]
                     ind_draws = self.halton_generator.get_draws()[ind_idx]
+                    all_ind_data.append(ind_data)
+                    all_ind_draws.append(ind_draws)
 
-                    # 개인별 gradient 계산
-                    ind_grad_dict = self.joint_grad.compute_individual_gradient(
-                        ind_data=ind_data,
-                        ind_draws=ind_draws,
-                        params_dict=param_dict,
-                        measurement_model=measurement_model,
-                        structural_model=structural_model,
-                        choice_model=choice_model,
-                        ind_id=ind_id
-                    )
+                # Full Batch로 모든 개인의 gradient 계산
+                all_ind_draws_array = np.array(all_ind_draws)
+                all_grad_dicts = self.joint_grad.compute_all_individuals_gradients_full_batch(
+                    all_ind_data=all_ind_data,
+                    all_ind_draws=all_ind_draws_array,
+                    params_dict=param_dict,
+                    measurement_model=measurement_model,
+                    structural_model=structural_model,
+                    choice_model=choice_model
+                )
 
-                    # Gradient를 벡터로 변환
+                # Gradient를 벡터로 변환
+                for i, ind_grad_dict in enumerate(all_grad_dicts):
+                    if i % 10 == 0:
+                        self.iteration_logger.info(f"  진행: {i}/{n_individuals}")
+
                     grad_vector = self._pack_gradient(
                         ind_grad_dict,
                         measurement_model,
@@ -3266,7 +3301,7 @@ class SimultaneousEstimator:
                     # 처음 3명의 gradient 상세 로깅
                     if i < 3:
                         self.iteration_logger.info(
-                            f"\n개인 {i} (ID={ind_id}) Gradient 벡터:\n"
+                            f"\n개인 {i} (ID={sampled_ids[i]}) Gradient 벡터:\n"
                             f"  Shape: {grad_vector.shape}\n"
                             f"  Norm: {np.linalg.norm(grad_vector):.6e}\n"
                             f"  범위: [{np.min(grad_vector):.6e}, {np.max(grad_vector):.6e}]\n"
@@ -3319,7 +3354,7 @@ class SimultaneousEstimator:
         except Exception as e:
             self.iteration_logger.error(f"BHHH Hessian 계산 실패: {e}")
             import traceback
-            self.iteration_logger.debug(traceback.format_exc())
+            self.iteration_logger.error(f"Traceback:\n{traceback.format_exc()}")  # ✅ ERROR 레벨로 변경
             return None
 
     def _compute_sandwich_estimator(

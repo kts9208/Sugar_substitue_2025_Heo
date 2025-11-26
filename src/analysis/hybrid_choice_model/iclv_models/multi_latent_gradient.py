@@ -378,7 +378,8 @@ class MultiLatentJointGradient:
                  choice_grad,
                  use_gpu: bool = False,
                  gpu_measurement_model = None,
-                 use_full_parallel: bool = True):
+                 use_full_parallel: bool = True,
+                 measurement_params_fixed: bool = False):
         """
         Args:
             measurement_grad: 다중 LV 측정모델 그래디언트 계산기
@@ -387,6 +388,7 @@ class MultiLatentJointGradient:
             use_gpu: GPU 배치 그래디언트 사용 여부
             gpu_measurement_model: GPU 측정모델 (use_gpu=True일 때 필요)
             use_full_parallel: 완전 병렬 처리 사용 여부 (Advanced Indexing)
+            measurement_params_fixed: 측정모델 파라미터 고정 여부 (동시추정용)
         """
         self.measurement_grad = measurement_grad
         self.structural_grad = structural_grad
@@ -396,7 +398,7 @@ class MultiLatentJointGradient:
         self.use_full_parallel = use_full_parallel
 
         # ✅ 측정모델 파라미터 고정 여부
-        self.measurement_params_fixed = False
+        self.measurement_params_fixed = measurement_params_fixed
 
         if self.use_gpu:
             try:
@@ -964,13 +966,15 @@ class MultiLatentJointGradient:
                 ind_data,
                 lvs_list,
                 exo_draws_list,
-                params_dict['structural'],
+                params_dict,  # ✅ 전체 파라미터 딕셔너리 전달
                 structural_model.covariates,
                 structural_model.endogenous_lv,
                 structural_model.exogenous_lvs,
                 weights,
                 is_hierarchical=True,
                 hierarchical_paths=structural_model.hierarchical_paths,
+                gpu_measurement_model=self.gpu_measurement_model,  # ✅ GPU 측정모델 전달
+                choice_model=choice_model,  # ✅ 선택모델 전달
                 iteration_logger=iteration_logger if should_log else None,
                 log_level=log_level if should_log else 'MINIMAL'
             )
@@ -979,11 +983,13 @@ class MultiLatentJointGradient:
                 ind_data,
                 lvs_list,
                 exo_draws_list,
-                params_dict['structural'],
+                params_dict,  # ✅ 전체 파라미터 딕셔너리 전달
                 structural_model.covariates,
                 structural_model.endogenous_lv,
                 structural_model.exogenous_lvs,
                 weights,
+                gpu_measurement_model=self.gpu_measurement_model,  # ✅ GPU 측정모델 전달
+                choice_model=choice_model,  # ✅ 선택모델 전달
                 iteration_logger=iteration_logger if should_log else None,
                 log_level=log_level if should_log else 'MINIMAL'
             )

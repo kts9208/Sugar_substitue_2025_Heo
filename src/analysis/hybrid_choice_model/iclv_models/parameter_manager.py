@@ -614,6 +614,18 @@ class ParameterManager:
             elif name.startswith('lambda_'):
                 param_array.append(param_dict['choice'].get(name, 0.0))
 
+            elif name.startswith('theta_'):
+                # ✅ Theta 파라미터 (MNL용 LV 계수)
+                param_array.append(param_dict['choice'].get(name, 0.0))
+
+            elif name.startswith('asc_'):
+                # ✅ ASC 파라미터 (Alternative Specific Constants)
+                param_array.append(param_dict['choice'].get(name, 0.0))
+
+            elif name.startswith('gamma_') and not '_to_' in name:
+                # ✅ Gamma 상호작용 파라미터 (LV-Attribute)
+                param_array.append(param_dict['choice'].get(name, 0.0))
+
         return np.array(param_array)
 
     def get_initial_values(self, param_names: List[str],

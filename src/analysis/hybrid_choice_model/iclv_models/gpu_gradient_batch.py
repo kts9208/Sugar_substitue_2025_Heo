@@ -661,7 +661,7 @@ def compute_structural_gradient_batch_gpu(
             param_key = f"gamma_{predictors[0]}_to_{target}"
 
             # 파라미터 추출
-            gamma = params[param_key]
+            gamma = params['structural'][param_key]  # ✅ 구조모델 파라미터에서 추출
 
             if iteration_logger and log_level == 'DETAILED' and path_idx == 0:
                 iteration_logger.info(f"\n  [경로 {path_idx + 1}] {predictors[0]} → {target}")
@@ -871,52 +871,70 @@ def compute_choice_gradient_batch_gpu(
         iteration_logger.info("\n[선택모델 그래디언트 계산]")
         iteration_logger.info(f"  선택 상황 수: {n_choice_situations}")
 
-    intercept = params['intercept']
+    # ✅ ASC (Alternative Specific Constants) 추출
+    # params에는 'asc_sugar', 'asc_sugar_free' 같은 키가 있음
+    asc_keys = sorted([k for k in params.keys() if k.startswith('asc_')])
+    if asc_keys:
+        # ASC 기반 multinomial logit
+        asc_sugar = params.get('asc_sugar', params.get('asc_A', 0.0))
+        asc_sugar_free = params.get('asc_sugar_free', params.get('asc_B', 0.0))
+    else:
+        # Binary probit (intercept 사용)
+        asc_sugar = params.get('intercept', 0.0)
+        asc_sugar_free = 0.0
 
     # ✅ Beta 파라미터 (배열 또는 개별 키)
     if 'beta' in params:
         beta = params['beta']
     else:
         # 개별 beta 키에서 배열 생성 (choice_attributes 순서대로)
-        if hasattr(choice_model, 'choice_attributes'):
-            beta = np.array([params.get(f'beta_{attr}', 0.0) for attr in choice_model.choice_attributes])
-        else:
-            # choice_attributes가 없으면 알파벳 순서로
-            beta_keys = sorted([k for k in params.keys() if k.startswith('beta_')])
+        beta_keys = sorted([k for k in params.keys() if k.startswith('beta_')])
+        if beta_keys:
             beta = np.array([params[k] for k in beta_keys])
+        else:
+            beta = np.array([])
 
-    # ✅ 유연한 리스트 기반: lambda_ 파라미터 자동 추출
-    lambda_lvs = {}
-    gamma_interactions = {}
-
+    # ✅ Theta 파라미터 (대안별 LV 계수) 자동 추출
+    theta_params = {}
     for key in params.keys():
-        if key.startswith('lambda_'):
-            lv_name = key.replace('lambda_', '')
-            lambda_lvs[lv_name] = params[key]
-        elif key.startswith('gamma_') and '_to_' not in key:
-            # LV-Attribute 상호작용: gamma_{lv_name}_{attr_name}
+        if key.startswith('theta_'):
+            theta_params[key] = params[key]
+
+    # ✅ Gamma 파라미터 (LV-Attribute 상호작용) 자동 추출
+    gamma_interactions = {}
+    for key in params.keys():
+        if key.startswith('gamma_') and '_to_' not in key:
+            # LV-Attribute 상호작용: gamma_{alt}_{lv}_{attr}
             # 구조모델 파라미터 (gamma_{lv1}_to_{lv2})는 제외
             gamma_interactions[key] = params[key]
 
     if iteration_logger and log_level == 'DETAILED':
         iteration_logger.info(f"  유연한 리스트 기반 모델:")
-        iteration_logger.info(f"    - intercept: {intercept:.6f}")
+        iteration_logger.info(f"    - asc_sugar: {asc_sugar:.6f}")
+        iteration_logger.info(f"    - asc_sugar_free: {asc_sugar_free:.6f}")
         iteration_logger.info(f"    - beta: {beta[:min(3, len(beta))]}")
-        if lambda_lvs:
-            for lv_name, lambda_val in lambda_lvs.items():
-                iteration_logger.info(f"    - lambda_{lv_name}: {lambda_val:.6f}")
-        else:
-            iteration_logger.info(f"    - lambda: 없음 (Base Model)")
+        if theta_params:
+            for theta_key, theta_val in theta_params.items():
+                iteration_logger.info(f"    - {theta_key}: {theta_val:.6f}")
         if gamma_interactions:
             for gamma_key, gamma_val in gamma_interactions.items():
                 iteration_logger.info(f"    - {gamma_key}: {gamma_val:.6f}")
 
     weights_gpu = cp.asarray(weights)  # (n_draws,)
 
-    # ✅ 유연한 리스트 기반: LV 값들 자동 추출
+    # ✅ LV 값들 자동 추출 (theta 파라미터에서 LV 이름 추출)
     lv_values = {}
-    for lv_name in lambda_lvs.keys():
-        lv_values[lv_name] = np.array([lvs[lv_name] for lvs in lvs_list])
+    lv_names_from_theta = set()
+    for key in theta_params.keys():
+        # theta_sugar_nutrition_knowledge -> nutrition_knowledge
+        parts = key.split('_')
+        if len(parts) >= 3:  # theta_{alt}_{lv_name}
+            lv_name = '_'.join(parts[2:])  # alt 이후 모든 부분
+            lv_names_from_theta.add(lv_name)
+
+    for lv_name in lv_names_from_theta:
+        if lv_name in lvs_list[0]:  # 첫 번째 draw에 LV가 있는지 확인
+            lv_values[lv_name] = np.array([lvs[lv_name] for lvs in lvs_list])
 
     # 선택 변수 찾기
     choice_var = None
@@ -958,14 +976,22 @@ def compute_choice_gradient_batch_gpu(
     attr_batch = attr_gpu[None, :, :]
 
     # V_batch: (n_draws, n_situations)
-    # V = intercept + β'X
-    V_batch = intercept + cp.dot(attr_batch, beta_gpu[:, None]).squeeze(-1)
+    # V = ASC + β'X (multinomial logit) 또는 intercept + β'X (binary probit)
+    if len(beta) > 0:
+        V_batch = asc_sugar + cp.dot(attr_batch, beta_gpu[:, None]).squeeze(-1)
+    else:
+        V_batch = cp.full((len(weights), n_choice_situations), asc_sugar)
 
-    # ✅ 유연한 리스트 기반: V += Σ(λ_i * LV_i)
-    # lambda_lvs가 빈 딕셔너리면 아무것도 추가 안 됨 (Base Model)
-    for lv_name, lambda_val in lambda_lvs.items():
-        lv_batch = lv_gpu[lv_name][:, None]  # (n_draws, 1)
-        V_batch = V_batch + lambda_val * lv_batch
+    # ✅ Theta 파라미터로 LV 효과 추가: V += Σ(θ_i * LV_i)
+    # theta_params에서 LV 이름과 계수 추출
+    for theta_key, theta_val in theta_params.items():
+        # theta_sugar_nutrition_knowledge -> nutrition_knowledge
+        parts = theta_key.split('_')
+        if len(parts) >= 3:  # theta_{alt}_{lv_name}
+            lv_name = '_'.join(parts[2:])  # alt 이후 모든 부분
+            if lv_name in lv_gpu:
+                lv_batch = lv_gpu[lv_name][:, None]  # (n_draws, 1)
+                V_batch = V_batch + theta_val * lv_batch
 
     # Φ(V): (n_draws, n_situations)
     prob_batch = cp_ndtr(V_batch)
@@ -1004,13 +1030,17 @@ def compute_choice_gradient_batch_gpu(
     # = (n_attributes, n_draws) → sum over draws
     grad_beta = cp.dot(attr_gpu.T, weighted_mills.T).sum(axis=1)  # (n_attributes,)
 
-    # ✅ 유연한 리스트 기반: Lambda gradient 계산
-    # ∂V/∂λ_i = LV_i
-    # lambda_lvs가 빈 딕셔너리면 아무것도 계산 안 됨 (Base Model)
+    # ✅ Theta gradient 계산: ∂V/∂θ_i = LV_i
+    # theta_params에서 LV 이름 추출하여 gradient 계산
     grad_lambda = {}
-    for lv_name in lambda_lvs.keys():
-        lv_batch = lv_gpu[lv_name][:, None]  # (n_draws, 1)
-        grad_lambda[lv_name] = cp.sum(weighted_mills * lv_batch).item()
+    for theta_key in theta_params.keys():
+        # theta_sugar_nutrition_knowledge -> nutrition_knowledge
+        parts = theta_key.split('_')
+        if len(parts) >= 3:  # theta_{alt}_{lv_name}
+            lv_name = '_'.join(parts[2:])  # alt 이후 모든 부분
+            if lv_name in lv_gpu:
+                lv_batch = lv_gpu[lv_name][:, None]  # (n_draws, 1)
+                grad_lambda[theta_key] = cp.sum(weighted_mills * lv_batch).item()
 
     # ✅ 유연한 리스트 기반: Gamma gradient 계산 (LV-Attribute 상호작용)
     # ∂V/∂γ_ij = LV_i × X_j
