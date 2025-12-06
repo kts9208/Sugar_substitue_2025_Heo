@@ -241,7 +241,8 @@ def compute_all_individuals_gradients_full_parallel_gpu(
     structural_model,
     choice_model,
     iteration_logger=None,
-    log_level: str = 'MINIMAL'
+    log_level: str = 'MINIMAL',
+    use_scaling: bool = False  # ✅ 측정모델 우도 스케일링 사용 여부
 ) -> List[Dict]:
     """
     모든 개인의 gradient를 완전 병렬로 계산 (Advanced Indexing 사용)
@@ -342,12 +343,35 @@ def compute_all_individuals_gradients_full_parallel_gpu(
     # 2. 가중치 계산 (균등 가중치)
     all_weights = np.ones((n_individuals, n_draws)) / n_draws
     all_weights_gpu = cp.asarray(all_weights)
-    
+
+    # ✅ 측정모델 우도 스케일링 가중치 계산
+    # Forward pass와 동일한 스케일링을 Backward pass에도 적용
+    measurement_weight = 1.0
+    if use_scaling:
+        n_measurement_indicators = 0
+        if hasattr(gpu_measurement_model, 'models'):
+            for lv_name, model in gpu_measurement_model.models.items():
+                n_measurement_indicators += len(model.config.indicators)
+
+        if n_measurement_indicators > 0:
+            measurement_weight = 1.0 / n_measurement_indicators
+
+            if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+                iteration_logger.info(
+                    f"\n{'='*80}\n"
+                    f"📊 Gradient 스케일링 설정 (완전 병렬)\n"
+                    f"{'='*80}\n"
+                    f"  측정모델 지표 수: {n_measurement_indicators}개\n"
+                    f"  측정모델 가중치 (ω): {measurement_weight:.6f}\n"
+                    f"  ∇LL_total = ∇LL_choice + {measurement_weight:.6f} × ∇LL_measurement\n"
+                    f"{'='*80}"
+                )
+
     # ✅ 동시추정: 측정모델 그래디언트 계산 제외 (고정 파라미터)
     # 측정모델 그래디언트는 빈 딕셔너리로 설정
     meas_grads = {}
     meas_time = 0.0
-    
+
     # 4. 구조모델 Gradient (기존 방식)
     from .gpu_gradient_batch import compute_structural_full_batch_gpu
 
@@ -362,7 +386,8 @@ def compute_all_individuals_gradients_full_parallel_gpu(
         gpu_measurement_model,
         lv_names,
         iteration_logger,
-        log_level
+        log_level,
+        measurement_weight=measurement_weight  # ✅ 스케일링 가중치 전달
     )
     struct_time = time.time() - struct_start
     

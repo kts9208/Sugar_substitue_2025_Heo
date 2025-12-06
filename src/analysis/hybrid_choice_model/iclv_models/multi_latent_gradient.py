@@ -572,7 +572,8 @@ class MultiLatentJointGradient:
         structural_model,
         choice_model,
         iteration_logger=None,
-        log_level: str = 'MINIMAL'
+        log_level: str = 'MINIMAL',
+        use_scaling: bool = False  # ✅ 측정모델 우도 스케일링 사용 여부
     ) -> List[Dict]:
         """
         모든 개인의 gradient를 완전 GPU batch로 동시 계산
@@ -594,6 +595,7 @@ class MultiLatentJointGradient:
             choice_model: 선택모델
             iteration_logger: 로거
             log_level: 로깅 레벨
+            use_scaling: 측정모델 우도 스케일링 사용 여부 (기본값: False)
 
         Returns:
             개인별 gradient 딕셔너리 리스트 [grad_dict_1, ..., grad_dict_N]
@@ -610,7 +612,8 @@ class MultiLatentJointGradient:
                     structural_model,
                     choice_model,
                     iteration_logger=iteration_logger,
-                    log_level=log_level
+                    log_level=log_level,
+                    use_scaling=use_scaling  # ✅ 스케일링 전달
                 )
             else:
                 # 기존 완전 GPU batch 모드 (LV별 순차)
@@ -623,7 +626,8 @@ class MultiLatentJointGradient:
                     structural_model,
                     choice_model,
                     iteration_logger=iteration_logger,
-                    log_level=log_level
+                    log_level=log_level,
+                    use_scaling=use_scaling  # ✅ 스케일링 전달
                 )
         else:
             # CPU 모드는 일반 batch로 폴백

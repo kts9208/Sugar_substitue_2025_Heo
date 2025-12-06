@@ -221,6 +221,14 @@ class SimultaneousEstimator:
         self.param_manager = ParameterManager(config)
         self.param_names = None  # estimate() 시작 시 생성
 
+        # ✅ 우도 가중치 (스케일 균형 조정용)
+        self.measurement_weight = None  # estimate() 시작 시 계산
+        self.choice_weight = None
+        self.structural_weight = None
+        self.n_measurement_obs = None
+        self.n_choice_obs = None
+        self.n_structural_obs = None
+
     def _setup_iteration_logger(self, log_file_path: str):
         """
         반복 과정 로깅을 위한 파일 핸들러 설정
@@ -390,6 +398,69 @@ class SimultaneousEstimator:
 
         self.iteration_logger.info(f"데이터 shape: {data.shape}")
         self.iteration_logger.info(f"개인 수: {n_individuals}")
+
+        # ========================================================================
+        # ✅ 우도 가중치 계산 (스케일 균형 조정)
+        # ========================================================================
+        self.iteration_logger.info("=" * 80)
+        self.iteration_logger.info("우도 가중치 계산 (스케일 균형 조정)")
+        self.iteration_logger.info("=" * 80)
+
+        # 관측치 수 계산
+        # 측정모델: 개인 수 × 지표 수
+        n_indicators_total = 0
+        if hasattr(measurement_model, 'models'):
+            # MultiLatentMeasurement
+            for lv_name, lv_model in measurement_model.models.items():
+                n_indicators_total += len(lv_model.config.indicators)
+        else:
+            # 단일 잠재변수
+            n_indicators_total = len(measurement_model.config.indicators)
+
+        self.n_measurement_obs = n_individuals * n_indicators_total
+
+        # 선택모델: 개인 수 × 선택 세트 수
+        n_choice_sets = len(data) // n_individuals  # 개인당 선택 세트 수
+        self.n_choice_obs = n_individuals * n_choice_sets
+
+        # 구조모델: 개인 수 × 잠재변수 수 (구조방정식 수)
+        if hasattr(structural_model, 'hierarchical_paths') and structural_model.hierarchical_paths:
+            # MultiLatentStructural - 계층적 구조
+            n_structural_equations = len(structural_model.hierarchical_paths)
+        else:
+            # 병렬 구조 또는 단일 잠재변수
+            n_structural_equations = 1
+
+        self.n_structural_obs = n_individuals * n_structural_equations
+
+        # 가중치 계산: 선택모델 기준으로 정규화
+        self.measurement_weight = self.n_choice_obs / self.n_measurement_obs
+        self.choice_weight = 1.0
+        self.structural_weight = self.n_choice_obs / self.n_structural_obs
+
+        # 로그 출력
+        self.iteration_logger.info(f"\n관측치 수:")
+        self.iteration_logger.info(f"  측정모델: {self.n_measurement_obs:,}개 ({n_individuals}명 × {n_indicators_total}개 지표)")
+        self.iteration_logger.info(f"  선택모델: {self.n_choice_obs:,}개 ({n_individuals}명 × {n_choice_sets}개 선택 세트)")
+        self.iteration_logger.info(f"  구조모델: {self.n_structural_obs:,}개 ({n_individuals}명 × {n_structural_equations}개 방정식)")
+
+        self.iteration_logger.info(f"\n우도 가중치 (선택모델 기준 = 1.0):")
+        self.iteration_logger.info(f"  측정모델: {self.measurement_weight:.4f}")
+        self.iteration_logger.info(f"  선택모델: {self.choice_weight:.4f}")
+        self.iteration_logger.info(f"  구조모델: {self.structural_weight:.4f}")
+
+        self.iteration_logger.info(f"\n예상 효과 (가중치 적용 전 비율 11:1 가정):")
+        expected_ratio_before = 11.0
+        expected_ratio_after = expected_ratio_before * self.measurement_weight / self.choice_weight
+        self.iteration_logger.info(f"  가중치 적용 전: 측정/선택 = {expected_ratio_before:.1f} : 1")
+        self.iteration_logger.info(f"  가중치 적용 후: 측정/선택 = {expected_ratio_after:.1f} : 1 (예상)")
+
+        if expected_ratio_after > 5.0:
+            self.iteration_logger.warning(f"⚠️ 가중치 적용 후에도 비율이 5:1 이상입니다. 추가 조정이 필요할 수 있습니다.")
+        else:
+            self.iteration_logger.info(f"✅ 가중치 적용으로 스케일 균형이 개선될 것으로 예상됩니다.")
+
+        self.iteration_logger.info("=" * 80)
 
         # Halton draws 생성 (이미 설정되어 있으면 건너뛰기)
         if not hasattr(self, 'halton_generator') or self.halton_generator is None:
@@ -1826,21 +1897,53 @@ class SimultaneousEstimator:
                 higher_order_draws=higher_order_draws
             )
 
-            # 결합 로그우도
-            draw_ll = ll_measurement + ll_choice + ll_structural
+            # ✅ 우도 가중치 적용 (스케일 균형 조정)
+            ll_measurement_weighted = ll_measurement * self.measurement_weight
+            ll_choice_weighted = ll_choice * self.choice_weight
+            ll_structural_weighted = ll_structural * self.structural_weight
+
+            # 결합 로그우도 (가중치 적용)
+            draw_ll = ll_measurement_weighted + ll_choice_weighted + ll_structural_weighted
+
+            # ✅ 첫 번째 개인의 첫 번째 draw 우도 성분 저장 (로그 출력용)
+            if log_debug and j == 0:
+                self._first_person_ll_components = {
+                    'measurement': ll_measurement,
+                    'choice': ll_choice,
+                    'structural': ll_structural,
+                    'measurement_weighted': ll_measurement_weighted,
+                    'choice_weighted': ll_choice_weighted,
+                    'structural_weighted': ll_structural_weighted
+                }
 
             if log_debug and j == 0:
                 self.iteration_logger.info(
-                    f"[개인 {ind_id}, Draw #0] 우도 성분\n"
+                    f"[개인 {ind_id}, Draw #0] 우도 성분 (가중치 적용 전)\n"
                     f"  ll_measurement: {ll_measurement:.4f}\n"
                     f"  ll_choice: {ll_choice:.4f}\n"
                     f"  ll_structural: {ll_structural:.4f}\n"
-                    f"  draw_ll (합계): {draw_ll:.4f}\n"
+                    f"  합계: {ll_measurement + ll_choice + ll_structural:.4f}\n"
                     f"\n"
-                    f"  ⚠️ 우도 성분 비율:\n"
-                    f"    측정모델: {ll_measurement:.1f} ({100*ll_measurement/draw_ll:.1f}%)\n"
-                    f"    선택모델: {ll_choice:.1f} ({100*ll_choice/draw_ll:.1f}%)\n"
-                    f"    구조모델: {ll_structural:.1f} ({100*ll_structural/draw_ll:.1f}%)"
+                    f"  ⚠️ 우도 성분 비율 (가중치 적용 전):\n"
+                    f"    측정모델: {ll_measurement:.1f} ({100*ll_measurement/(ll_measurement + ll_choice + ll_structural):.1f}%)\n"
+                    f"    선택모델: {ll_choice:.1f} ({100*ll_choice/(ll_measurement + ll_choice + ll_structural):.1f}%)\n"
+                    f"    구조모델: {ll_structural:.1f} ({100*ll_structural/(ll_measurement + ll_choice + ll_structural):.1f}%)\n"
+                    f"\n"
+                    f"  ✅ 우도 가중치:\n"
+                    f"    측정모델: {self.measurement_weight:.4f}\n"
+                    f"    선택모델: {self.choice_weight:.4f}\n"
+                    f"    구조모델: {self.structural_weight:.4f}\n"
+                    f"\n"
+                    f"  ✅ 우도 성분 (가중치 적용 후):\n"
+                    f"    측정모델: {ll_measurement_weighted:.4f}\n"
+                    f"    선택모델: {ll_choice_weighted:.4f}\n"
+                    f"    구조모델: {ll_structural_weighted:.4f}\n"
+                    f"    합계: {draw_ll:.4f}\n"
+                    f"\n"
+                    f"  ✅ 우도 성분 비율 (가중치 적용 후):\n"
+                    f"    측정모델: {ll_measurement_weighted:.1f} ({100*ll_measurement_weighted/draw_ll:.1f}%)\n"
+                    f"    선택모델: {ll_choice_weighted:.1f} ({100*ll_choice_weighted/draw_ll:.1f}%)\n"
+                    f"    구조모델: {ll_structural_weighted:.1f} ({100*ll_structural_weighted/draw_ll:.1f}%)"
                 )
 
             # 🔴 수정: -inf를 매우 작은 값으로 대체 (연속성 확보 for gradient)
@@ -1939,6 +2042,10 @@ class SimultaneousEstimator:
         else:
             # 순차처리
             total_ll = 0.0
+
+            # ✅ 우도 성분 추적 (첫 번째 개인만)
+            first_person_components = None
+
             for i, ind_id in enumerate(individual_ids):
                 ind_data = self.data[self.data[self.config.individual_id_column] == ind_id]
                 ind_draws = draws[i, :]
@@ -1948,6 +2055,50 @@ class SimultaneousEstimator:
                     measurement_model, structural_model, choice_model
                 )
                 total_ll += person_ll
+
+                # ✅ 첫 번째 개인의 우도 성분 저장 (로그 출력용)
+                if i == 0 and hasattr(self, '_first_person_ll_components'):
+                    first_person_components = self._first_person_ll_components
+
+        # ✅ 우도 성분 비율 로그 출력 (첫 번째 우도 계산 시에만)
+        if not hasattr(self, '_ll_components_logged') and first_person_components is not None:
+            self._ll_components_logged = True
+
+            ll_m = first_person_components['measurement']
+            ll_c = first_person_components['choice']
+            ll_s = first_person_components['structural']
+            ll_m_w = first_person_components['measurement_weighted']
+            ll_c_w = first_person_components['choice_weighted']
+            ll_s_w = first_person_components['structural_weighted']
+
+            total_before = ll_m + ll_c + ll_s
+            total_after = ll_m_w + ll_c_w + ll_s_w
+
+            self.iteration_logger.info(
+                f"\n{'='*80}\n"
+                f"우도 성분 분석 (첫 번째 개인, 첫 번째 Draw)\n"
+                f"{'='*80}\n"
+                f"\n[가중치 적용 전]\n"
+                f"  측정모델: {ll_m:10.4f} ({100*ll_m/total_before:5.1f}%)\n"
+                f"  선택모델: {ll_c:10.4f} ({100*ll_c/total_before:5.1f}%)\n"
+                f"  구조모델: {ll_s:10.4f} ({100*ll_s/total_before:5.1f}%)\n"
+                f"  합계:     {total_before:10.4f}\n"
+                f"  비율 (측정/선택): {abs(ll_m/ll_c):.2f} : 1\n"
+                f"\n[가중치]\n"
+                f"  측정모델: {self.measurement_weight:.4f}\n"
+                f"  선택모델: {self.choice_weight:.4f}\n"
+                f"  구조모델: {self.structural_weight:.4f}\n"
+                f"\n[가중치 적용 후]\n"
+                f"  측정모델: {ll_m_w:10.4f} ({100*ll_m_w/total_after:5.1f}%)\n"
+                f"  선택모델: {ll_c_w:10.4f} ({100*ll_c_w/total_after:5.1f}%)\n"
+                f"  구조모델: {ll_s_w:10.4f} ({100*ll_s_w/total_after:5.1f}%)\n"
+                f"  합계:     {total_after:10.4f}\n"
+                f"  비율 (측정/선택): {abs(ll_m_w/ll_c_w):.2f} : 1\n"
+                f"\n[개선 효과]\n"
+                f"  비율 변화: {abs(ll_m/ll_c):.2f} : 1 → {abs(ll_m_w/ll_c_w):.2f} : 1\n"
+                f"  개선율: {100*(1 - abs(ll_m_w/ll_c_w)/abs(ll_m/ll_c)):.1f}%\n"
+                f"{'='*80}\n"
+            )
 
         return total_ll
 
@@ -2067,7 +2218,7 @@ class SimultaneousEstimator:
                 # ✅ 구조모델 그래디언트가 극도로 작은 문제 해결
                 # 잠재변수가 표준정규분포 (평균 ≈ 0)로 생성되어 그래디언트 ≈ 0
                 # → 더 큰 스케일 팩터로 그래디언트를 증폭
-                custom_scales[name] = 50.0  # 0.5 → 50.0 (100배 증가)
+                custom_scales[name] = 100.0  # 0.5 → 100.0 (200배 증가)
 
             # tau (thresholds) 스케일
             elif name.startswith('tau_'):
@@ -2923,6 +3074,9 @@ class SimultaneousEstimator:
 
                 # 완전 GPU Batch 사용 (hasattr로 확인)
                 if hasattr(self.joint_grad, 'compute_all_individuals_gradients_full_batch'):
+                    # ✅ use_scaling 정보 가져오기 (config 또는 기본값)
+                    use_scaling = getattr(self.config.estimation, 'use_likelihood_scaling', False)
+
                     all_grad_dicts = self.joint_grad.compute_all_individuals_gradients_full_batch(
                         all_ind_data=all_ind_data,
                         all_ind_draws=all_ind_draws,
@@ -2931,7 +3085,8 @@ class SimultaneousEstimator:
                         structural_model=structural_model,
                         choice_model=choice_model,
                         iteration_logger=self.iteration_logger,
-                        log_level='MODERATE' if hess_call_count[0] <= 2 else 'MINIMAL'
+                        log_level='MODERATE' if hess_call_count[0] <= 2 else 'MINIMAL',
+                        use_scaling=use_scaling  # ✅ Forward-Backward 스케일링 일치
                     )
                 else:
                     # 폴백: 일반 batch

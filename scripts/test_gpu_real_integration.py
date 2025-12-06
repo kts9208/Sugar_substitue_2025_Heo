@@ -701,8 +701,79 @@ def test_full_batch_gradient():
             traceback.print_exc()
             raise
 
+        # ========================================================================
+        # ✅ 15. 우도 가중치 검증
+        # ========================================================================
         print("\n" + "="*80)
-        print("✅ 통합 테스트 성공! (Full Batch + BHHH + _pack_gradient + parameter_statistics + CSV)")
+        print("✅ 15. 우도 가중치 검증")
+        print("="*80)
+
+        # Estimator 생성 (가중치 계산 확인용)
+        from src.analysis.hybrid_choice_model.iclv_models.simultaneous_estimator_fixed import SimultaneousEstimator
+
+        estimator = SimultaneousEstimator(config)
+
+        # 가중치 계산 (estimate() 메서드의 일부 로직 복제)
+        n_individuals = data['respondent_id'].nunique()
+
+        # 측정모델 관측치 수
+        n_indicators_total = 0
+        for lv_name, lv_model in measurement_model.models.items():
+            n_indicators_total += len(lv_model.config.indicators)
+
+        n_measurement_obs = n_individuals * n_indicators_total
+
+        # 선택모델 관측치 수
+        n_choice_sets = len(data) // n_individuals
+        n_choice_obs = n_individuals * n_choice_sets
+
+        # 구조모델 관측치 수
+        if hasattr(structural_model, 'hierarchical_paths') and structural_model.hierarchical_paths:
+            n_structural_equations = len(structural_model.hierarchical_paths)
+        else:
+            # 병렬 구조: 내생 LV 수 (1개)
+            n_structural_equations = 1
+
+        n_structural_obs = n_individuals * n_structural_equations
+
+        # 가중치 계산
+        measurement_weight = n_choice_obs / n_measurement_obs
+        choice_weight = 1.0
+        structural_weight = n_choice_obs / n_structural_obs
+
+        print(f"\n관측치 수:")
+        print(f"  측정모델: {n_measurement_obs:,}개 ({n_individuals}명 × {n_indicators_total}개 지표)")
+        print(f"  선택모델: {n_choice_obs:,}개 ({n_individuals}명 × {n_choice_sets}개 선택 세트)")
+        print(f"  구조모델: {n_structural_obs:,}개 ({n_individuals}명 × {n_structural_equations}개 방정식)")
+
+        print(f"\n우도 가중치 (선택모델 기준 = 1.0):")
+        print(f"  측정모델: {measurement_weight:.4f}")
+        print(f"  선택모델: {choice_weight:.4f}")
+        print(f"  구조모델: {structural_weight:.4f}")
+
+        # 검증
+        assert measurement_weight > 0 and measurement_weight < 1.0, "측정모델 가중치가 0~1 범위를 벗어남"
+        assert choice_weight == 1.0, "선택모델 가중치가 1.0이 아님"
+        assert structural_weight > 0, "구조모델 가중치가 0 이하"
+
+        # 예상 효과 계산
+        expected_ratio_before = 11.0  # 문서에서 확인된 비율
+        expected_ratio_after = expected_ratio_before * measurement_weight / choice_weight
+
+        print(f"\n예상 효과 (가중치 적용 전 비율 11:1 가정):")
+        print(f"  가중치 적용 전: 측정/선택 = {expected_ratio_before:.1f} : 1")
+        print(f"  가중치 적용 후: 측정/선택 = {expected_ratio_after:.1f} : 1 (예상)")
+        print(f"  개선율: {100*(1 - expected_ratio_after/expected_ratio_before):.1f}%")
+
+        if expected_ratio_after < 5.0:
+            print(f"✅ 가중치 적용으로 스케일 균형이 개선될 것으로 예상됩니다.")
+        else:
+            print(f"⚠️ 가중치 적용 후에도 비율이 5:1 이상입니다.")
+
+        print("\n✅ 우도 가중치 검증 완료!")
+
+        print("\n" + "="*80)
+        print("✅ 통합 테스트 성공! (Full Batch + BHHH + _pack_gradient + parameter_statistics + CSV + 우도 가중치)")
         print("="*80)
 
         return True

@@ -1524,7 +1524,8 @@ def compute_all_individuals_gradients_full_batch_gpu(
     structural_model,
     choice_model,
     iteration_logger=None,
-    log_level: str = 'MINIMAL'
+    log_level: str = 'MINIMAL',
+    use_scaling: bool = False  # ✅ 측정모델 우도 스케일링 사용 여부
 ) -> List[Dict]:
     """
     모든 개인의 gradient를 완전 GPU batch로 동시 계산
@@ -1541,6 +1542,7 @@ def compute_all_individuals_gradients_full_batch_gpu(
         choice_model: 선택모델
         iteration_logger: 로거
         log_level: 로깅 레벨
+        use_scaling: 측정모델 우도 스케일링 사용 여부 (기본값: False)
 
     Returns:
         개인별 gradient 딕셔너리 리스트 [grad_dict_1, ..., grad_dict_N]
@@ -1636,6 +1638,29 @@ def compute_all_individuals_gradients_full_batch_gpu(
     # 균등 가중치 (N, R)
     all_weights = np.ones((n_individuals, n_draws)) / n_draws
 
+    # ✅ 측정모델 우도 스케일링 가중치 계산
+    # Forward pass와 동일한 스케일링을 Backward pass에도 적용
+    measurement_weight = 1.0
+    if use_scaling:
+        n_measurement_indicators = 0
+        if hasattr(gpu_measurement_model, 'models'):
+            for lv_name, model in gpu_measurement_model.models.items():
+                n_measurement_indicators += len(model.config.indicators)
+
+        if n_measurement_indicators > 0:
+            measurement_weight = 1.0 / n_measurement_indicators
+
+            if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
+                iteration_logger.info(
+                    f"\n{'='*80}\n"
+                    f"📊 Gradient 스케일링 설정\n"
+                    f"{'='*80}\n"
+                    f"  측정모델 지표 수: {n_measurement_indicators}개\n"
+                    f"  측정모델 가중치 (ω): {measurement_weight:.6f}\n"
+                    f"  ∇LL_total = ∇LL_choice + {measurement_weight:.6f} × ∇LL_measurement\n"
+                    f"{'='*80}"
+                )
+
     # 🚀 완전 GPU Batch: N명 × R draws × P params를 동시 계산
     # 측정모델, 구조모델, 선택모델 gradient를 한 번에 계산
     all_individual_gradients = compute_full_batch_gradients_gpu(
@@ -1649,7 +1674,8 @@ def compute_all_individuals_gradients_full_batch_gpu(
         choice_model,
         lv_names,
         iteration_logger=iteration_logger,
-        log_level=log_level
+        log_level=log_level,
+        measurement_weight=measurement_weight  # ✅ 스케일링 가중치 전달
     )
 
     grad_time = time.time() - grad_start
@@ -1684,7 +1710,8 @@ def compute_full_batch_gradients_gpu(
     choice_model,
     lv_names: List[str],
     iteration_logger=None,
-    log_level: str = 'MINIMAL'
+    log_level: str = 'MINIMAL',
+    measurement_weight: float = 1.0  # ✅ 측정모델 우도 스케일링 가중치
 ) -> List[Dict]:
     """
     완전 GPU Batch: N명 × R draws × P params를 동시 계산
@@ -1701,6 +1728,7 @@ def compute_full_batch_gradients_gpu(
         lv_names: LV 이름 리스트
         iteration_logger: 로거
         log_level: 로깅 레벨
+        measurement_weight: 측정모델 우도 스케일링 가중치 (기본값: 1.0)
 
     Returns:
         개인별 gradient 딕셔너리 리스트 (N개)
@@ -1716,6 +1744,7 @@ def compute_full_batch_gradients_gpu(
     meas_grads = {}
 
     # 1. 구조모델 Gradient (완전 Batch - 체인룰 역전파)
+    # ✅ measurement_weight 전달: Forward와 Backward의 스케일링 일치
     struct_grads = compute_structural_full_batch_gpu(
         all_ind_data,
         all_lvs_gpu,
@@ -1726,7 +1755,8 @@ def compute_full_batch_gradients_gpu(
         gpu_measurement_model,
         lv_names,
         iteration_logger,
-        log_level
+        log_level,
+        measurement_weight=measurement_weight  # ✅ 스케일링 가중치 전달
     )
 
     # 3. 선택모델 Gradient (완전 Batch)
@@ -1868,13 +1898,20 @@ def compute_structural_full_batch_gpu(
     gpu_measurement_model,
     lv_names: List[str],
     iteration_logger=None,
-    log_level: str = 'MINIMAL'
+    log_level: str = 'MINIMAL',
+    measurement_weight: float = 1.0  # ✅ 측정모델 우도 스케일링 가중치
 ) -> Dict:
     """
     구조모델 Gradient - 완전 GPU Batch (체인룰 역전파)
 
-    ✅ 올바른 그래디언트 계산:
-    ∂LL/∂γ = Σ_r w_r × (∂LL_measurement/∂target + ∂LL_choice/∂target) × ∂target/∂γ
+    ✅ 올바른 그래디언트 계산 (스케일링 포함):
+    ∂LL/∂γ = Σ_r w_r × (ω × ∂LL_measurement/∂target + ∂LL_choice/∂target) × ∂target/∂γ
+
+    여기서 ω (measurement_weight)는 Forward pass의 스케일링과 동일해야 함!
+
+    Args:
+        measurement_weight: 측정모델 우도 스케일링 가중치 (기본값: 1.0)
+                          Forward pass에서 사용한 값과 동일해야 함
 
     Returns:
         {param_name: (N,)}
@@ -1934,8 +1971,11 @@ def compute_structural_full_batch_gpu(
                 )
                 grad_ll_choice_wrt_target_gpu = cp.asarray(grad_ll_choice_wrt_target)  # (R,)
 
-                # 3. 총 그래디언트: ∂LL/∂target
-                grad_ll_wrt_target = grad_ll_meas_wrt_target_gpu + grad_ll_choice_wrt_target_gpu  # (R,)
+                # 3. 총 그래디언트: ∂LL/∂target (스케일링 적용!)
+                # ✅ Forward: LL_total = LL_choice + ω × LL_measurement
+                # ✅ Backward: ∇LL_total = ∇LL_choice + ω × ∇LL_measurement
+                grad_ll_wrt_target = (measurement_weight * grad_ll_meas_wrt_target_gpu +
+                                     grad_ll_choice_wrt_target_gpu)  # (R,)
 
                 # 4. 체인룰: ∂LL/∂γ = Σ_r w_r × (∂LL/∂target)_r × (∂target/∂γ)_r
                 # ∂target/∂γ = predictor

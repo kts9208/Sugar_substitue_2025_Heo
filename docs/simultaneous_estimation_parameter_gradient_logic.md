@@ -701,3 +701,147 @@ for param_name, param_stats in stats['choice'].items():
 - ✅ **Alternative-Specific Model**: 대안별 파라미터 지원
 ```
 
+---
+
+## 9. 🚨 중요: Forward-Backward 스케일링 일치
+
+### 9.1 문제점: 스케일링 불일치
+
+**Forward Pass (우도 계산)**에서 측정모델 우도에 스케일링을 적용하는 경우:
+```python
+# gpu_gradient_batch.py, Line 1437-1453
+measurement_weight = 1.0 / n_measurement_indicators  # ω = 1/38
+ll_measurement = ll_measurement_raw * measurement_weight
+LL_total = LL_choice + ω × LL_measurement
+```
+
+**Backward Pass (그래디언트 계산)**에서도 **동일한 스케일링**을 적용해야 합니다!
+
+❌ **잘못된 경우** (스케일링 불일치):
+```python
+# Forward: LL_total = LL_choice + ω × LL_measurement
+# Backward: ∇LL_total = ∇LL_choice + ∇LL_measurement  # ω 누락!
+```
+
+**결과**: 측정모델의 그래디언트가 너무 커서 구조모델(γ)이 선택모델의 신호를 무시하게 됨
+
+### 9.2 해결책: 체인룰 역전파에 스케일링 적용
+
+✅ **올바른 경우** (스케일링 일치):
+```python
+# Forward: LL_total = LL_choice + ω × LL_measurement
+# Backward: ∇LL_total = ∇LL_choice + ω × ∇LL_measurement  # ω 적용!
+```
+
+### 9.3 구현 코드
+
+#### Step 1: 측정모델 우도 스케일링 가중치 계산
+
+```python
+# gpu_gradient_batch.py, Line 1635-1660
+# ✅ 측정모델 우도 스케일링 가중치 계산
+# Forward pass와 동일한 스케일링을 Backward pass에도 적용
+measurement_weight = 1.0
+if use_scaling:
+    n_measurement_indicators = 0
+    if hasattr(gpu_measurement_model, 'models'):
+        for lv_name, model in gpu_measurement_model.models.items():
+            n_measurement_indicators += len(model.config.indicators)
+
+    if n_measurement_indicators > 0:
+        measurement_weight = 1.0 / n_measurement_indicators
+        # 예: 38개 지표 → ω = 1/38 = 0.026316
+```
+
+#### Step 2: 구조모델 그래디언트에 스케일링 적용
+
+```python
+# gpu_gradient_batch.py, Line 1861-1959
+def compute_structural_full_batch_gpu(
+    ...,
+    measurement_weight: float = 1.0  # ✅ 측정모델 우도 스케일링 가중치
+) -> Dict:
+    """
+    구조모델 Gradient - 완전 GPU Batch (체인룰 역전파)
+
+    ✅ 올바른 그래디언트 계산 (스케일링 포함):
+    ∂LL/∂γ = Σ_r w_r × (ω × ∂LL_measurement/∂target + ∂LL_choice/∂target) × ∂target/∂γ
+
+    여기서 ω (measurement_weight)는 Forward pass의 스케일링과 동일해야 함!
+    """
+
+    # 1. ∂LL_measurement/∂target 계산
+    grad_ll_meas_wrt_target = compute_measurement_grad_wrt_lv_gpu(
+        gpu_measurement_model,
+        ind_data,
+        lvs_list,
+        params_dict['measurement'],
+        target
+    )
+    grad_ll_meas_wrt_target_gpu = cp.asarray(grad_ll_meas_wrt_target)  # (R,)
+
+    # 2. ∂LL_choice/∂target 계산
+    grad_ll_choice_wrt_target = compute_choice_grad_wrt_lv_gpu(
+        ind_data,
+        lvs_list,
+        params_dict['choice'],
+        target,
+        choice_attributes
+    )
+    grad_ll_choice_wrt_target_gpu = cp.asarray(grad_ll_choice_wrt_target)  # (R,)
+
+    # 3. 총 그래디언트: ∂LL/∂target (스케일링 적용!)
+    # ✅ Forward: LL_total = LL_choice + ω × LL_measurement
+    # ✅ Backward: ∇LL_total = ∇LL_choice + ω × ∇LL_measurement
+    grad_ll_wrt_target = (measurement_weight * grad_ll_meas_wrt_target_gpu +
+                         grad_ll_choice_wrt_target_gpu)  # (R,)
+
+    # 4. 체인룰: ∂LL/∂γ = Σ_r w_r × (∂LL/∂target)_r × (∂target/∂γ)_r
+    # ∂target/∂γ = predictor
+    grad_gamma = cp.sum(weights_gpu * grad_ll_wrt_target * pred_values_gpu)
+```
+
+### 9.4 호출 체인
+
+```python
+# 1. compute_all_individuals_gradients_full_batch_gpu
+#    → measurement_weight 계산 및 전달
+
+# 2. compute_full_batch_gradients_gpu
+#    → measurement_weight 전달
+
+# 3. compute_structural_full_batch_gpu
+#    → measurement_weight 사용하여 그래디언트 계산
+```
+
+### 9.5 수학적 정당성
+
+**Forward Pass**:
+```
+LL_total = LL_choice + ω × LL_measurement
+```
+
+**Backward Pass** (미분의 선형성):
+```
+∂LL_total/∂γ = ∂(LL_choice + ω × LL_measurement)/∂γ
+             = ∂LL_choice/∂γ + ω × ∂LL_measurement/∂γ
+```
+
+**체인룰 적용**:
+```
+∂LL_choice/∂γ = (∂LL_choice/∂z) × (∂z/∂γ)
+∂LL_measurement/∂γ = (∂LL_measurement/∂z) × (∂z/∂γ)
+
+∴ ∂LL_total/∂γ = [(∂LL_choice/∂z) + ω × (∂LL_measurement/∂z)] × (∂z/∂γ)
+```
+
+### 9.6 핵심 요약
+
+| 항목 | Forward Pass | Backward Pass | 일치 여부 |
+|------|-------------|--------------|----------|
+| **우도 계산** | `LL_total = LL_choice + ω × LL_measurement` | - | - |
+| **그래디언트 계산** | - | `∇LL_total = ∇LL_choice + ω × ∇LL_measurement` | ✅ 일치 |
+| **스케일링 가중치** | `ω = 1/n_indicators` | `ω = 1/n_indicators` | ✅ 동일 |
+
+**결론**: Forward와 Backward의 스케일링이 일치하여 수치적으로 안정적인 최적화가 가능합니다.
+

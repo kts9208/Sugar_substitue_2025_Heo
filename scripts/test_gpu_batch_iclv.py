@@ -177,7 +177,7 @@ def main():
         calculate_se=True,
         se_method='robust',  # ✅ Sandwich Estimator (Robust SE) 사용
         gradient_log_level='MINIMAL',  # ✅ DETAILED → MINIMAL로 변경 (속도 최적화)
-        use_parameter_scaling=False,  # ✅ 스케일링 비활성화 (z-score 표준화만 테스트)
+        use_parameter_scaling=True,  # ✅ 파라미터 스케일링 활성화 (구조모델 학습 필수!)
         standardize_choice_attributes=True  # ✅ z-score 표준화 활성화
     )
 
@@ -188,8 +188,8 @@ def main():
     print(f"    - 최대 반복: {MAX_ITERATIONS}")
     print(f"    - 최적화: Trust-Constr (Analytic Gradient)")
     print(f"    - 표준오차: Sandwich Estimator (Robust SE)")
-    print(f"    - 파라미터 스케일링: ❌ 비활성화 (모든 스케일 = 1.0)")
-    print(f"    - 데이터 표준화: ✅ 활성화 (z-score)")
+    print(f"    - 파라미터 스케일링: [X] 비활성화 (모든 스케일 = 1.0)")
+    print(f"    - 데이터 표준화: [O] 활성화 (z-score)")
     print(f"    - GPU 배치 처리: 활성화")
     
     # 5. 모델 생성
@@ -308,9 +308,55 @@ def main():
     # 7. 초기값 설정
     print("\n[7] 초기값 설정:")
     print("    [INFO] 측정모델 (zeta, sigma_sq): CFA 결과에서 로드 (이미 완료)")
-    print("    [INFO] 구조모델 & 선택모델: 0.1로 초기화")
+    print("    [INFO] 구조모델: 1단계 SEM 결과에서 로드")
+    print("    [INFO] 선택모델: 2단계 선택모델 결과에서 로드")
 
     initial_params = None
+
+    # ✅ 1단계 SEM 결과 로드 (구조모델 경로계수)
+    stage1_paths_csv = project_root / 'results' / 'final' / 'sequential' / '2path' / 'stage1' / 'stage1_2path_results_paths.csv'
+    structural_params = {}
+
+    if stage1_paths_csv.exists():
+        print(f"\n    1단계 SEM 결과 로드: stage1_2path_results_paths.csv")
+        paths_df = pd.read_csv(stage1_paths_csv)
+
+        for _, row in paths_df.iterrows():
+            target = row['lval']
+            predictor = row['rval']
+            estimate = row['Estimate']
+
+            # gamma 파라미터명 생성
+            param_name = f'gamma_{predictor}_to_{target}'
+            structural_params[param_name] = estimate
+            print(f"      - {param_name}: {estimate:.6f}")
+
+        print(f"    [SUCCESS] 1단계 결과에서 {len(structural_params)}개 경로계수 로드 완료")
+    else:
+        print(f"    [WARNING] 1단계 결과 파일을 찾을 수 없습니다: {stage1_paths_csv}")
+        print(f"    [INFO] 구조모델 파라미터를 0.1로 초기화합니다")
+
+    # ✅ 2단계 선택모델 결과 로드 (선택모델 파라미터)
+    stage2_csv_path = project_root / 'results' / 'final' / 'sequential' / '2path' / 'stage2' / 'st2_2path_NK_PI_PP_results.csv'
+    choice_params = {}
+
+    if stage2_csv_path.exists():
+        print(f"\n    2단계 선택모델 결과 로드: st2_2path_NK_PI_PP_results.csv")
+        seq_df = pd.read_csv(stage2_csv_path)
+
+        # Parameters 섹션만 추출
+        params_df = seq_df[seq_df['section'] == 'Parameters']
+
+        for _, row in params_df.iterrows():
+            param_name = row['parameter']
+            estimate = row['estimate']
+            choice_params[param_name] = estimate
+            print(f"      - {param_name}: {estimate:.6f}")
+
+        print(f"    [SUCCESS] 2단계 결과에서 {len(choice_params)}개 파라미터 로드 완료")
+    else:
+        print(f"    [WARNING] 2단계 결과 파일을 찾을 수 없습니다: {stage2_csv_path}")
+        print(f"    [INFO] 선택모델 파라미터를 0.1로 초기화합니다")
 
     if pkl_path.exists():
         print(f"\n    CFA 결과 로드: {INITIAL_PARAMS_PKL}")
@@ -388,8 +434,24 @@ def main():
                 print(f"      - sigma_sq (오차분산): {sigma_sq_values}")
                 print(f"      - alpha (절편): {alpha_values}")
 
-            # 2. 구조모델 파라미터: 0.1로 초기화
-            print(f"    [INFO] 구조모델 파라미터: 0.1로 초기화")
+            # 2. 구조모델 파라미터: 1단계 결과 또는 0.1로 초기화
+            print(f"    [INFO] 구조모델 파라미터: 1단계 SEM 결과 사용 (없으면 0.1)")
+
+            # ❌ 초기값에 스케일 팩터를 곱하면 안 됩니다!
+            # ✅ 스케일링은 최적화 함수 내부에서 자동으로 처리됩니다.
+            #
+            # 올바른 방식:
+            # 1. 초기값: 0.15 (External, 스케일 팩터 곱하지 않음!)
+            # 2. 최적화 시작: 0.15 / 100 = 0.0015 (Internal, 자동 스케일링)
+            # 3. 최적화 완료: 0.001425 (Internal)
+            # 4. 언스케일링: 0.001425 × 100 = 0.1425 (External)
+            #
+            # 잘못된 방식 (이전 코드):
+            # 1. 초기값: 0.15 × 100 = 15.0 (External, 스케일 팩터 곱함 ❌)
+            # 2. 최적화 시작: 15.0 / 100 = 0.15 (Internal)
+            # 3. 최적화 완료: 0.1425 (Internal)
+            # 4. 언스케일링: 0.1425 × 100 = 14.25 (External) ← 잘못됨!
+
             structural_dict = {}
             for path in config.structural.hierarchical_paths:
                 target_lv = path['target']
@@ -397,11 +459,13 @@ def main():
 
                 for pred_lv in predictors:
                     param_name = f'gamma_{pred_lv}_to_{target_lv}'
-                    structural_dict[param_name] = 0.1
-                    print(f"      - {param_name}: 0.1")
+                    # 1단계 결과가 있으면 사용, 없으면 0.1
+                    value = structural_params.get(param_name, 0.1)
+                    structural_dict[param_name] = value
+                    print(f"      - {param_name}: {value:.6f}")
 
-            # 3. 선택모델 파라미터: 0.1로 초기화
-            print(f"    [INFO] 선택모델 파라미터: 0.1로 초기화")
+            # 3. 선택모델 파라미터: 2단계 결과 사용 (없으면 0.1)
+            print(f"    [INFO] 선택모델 파라미터: 2단계 선택모델 결과 사용 (없으면 0.1)")
             choice_dict = {}
 
             # Multinomial Logit의 대안 이름 (하드코딩)
@@ -411,22 +475,25 @@ def main():
             # ASC (Alternative-Specific Constants)
             for alt in alternatives:
                 param_name = f'asc_{alt}'
-                choice_dict[param_name] = 0.1
-                print(f"      - {param_name}: 0.1")
+                value = choice_params.get(param_name, 0.1)
+                choice_dict[param_name] = value
+                print(f"      - {param_name}: {value:.6f}")
 
             # beta (속성 계수) - 모든 대안에 공통 적용
             for attr in config.choice.choice_attributes:
                 param_name = f'beta_{attr}'
-                choice_dict[param_name] = 0.1
-                print(f"      - {param_name}: 0.1")
+                value = choice_params.get(param_name, 0.1)
+                choice_dict[param_name] = value
+                print(f"      - {param_name}: {value:.6f}")
 
             # theta (LV 주효과) - 각 대안별로
             if config.choice.main_lvs:
                 for lv in config.choice.main_lvs:
                     for alt in alternatives:
                         param_name = f'theta_{alt}_{lv}'
-                        choice_dict[param_name] = 0.1
-                        print(f"      - {param_name}: 0.1")
+                        value = choice_params.get(param_name, 0.1)
+                        choice_dict[param_name] = value
+                        print(f"      - {param_name}: {value:.6f}")
 
             # gamma (LV-속성 상호작용) - 각 대안별로
             if config.choice.lv_attribute_interactions:
@@ -435,8 +502,9 @@ def main():
                     attr = interaction['attribute']
                     for alt in alternatives:
                         param_name = f'gamma_{alt}_{lv}_{attr}'
-                        choice_dict[param_name] = 0.1
-                        print(f"      - {param_name}: 0.1")
+                        value = choice_params.get(param_name, 0.1)
+                        choice_dict[param_name] = value
+                        print(f"      - {param_name}: {value:.6f}")
 
             # ✅ 최종 초기값 딕셔너리 구성 (측정모델 제외)
             # 측정모델 파라미터는 이미 measurement_model 객체에 로드되어 있음
@@ -455,8 +523,54 @@ def main():
                 n_zeta = len(lv_params['zeta'])
                 print(f"        * {lv_name}: zeta={n_zeta}개")
 
-            print(f"      - 구조모델: {len(structural_dict)}개 파라미터 (0.1로 초기화)")
-            print(f"      - 선택모델: {len(choice_dict)}개 파라미터 (0.1로 초기화)")
+            print(f"      - 구조모델: {len(structural_dict)}개 파라미터 (1단계 SEM 결과)")
+            print(f"      - 선택모델: {len(choice_dict)}개 파라미터 (2단계 선택모델 결과)")
+
+            # ✅ 파라미터 스케일링 확인
+            print(f"\n    [INFO] 파라미터 스케일링 확인:")
+            use_scaling = getattr(config.estimation, 'use_parameter_scaling', False)
+            print(f"      - use_parameter_scaling: {use_scaling}")
+
+            if use_scaling:
+                print(f"      [OK] 파라미터 스케일링이 활성화되어 있습니다!")
+                print(f"      [OK] 초기값은 External 값 그대로 사용됩니다 (예: 0.15)")
+                print(f"      [OK] 스케일링은 최적화 함수 내부에서 자동으로 처리됩니다.")
+                print(f"      [OK] Internal 값: 0.15 / 100 = 0.0015 (자동 변환)")
+            else:
+                print(f"      [WARNING] 파라미터 스케일링이 비활성화되어 있습니다!")
+                print(f"      [WARNING] 구조모델 학습이 어려울 수 있습니다.")
+
+                # 스케일 확인 (estimator가 생성되어야 스케일 정보 확인 가능)
+                if hasattr(estimator, 'parameter_scales'):
+                    print(f"      [INFO] 파라미터 스케일:")
+                    for param_name, scale in list(estimator.parameter_scales.items())[:10]:
+                        print(f"        - {param_name}: scale={scale:.4f}")
+
+                    # 스케일링 후 값 확인
+                    print(f"\n      [INFO] 스케일링 후 초기값 (상위 10개):")
+                    for param_name, value in list(structural_dict.items())[:5]:
+                        scale = estimator.parameter_scales.get(param_name, 1.0)
+                        scaled_value = value / scale
+                        print(f"        - {param_name}: {value:.6f} → {scaled_value:.6f} (scale={scale:.4f})")
+
+                    for param_name, value in list(choice_dict.items())[:5]:
+                        scale = estimator.parameter_scales.get(param_name, 1.0)
+                        scaled_value = value / scale
+                        print(f"        - {param_name}: {value:.6f} → {scaled_value:.6f} (scale={scale:.4f})")
+
+                    # 너무 작은 값 경고
+                    min_scaled_value = float('inf')
+                    for param_name, value in {**structural_dict, **choice_dict}.items():
+                        scale = estimator.parameter_scales.get(param_name, 1.0)
+                        scaled_value = abs(value / scale)
+                        if scaled_value < min_scaled_value:
+                            min_scaled_value = scaled_value
+
+                    if min_scaled_value < 1e-6:
+                        print(f"\n      [WARNING] 스케일링 후 최소값이 너무 작습니다: {min_scaled_value:.2e}")
+                        print(f"      [WARNING] 수치 불안정성이 발생할 수 있습니다!")
+                    else:
+                        print(f"\n      [OK] 스케일링 후 최소값: {min_scaled_value:.2e} (안전)")
 
         else:
             print(f"    [ERROR] CFA 결과에 loadings 또는 measurement_errors가 없습니다.")
