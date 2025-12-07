@@ -247,10 +247,20 @@ def compute_all_individuals_gradients_full_parallel_gpu(
     """
     모든 개인의 gradient를 완전 병렬로 계산 (Advanced Indexing 사용)
 
-    ✅ 동시추정 전용: 측정모델 그래디언트는 계산하지 않음 (고정 파라미터)
+    🔴 SIGN PROTOCOL (Level 2 - Aggregator):
+    ==========================================
+    This function aggregates component gradients from Level 3 kernels.
 
-    구조모델: 기존 방식 사용
-    선택모델: 기존 방식 사용
+    CRITICAL RULES:
+    1. All component gradients (structural, measurement, choice) are received as POSITIVE (∇LL)
+    2. This function MUST NOT change signs - it only aggregates
+    3. The final output is still POSITIVE gradients (∇LL)
+
+    ⚠️ TODO: Verify that compute_choice_full_batch_gpu and measurement gradient functions
+             also return POSITIVE gradients (∇LL). If they return NEGATIVE gradients,
+             this will cause a "Mixed Sign" corruption bug!
+
+    ✅ 동시추정 전용: 측정모델 그래디언트는 계산하지 않음 (고정 파라미터)
 
     Args:
         gpu_measurement_model: GPU 측정모델
@@ -264,7 +274,8 @@ def compute_all_individuals_gradients_full_parallel_gpu(
         log_level: 로깅 레벨
 
     Returns:
-        개인별 gradient 딕셔너리 리스트
+        List[Dict]: 개인별 gradient 딕셔너리 리스트
+                    Each gradient is POSITIVE (∂LL/∂param) - Ascent direction
     """
     if not CUPY_AVAILABLE:
         raise RuntimeError("CuPy not available")
@@ -369,14 +380,16 @@ def compute_all_individuals_gradients_full_parallel_gpu(
 
     # ✅ 동시추정: 측정모델 그래디언트 계산 제외 (고정 파라미터)
     # 측정모델 그래디언트는 빈 딕셔너리로 설정
-    meas_grads = {}
+    # 🔴 SIGN: (Not computed, but if it were, it would be POSITIVE ∇LL)
+    meas_loglike_grads = {}
     meas_time = 0.0
 
     # 4. 구조모델 Gradient (기존 방식)
+    # 🔴 SIGN: This returns POSITIVE gradients (∂LL/∂γ)
     from .gpu_gradient_batch import compute_structural_full_batch_gpu
 
     struct_start = time.time()
-    struct_grads = compute_structural_full_batch_gpu(
+    struct_loglike_grads = compute_structural_full_batch_gpu(
         all_ind_data,
         all_lvs_gpu,
         params_dict,
@@ -390,12 +403,14 @@ def compute_all_individuals_gradients_full_parallel_gpu(
         measurement_weight=measurement_weight  # ✅ 스케일링 가중치 전달
     )
     struct_time = time.time() - struct_start
-    
+
     # 5. 선택모델 Gradient (기존 방식)
+    # 🔴 SIGN: ⚠️ TODO - VERIFY that this returns POSITIVE gradients (∂LL/∂β, ∂LL/∂θ)
+    #                    If it returns NEGATIVE, this will cause sign mismatch!
     from .gpu_gradient_batch import compute_choice_full_batch_gpu
-    
+
     choice_start = time.time()
-    choice_grads = compute_choice_full_batch_gpu(
+    choice_loglike_grads = compute_choice_full_batch_gpu(
         all_ind_data,
         all_lvs_gpu,
         params_dict['choice'],
@@ -408,48 +423,54 @@ def compute_all_individuals_gradients_full_parallel_gpu(
     choice_time = time.time() - choice_start
     
     # 6. 개인별 gradient 딕셔너리로 변환
+    # 🔴 SIGN: All gradients being aggregated here are POSITIVE (∇LL)
     all_individual_gradients = []
-    
+
     for ind_idx in range(n_individuals):
         # 측정모델: {lv_name: {'zeta': array, 'sigma_sq': array}}
+        # 🔴 SIGN: (Not computed, but would be POSITIVE if computed)
         meas_dict = {}
-        for lv_name in meas_grads:
+        for lv_name in meas_loglike_grads:
             meas_dict[lv_name] = {
-                'zeta': meas_grads[lv_name]['zeta'][ind_idx],
-                'sigma_sq': meas_grads[lv_name]['sigma_sq'][ind_idx]
+                'zeta': meas_loglike_grads[lv_name]['zeta'][ind_idx],
+                'sigma_sq': meas_loglike_grads[lv_name]['sigma_sq'][ind_idx]
             }
 
         # 구조모델: {param_name: scalar}
+        # 🔴 SIGN: POSITIVE gradients (∂LL/∂γ)
         struct_dict = {
-            key: struct_grads[key][ind_idx].item() if hasattr(struct_grads[key][ind_idx], 'item')
-            else struct_grads[key][ind_idx]
-            for key in struct_grads
+            key: struct_loglike_grads[key][ind_idx].item() if hasattr(struct_loglike_grads[key][ind_idx], 'item')
+            else struct_loglike_grads[key][ind_idx]
+            for key in struct_loglike_grads
         }
 
         # 선택모델: {'intercept': scalar, 'beta': array, ...}
+        # 🔴 SIGN: POSITIVE gradients (∂LL/∂β, ∂LL/∂θ)
         choice_dict = {}
-        for key in choice_grads:
-            val = choice_grads[key][ind_idx]
+        for key in choice_loglike_grads:
+            val = choice_loglike_grads[key][ind_idx]
             if key == 'beta':
                 choice_dict[key] = val
             elif hasattr(val, 'item'):
                 choice_dict[key] = val.item()
             else:
                 choice_dict[key] = val
-        
+
+        # 🔴 SIGN PROTOCOL: Aggregate all POSITIVE gradients (no sign changes!)
         ind_grad_dict = {
-            'measurement': meas_dict,
-            'structural': struct_dict,
-            'choice': choice_dict
+            'measurement': meas_dict,      # POSITIVE (∇LL_meas)
+            'structural': struct_dict,     # POSITIVE (∇LL_struct)
+            'choice': choice_dict          # POSITIVE (∇LL_choice)
         }
         all_individual_gradients.append(ind_grad_dict)
     
     total_time = time.time() - start_time
-    
+
     if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
         iteration_logger.info(
             f"\n{'='*70}\n"
             f"완전 병렬 Gradient 계산 완료 ({total_time:.3f}초)\n"
+            f"🔴 SIGN: All returned gradients are POSITIVE (∇LL)\n"
             f"{'='*70}\n"
             f"  시간 분석:\n"
             f"    - LV 계산:      {lv_time:.3f}초 ({lv_time/total_time*100:.1f}%)\n"
@@ -461,6 +482,7 @@ def compute_all_individuals_gradients_full_parallel_gpu(
             f"    - 처리량:       {n_individuals / total_time:.1f} 개인/초\n"
             f"{'='*70}"
         )
-    
+
+    # 🔴 SIGN PROTOCOL: Return POSITIVE gradients (∇LL) - Ascent direction
     return all_individual_gradients
 

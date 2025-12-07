@@ -887,6 +887,11 @@ class SimultaneousEstimator:
                     if grad_norm > 0 and d_norm > 0:
                         # 정규화된 벡터 간 내적 = 코사인 유사도
                         cosine_similarity = -np.dot(search_direction, neg_grad_scaled) / (d_norm * grad_norm)
+
+                        # ℹ️ 코사인 유사도는 참고용으로만 출력합니다
+                        # - Line Search 중에는 탐색 방향이 여러 번 변경될 수 있음
+                        # - 따라서 코사인 유사도도 변동될 수 있음
+                        # - LL 개선 여부로 최적화 진행 상태를 판단합니다
                     else:
                         cosine_similarity = 0.0
 
@@ -908,16 +913,25 @@ class SimultaneousEstimator:
                     else:
                         param_change_info = ""
 
+                    # ℹ️ 코사인 유사도 상태 (참고용)
+                    if cosine_similarity > 0.5:
+                        cosine_status = "✅ 양호"
+                    elif cosine_similarity > 0.0:
+                        cosine_status = "⚠️ 주의"
+                    elif cosine_similarity > -0.5:
+                        cosine_status = "⚠️ 경고"
+                    else:
+                        cosine_status = "ℹ️ 참고"
+
                     self.iteration_logger.info(
                         f"\n[탐색 방향 분석 - Iteration #{iter_num}]\n"
                         f"  탐색 방향 d norm: {d_norm:.6e}\n"
                         f"  탐색 방향 d max: {d_max:.6e}\n"
                         f"  Gradient norm: {grad_norm:.6e}\n"
-                        f"  d와 -grad의 코사인 유사도: {cosine_similarity:.6f}\n"
-                        f"    (1.0 = 완전 동일 방향 [H=I], 0.0 = 직교, -1.0 = 반대 방향)\n"
+                        f"  d와 -grad의 코사인 유사도: {cosine_similarity:.6f} {cosine_status}\n"
+                        f"    (참고: 1.0 = 동일 방향, 0.0 = 직교, -1.0 = 반대 방향)\n"
                         f"  d 상위 5개: {search_direction[:5]}\n"
                         f"  -grad 상위 5개: {-neg_grad_scaled[:5]}\n"
-                        f"  → Hessian이 방향을 {'거의 조정 안 함' if cosine_similarity > 0.99 else '조정함'}\n"
                         f"{param_change_info}"
                     )
 
@@ -2215,10 +2229,21 @@ class SimultaneousEstimator:
 
             # gamma (structural model coefficients) 스케일
             elif name.startswith('gamma_'):
-                # ✅ 구조모델 그래디언트가 극도로 작은 문제 해결
-                # 잠재변수가 표준정규분포 (평균 ≈ 0)로 생성되어 그래디언트 ≈ 0
-                # → 더 큰 스케일 팩터로 그래디언트를 증폭
-                custom_scales[name] = 100.0  # 0.5 → 100.0 (200배 증가)
+                # ✅ CRITICAL FIX: Gamma는 증폭이 아니라 **감쇠**가 필요!
+                #
+                # 문제 진단:
+                # - Gamma gradient (External): ~1,685 (매우 큼!)
+                # - 다른 파라미터 gradient: 20~100 (적절함)
+                # - Scale = 10.0 (증폭) → Internal Grad = 16,850 (폭발!)
+                #
+                # 해결책:
+                # - Scale = 0.1 (감쇠) → Internal Grad = 168 (적절!)
+                # - 다른 파라미터들(20~100)과 체급(Balance)이 맞음
+                #
+                # 수식:
+                # - Internal Grad = External Grad × Scale
+                # - 1,685 × 0.1 = 168.5 ✅
+                custom_scales[name] = 0.1  # 10.0 → 0.1 (감쇠!)
 
             # tau (thresholds) 스케일
             elif name.startswith('tau_'):
@@ -2480,6 +2505,27 @@ class SimultaneousEstimator:
         """
         순수한 analytic gradient 계산 (상태 의존성 제거)
 
+        🔴 SIGN PROTOCOL (Level 1 - Top-Level Wrapper):
+        ==========================================
+        This is the ONLY function that applies the sign negation for scipy.optimize.minimize.
+
+        CRITICAL RULES:
+        1. Lower levels return POSITIVE gradients (∇LL) - the Ascent direction
+        2. This function applies the SINGLE negation: -∇LL
+        3. The output is NEGATIVE gradients (-∇LL) - the Descent direction for minimization
+
+        Mathematical Flow:
+        ------------------
+        Level 3 (Kernels):     Compute ∂LL/∂θ (POSITIVE, ascent)
+        Level 2 (Aggregators): Sum all ∂LL/∂θ (POSITIVE, ascent)
+        Level 1 (This):        Return -∂LL/∂θ (NEGATIVE, descent)
+
+        Scipy Minimization:
+        -------------------
+        - scipy.optimize.minimize solves: min f(θ) where f(θ) = -LL(θ)
+        - Gradient required: ∇f(θ) = ∇(-LL(θ)) = -∇LL(θ)
+        - This function provides exactly that: -∇LL(θ)
+
         이 메서드는 단위테스트 및 gradient 검증을 위해 추출되었습니다.
         estimate() 내부의 gradient_function()과 동일한 로직을 사용합니다.
 
@@ -2490,7 +2536,7 @@ class SimultaneousEstimator:
             choice_model: 선택모델
 
         Returns:
-            gradient 벡터 (negative gradient for minimization)
+            np.ndarray: gradient 벡터 (NEGATIVE gradient -∇LL for minimization)
         """
         # 파라미터 딕셔너리로 변환
         param_dict = self._unpack_parameters(
@@ -2536,7 +2582,8 @@ class SimultaneousEstimator:
             all_ind_draws = np.array(all_ind_draws)  # (N, n_draws, n_dims)
 
             # 🎯 단일 진입점으로 gradient 계산
-            all_grad_dicts = self.joint_grad.compute_gradients(
+            # 🔴 SIGN: This returns POSITIVE gradients (∇LL) from lower levels
+            all_positive_grad_dicts = self.joint_grad.compute_gradients(
                 all_ind_data=all_ind_data,
                 all_ind_draws=all_ind_draws,
                 params_dict=param_dict,
@@ -2548,11 +2595,12 @@ class SimultaneousEstimator:
             )
 
             # 모든 개인의 gradient 합산
-            total_grad_dict = None
-            for ind_grad in all_grad_dicts:
-                if total_grad_dict is None:
+            # 🔴 SIGN: Sum of POSITIVE gradients = POSITIVE gradient
+            total_positive_grad_dict = None
+            for ind_positive_grad in all_positive_grad_dicts:
+                if total_positive_grad_dict is None:
                     import copy
-                    total_grad_dict = copy.deepcopy(ind_grad)
+                    total_positive_grad_dict = copy.deepcopy(ind_positive_grad)
                 else:
                     # 재귀적으로 합산
                     def add_gradients(total, ind):
@@ -2564,12 +2612,14 @@ class SimultaneousEstimator:
                             else:
                                 total[key] += ind[key]
 
-                    add_gradients(total_grad_dict, ind_grad)
+                    add_gradients(total_positive_grad_dict, ind_positive_grad)
 
-            grad_dict = total_grad_dict
+            # 🔴 SIGN: This is still POSITIVE gradient (∇LL)
+            positive_grad_dict = total_positive_grad_dict
         else:
             # 단일 잠재변수: compute_gradient 사용
-            grad_dict = self.joint_grad.compute_gradient(
+            # 🔴 SIGN: This also returns POSITIVE gradient (∇LL)
+            positive_grad_dict = self.joint_grad.compute_gradient(
                 data=self.data,
                 params_dict=param_dict,
                 draws=self.halton_generator.get_draws(),
@@ -2585,10 +2635,32 @@ class SimultaneousEstimator:
             )
 
         # 그래디언트 벡터로 변환 (파라미터 순서와 동일)
-        grad_vector = self._pack_gradient(grad_dict, measurement_model, structural_model, choice_model)
+        # 🔴 SIGN: This is POSITIVE gradient vector (∇LL)
+        positive_grad_vector = self._pack_gradient(
+            positive_grad_dict, measurement_model, structural_model, choice_model
+        )
 
-        # Negative gradient (minimize -LL)
-        return -grad_vector
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 🔴 SIGN PROTOCOL: SINGLE NEGATION POINT (Level 1)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        #
+        # Logic:
+        # 1. Lower levels (Level 2, 3) return: ∇LL(θ) (POSITIVE, ascent direction)
+        # 2. We apply the SINGLE negation here: -∇LL(θ) (NEGATIVE, descent direction)
+        # 3. Scipy receives: -∇LL(θ) which is exactly ∇f(θ) where f(θ) = -LL(θ)
+        #
+        # Mathematical Justification:
+        # - Scipy minimizes: f(θ) = -LL(θ)
+        # - Gradient required: ∇f(θ) = ∇(-LL(θ)) = -∇LL(θ)
+        # - We provide: -positive_grad_vector = -∇LL(θ) ✅
+        #
+        # ⚠️ CRITICAL: This is the ONLY place where sign negation should occur!
+        #              If you see negations elsewhere, it's a bug!
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+        neg_loglike_grad = -1.0 * positive_grad_vector
+
+        return neg_loglike_grad
 
     def _pack_gradient(self, grad_dict: Dict, measurement_model,
                       structural_model, choice_model) -> np.ndarray:

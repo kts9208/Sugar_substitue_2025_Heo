@@ -374,10 +374,22 @@ def compute_measurement_gradient_batch_gpu(
     """
     측정모델 그래디언트를 GPU 배치로 계산 (가중평균 적용)
 
-    CPU 구현 (gradient_calculator.py의 MeasurementGradient)을 따르면서:
-    1. 모든 선택 상황 처리 (첫 번째 행만이 아님)
-    2. Importance weighting 적용
-    3. GPU 배치 처리로 성능 향상
+    🔴 SIGN PROTOCOL (Level 3 - Kernel):
+    ==========================================
+    This function computes and returns the POSITIVE GRADIENT (∇LL) - the ASCENT direction.
+
+    Mathematical Formulas:
+    ----------------------
+    Continuous Linear:
+        ∂LL/∂ζ_i = (y - ζ*LV) * LV / σ²  [POSITIVE, ascent]
+        ∂LL/∂σ²_i = -0.5/σ² + 0.5*(y - ζ*LV)²/σ⁴  [POSITIVE, ascent]
+
+    Ordered Probit:
+        ∂LL/∂ζ_i = (φ_upper - φ_lower) / P * LV  [POSITIVE, ascent]
+        ∂LL/∂τ_k = (φ_upper or -φ_lower) / P  [POSITIVE, ascent]
+
+    ⚠️ CRITICAL: This function returns POSITIVE gradients (∇LL).
+                 The negation to -∇LL (for minimization) happens ONLY at the top-level wrapper.
 
     Args:
         gpu_measurement_model: GPU 측정모델
@@ -389,8 +401,9 @@ def compute_measurement_gradient_batch_gpu(
         log_level: 로깅 레벨 ('MINIMAL', 'MODERATE', 'DETAILED')
 
     Returns:
-        각 LV의 그래디언트 {lv_name: {'grad_zeta': ..., 'grad_tau': ...}} or
-                          {lv_name: {'grad_zeta': ..., 'grad_sigma_sq': ...}}
+        Dict[str, Dict]: {lv_name: {'grad_zeta': ..., 'grad_tau': ...}} or
+                         {lv_name: {'grad_zeta': ..., 'grad_sigma_sq': ...}}
+                         Each gradient is POSITIVE (∂LL/∂param) - Ascent direction
     """
     if not CUPY_AVAILABLE:
         raise RuntimeError("CuPy not available")
@@ -510,8 +523,11 @@ def compute_measurement_gradient_batch_gpu(
                 # 수치 안정성
                 prob = cp.clip(prob, 1e-10, 1 - 1e-10)
 
-                # ∂ log L / ∂ζ_i = (φ_upper - φ_lower) / P * (-LV)
-                grad_zeta_batch[:, i] = (phi_upper - phi_lower) / prob * (-lv_values_gpu)
+                # 🔴 SIGN FIX: Removed the negative sign to return POSITIVE gradient
+                # ∂ log L / ∂ζ_i = (φ_upper - φ_lower) / P * LV  [POSITIVE, ascent]
+                # Old (WRONG): grad_zeta_batch[:, i] = (phi_upper - phi_lower) / prob * (-lv_values_gpu)
+                # New (CORRECT): Remove the minus sign
+                grad_zeta_batch[:, i] = (phi_upper - phi_lower) / prob * lv_values_gpu
 
                 # ∂ log L / ∂τ_k
                 if k == 0:
@@ -567,6 +583,7 @@ def compute_measurement_gradient_batch_gpu(
         # GPU에서 CPU로 전송
         if measurement_method == 'continuous_linear':
             grad_sigma_sq_weighted = cp.clip(grad_sigma_sq_weighted, -1e6, 1e6)
+            # 🔴 SIGN: Store POSITIVE gradients (∂LL/∂ζ, ∂LL/∂σ²)
             gradients[lv_name] = {
                 'grad_zeta': grad_zeta_final,
                 'grad_sigma_sq': cp.asnumpy(grad_sigma_sq_weighted)
@@ -578,6 +595,7 @@ def compute_measurement_gradient_batch_gpu(
                 iteration_logger.info(f"    - grad_sigma_sq: 범위=[{float(cp.min(grad_sigma_sq_weighted)):.4f}, {float(cp.max(grad_sigma_sq_weighted)):.4f}], norm={float(cp.linalg.norm(grad_sigma_sq_weighted)):.4f}")
         else:
             grad_tau_weighted = cp.clip(grad_tau_weighted, -1e6, 1e6)
+            # 🔴 SIGN: Store POSITIVE gradients (∂LL/∂ζ, ∂LL/∂τ)
             gradients[lv_name] = {
                 'grad_zeta': grad_zeta_final,
                 'grad_tau': cp.asnumpy(grad_tau_weighted)
@@ -588,6 +606,8 @@ def compute_measurement_gradient_batch_gpu(
                 iteration_logger.info(f"    - grad_zeta: 범위=[{float(cp.min(grad_zeta_weighted)):.4f}, {float(cp.max(grad_zeta_weighted)):.4f}], norm={float(cp.linalg.norm(grad_zeta_weighted)):.4f}")
                 iteration_logger.info(f"    - grad_tau: 범위=[{float(cp.min(grad_tau_weighted)):.4f}, {float(cp.max(grad_tau_weighted)):.4f}], norm={float(cp.linalg.norm(grad_tau_weighted)):.4f}")
 
+    # 🟢 SIGN CHECK: Returns POSITIVE gradients (∂LL/∂ζ, ∂LL/∂σ² or ∂LL/∂τ)
+    # All measurement model gradients are in the ASCENT direction (∇LL)
     return gradients
 
 
@@ -1904,21 +1924,32 @@ def compute_structural_full_batch_gpu(
     """
     구조모델 Gradient - 완전 GPU Batch (체인룰 역전파)
 
-    ✅ 올바른 그래디언트 계산 (스케일링 포함):
-    ∂LL/∂γ = Σ_r w_r × (ω × ∂LL_measurement/∂target + ∂LL_choice/∂target) × ∂target/∂γ
+    🔴 SIGN PROTOCOL (Level 3 - Kernel):
+    ==========================================
+    This function computes and returns the POSITIVE GRADIENT (∇LL) - the ASCENT direction.
 
-    여기서 ω (measurement_weight)는 Forward pass의 스케일링과 동일해야 함!
+    Mathematical Formula:
+        ∂LL/∂γ = Σ_r w_r × (ω × ∂LL_measurement/∂target + ∂LL_choice/∂target) × ∂target/∂γ
+
+    Where:
+        - ∂LL/∂γ > 0 indicates the direction that INCREASES log-likelihood
+        - ω (measurement_weight) must match the Forward pass scaling
+
+    ⚠️ CRITICAL: This function returns POSITIVE gradients (∇LL).
+                 The negation to -∇LL (for minimization) happens ONLY at the top-level wrapper.
 
     Args:
         measurement_weight: 측정모델 우도 스케일링 가중치 (기본값: 1.0)
                           Forward pass에서 사용한 값과 동일해야 함
 
     Returns:
-        {param_name: (N,)}
+        Dict[str, np.ndarray]: {param_name: positive_gradient_array (N,)}
+                               Each value is ∂LL/∂param (POSITIVE, ascent direction)
     """
     n_individuals, n_draws, n_lvs = all_lvs_gpu.shape
 
-    gradients = {}
+    # 🔴 SIGN PROTOCOL: All gradients stored here are POSITIVE (∇LL)
+    positive_loglike_gradients = {}
 
     # 계층적 구조인 경우
     if hasattr(structural_model, 'is_hierarchical') and structural_model.is_hierarchical:
@@ -1933,7 +1964,8 @@ def compute_structural_full_batch_gpu(
             pred_idx = lv_names.index(predictor)
 
             # 모든 개인의 그래디언트 저장: (N,)
-            all_grad_gamma = cp.zeros(n_individuals)
+            # 🔴 SIGN: This will store ∂LL/∂γ (POSITIVE gradient)
+            all_positive_grad_gamma = cp.zeros(n_individuals)
 
             # 개인별로 역전파 계산 (각 개인의 R draws는 GPU 배치)
             for ind_idx, ind_data in enumerate(all_ind_data):
@@ -1950,43 +1982,49 @@ def compute_structural_full_batch_gpu(
                     lvs_list.append(lvs_dict)
 
                 # 1. ∂LL_measurement/∂target 계산
-                grad_ll_meas_wrt_target = compute_measurement_grad_wrt_lv_gpu(
+                # 🔴 SIGN: This returns POSITIVE gradient (∂LL_meas/∂target)
+                positive_grad_ll_meas_wrt_target = compute_measurement_grad_wrt_lv_gpu(
                     gpu_measurement_model,
                     ind_data,
                     lvs_list,
                     params_dict['measurement'],
                     target
                 )
-                grad_ll_meas_wrt_target_gpu = cp.asarray(grad_ll_meas_wrt_target)  # (R,)
+                positive_grad_ll_meas_wrt_target_gpu = cp.asarray(positive_grad_ll_meas_wrt_target)  # (R,)
 
                 # 2. ∂LL_choice/∂target 계산
+                # 🔴 SIGN: This returns POSITIVE gradient (∂LL_choice/∂target)
                 choice_attributes = [k.replace('beta_', '') for k in params_dict['choice'].keys() if k.startswith('beta_')]
 
-                grad_ll_choice_wrt_target = compute_choice_grad_wrt_lv_gpu(
+                positive_grad_ll_choice_wrt_target = compute_choice_grad_wrt_lv_gpu(
                     ind_data,
                     lvs_list,
                     params_dict['choice'],
                     target,
                     choice_attributes
                 )
-                grad_ll_choice_wrt_target_gpu = cp.asarray(grad_ll_choice_wrt_target)  # (R,)
+                positive_grad_ll_choice_wrt_target_gpu = cp.asarray(positive_grad_ll_choice_wrt_target)  # (R,)
 
                 # 3. 총 그래디언트: ∂LL/∂target (스케일링 적용!)
                 # ✅ Forward: LL_total = LL_choice + ω × LL_measurement
                 # ✅ Backward: ∇LL_total = ∇LL_choice + ω × ∇LL_measurement
-                grad_ll_wrt_target = (measurement_weight * grad_ll_meas_wrt_target_gpu +
-                                     grad_ll_choice_wrt_target_gpu)  # (R,)
+                # 🔴 SIGN: Sum of POSITIVE gradients = POSITIVE gradient
+                positive_grad_ll_wrt_target = (measurement_weight * positive_grad_ll_meas_wrt_target_gpu +
+                                              positive_grad_ll_choice_wrt_target_gpu)  # (R,)
 
                 # 4. 체인룰: ∂LL/∂γ = Σ_r w_r × (∂LL/∂target)_r × (∂target/∂γ)_r
                 # ∂target/∂γ = predictor
-                grad_gamma = cp.sum(weights_gpu * grad_ll_wrt_target * pred_values_gpu)
+                # 🔴 SIGN: Chain rule preserves sign → POSITIVE gradient
+                positive_grad_gamma = cp.sum(weights_gpu * positive_grad_ll_wrt_target * pred_values_gpu)
 
-                all_grad_gamma[ind_idx] = grad_gamma
+                all_positive_grad_gamma[ind_idx] = positive_grad_gamma
 
             # 접두사 없이 저장
-            gradients[param_key] = cp.asnumpy(all_grad_gamma)
+            # 🔴 SIGN: Store POSITIVE gradient (∂LL/∂γ)
+            positive_loglike_gradients[param_key] = cp.asnumpy(all_positive_grad_gamma)
 
-    return gradients
+    # 🔴 SIGN PROTOCOL: Return POSITIVE gradients (∇LL) - Ascent direction
+    return positive_loglike_gradients
 
 
 def compute_choice_full_batch_gpu(
@@ -2002,8 +2040,26 @@ def compute_choice_full_batch_gpu(
     """
     선택모델 Gradient - 완전 GPU Batch
 
+    🔴 SIGN PROTOCOL (Level 3 - Kernel):
+    ==========================================
+    This function computes and returns the POSITIVE GRADIENT (∇LL) - the ASCENT direction.
+
+    Mathematical Formulas:
+    ----------------------
+    Binary Probit:
+        ∂LL/∂θ = Σ w_r * sign * mills_ratio * x  [POSITIVE, ascent]
+        where sign = +1 if chosen, -1 if not chosen
+
+    Multinomial Logit:
+        ∂LL/∂θ = Σ w_r * (y - P) * x  [POSITIVE, ascent]
+        where y = 1 if chosen, 0 otherwise; P = choice probability
+
+    ⚠️ CRITICAL: This function returns POSITIVE gradients (∇LL).
+                 The negation to -∇LL (for minimization) happens ONLY at the top-level wrapper.
+
     Returns:
-        {'grad_intercept': (N,), 'grad_beta': (N, 3), 'grad_lambda_main': (N,), ...}
+        Dict[str, np.ndarray]: {param_name: gradient_array (N,)}
+                               Each gradient is ∂LL/∂param (POSITIVE, ascent direction)
     """
     n_individuals, n_draws, n_lvs = all_lvs_gpu.shape
 
@@ -2291,6 +2347,8 @@ def compute_choice_full_batch_gpu(
         # lambda: (N,)
         gradients['lambda'] = cp.asnumpy(cp.sum(weighted_mills * main_lv_batch, axis=(1, 2)))
 
+    # 🟢 SIGN CHECK: Returns POSITIVE gradients (∂LL/∂β, ∂LL/∂λ, etc.)
+    # Binary Probit gradients are in the ASCENT direction (∇LL)
     return gradients
 
 
@@ -2311,17 +2369,27 @@ def _compute_multinomial_logit_gradient_gpu(
     """
     Multinomial Logit Gradient - 완전 GPU Batch
 
-    Multinomial Logit Gradient 공식:
-    ∂LL/∂θ = Σ_n Σ_r w_r * (y_ni - P_ni) * x_ni
+    🔴 SIGN PROTOCOL (Level 3 - Kernel):
+    ==========================================
+    This function computes and returns the POSITIVE GRADIENT (∇LL) - the ASCENT direction.
+
+    Mathematical Formula:
+    ---------------------
+    ∂LL/∂θ = Σ_n Σ_r w_r * (y_ni - P_ni) * x_ni  [POSITIVE, ascent]
 
     여기서:
     - y_ni: 대안 i가 선택되었으면 1, 아니면 0
-    - P_ni: 대안 i의 선택 확률
+    - P_ni: 대안 i의 선택 확률 (softmax)
     - x_ni: 대안 i의 속성 (또는 LV)
     - w_r: importance weight
 
+    ⚠️ CRITICAL: The formula (y - P) gives POSITIVE gradient (∇LL).
+                 DO NOT change to (P - y) which would give NEGATIVE gradient!
+                 The negation to -∇LL (for minimization) happens ONLY at the top-level wrapper.
+
     Returns:
-        {'asc_sugar': (N,), 'asc_sugar_free': (N,), 'beta': (N, n_attr), ...}
+        Dict[str, np.ndarray]: {param_name: gradient_array (N,)}
+                               Each gradient is ∂LL/∂param (POSITIVE, ascent direction)
     """
     n_individuals, n_draws, n_lvs = all_lvs_gpu.shape
     choice_attributes = choice_model.config.choice_attributes
@@ -2544,6 +2612,8 @@ def _compute_multinomial_logit_gradient_gpu(
 
         gradients[f'gamma_{alt_name}_{lv_name}_{attr_name}'] = cp.asnumpy(grad_gamma)
 
+    # 🟢 SIGN CHECK: Returns POSITIVE gradients (∂LL/∂ASC, ∂LL/∂β, ∂LL/∂θ, ∂LL/∂γ)
+    # Multinomial Logit gradients use (y - P) formula, which gives ASCENT direction (∇LL)
     return gradients
 
 

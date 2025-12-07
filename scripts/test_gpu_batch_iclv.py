@@ -172,7 +172,7 @@ def main():
         choice_config_overrides=choice_config_dict,
         n_draws=N_DRAWS,
         max_iterations=MAX_ITERATIONS,
-        optimizer='trust-constr',  # ✅ Trust Region 사용
+        optimizer='L-BFGS-B',  # ✅ L-BFGS-B 사용 (trust-constr → L-BFGS-B)
         use_analytic_gradient=True,
         calculate_se=True,
         se_method='robust',  # ✅ Sandwich Estimator (Robust SE) 사용

@@ -429,6 +429,15 @@ class MultiLatentJointGradient:
         """
         🎯 단일 진입점: 모든 개인의 gradient 계산
 
+        🔴 SIGN PROTOCOL (Level 2 - Pass-through):
+        ==========================================
+        This function is a pass-through dispatcher that routes to GPU or CPU implementations.
+
+        CRITICAL RULES:
+        1. This function receives POSITIVE gradients (∇LL) from lower levels
+        2. This function MUST NOT change signs - it only routes
+        3. The output is still POSITIVE gradients (∇LL)
+
         GPU/CPU 분기를 내부에서 처리하여 호출자는 모드를 신경 쓰지 않음
 
         Args:
@@ -442,29 +451,31 @@ class MultiLatentJointGradient:
             log_level: 로깅 레벨
 
         Returns:
-            개인별 gradient 딕셔너리 리스트
+            List[Dict]: 개인별 gradient 딕셔너리 리스트
+                        Each gradient is POSITIVE (∂LL/∂param) - Ascent direction
         """
         # GPU 상태 확인
         gpu_ready = self.use_gpu and self.gpu_measurement_model is not None
 
         if gpu_ready:
             # GPU 모드: 완전 병렬 처리
-            # ✅ 로깅 제거 (중복)
-
-            return self.compute_all_individuals_gradients_full_batch(
+            # 🔴 SIGN: Returns POSITIVE gradients (∇LL)
+            total_loglike_gradient_per_individual = self.compute_all_individuals_gradients_full_batch(
                 all_ind_data, all_ind_draws, params_dict,
                 measurement_model, structural_model, choice_model,
                 iteration_logger, log_level
             )
         else:
             # CPU 모드: 순차 처리
-            # ✅ 로깅 제거 (중복)
-
-            return self.compute_all_individuals_gradients_batch(
+            # 🔴 SIGN: Returns POSITIVE gradients (∇LL)
+            total_loglike_gradient_per_individual = self.compute_all_individuals_gradients_batch(
                 all_ind_data, all_ind_draws, params_dict,
                 measurement_model, structural_model, choice_model,
                 iteration_logger, log_level
             )
+
+        # 🔴 SIGN PROTOCOL: Return POSITIVE gradients (∇LL) - Ascent direction
+        return total_loglike_gradient_per_individual
 
     def compute_individual_gradient(self, ind_data: pd.DataFrame,
                                    ind_draws: np.ndarray,
