@@ -1351,7 +1351,8 @@ def compute_all_individuals_likelihood_full_batch_gpu(
     choice_model,
     iteration_logger=None,
     log_level: str = 'MINIMAL',
-    use_scaling: bool = False  # ✅ 스케일링 비활성화 (기본값)
+    use_scaling: bool = False,  # ✅ 스케일링 비활성화 (기본값)
+    structural_weight: float = 1.0  # ✅ 구조모델 가중치 (기본값: 1.0)
 ) -> float:
     """
     모든 개인의 우도를 완전 GPU batch로 동시 계산
@@ -1369,6 +1370,8 @@ def compute_all_individuals_likelihood_full_batch_gpu(
         log_level: 로깅 레벨
         use_scaling: bool = True이면 측정모델 우도를 지표 수로 나눔 (최적화용),
                            False면 원본 우도 사용 (AIC/BIC 계산용)
+        structural_weight: 구조모델 우도 스케일링 가중치 (기본값: 1.0)
+                          Forward Pass와 Backward Pass에서 동일한 값 사용 필수!
 
     Returns:
         전체 로그우도 (스칼라)
@@ -1447,6 +1450,7 @@ def compute_all_individuals_likelihood_full_batch_gpu(
     # 📊 전체 우도 성분 누적 (로깅용)
     total_ll_measurement = 0.0
     total_ll_choice = 0.0
+    total_ll_structural = 0.0
 
     # 🔍 측정모델 지표 수 계산 (스케일링용)
     n_measurement_indicators = 0
@@ -1480,16 +1484,31 @@ def compute_all_individuals_likelihood_full_batch_gpu(
             choice_model
         )
 
+        # ✅ 구조모델 우도 (GPU 배치) - 이전에 누락되었던 부분!
+        ll_structural_raw = gpu_batch_utils.compute_structural_batch_gpu(
+            ind_data,
+            ind_lvs_list,
+            params_dict['structural'],
+            ind_draws,
+            structural_model,
+            iteration_logger=None  # 로깅 비활성화 (성능 최적화)
+        )
+
+        # ✅ 구조모델 우도 스케일링 (가중치 적용)
+        ll_structural = ll_structural_raw * structural_weight
+
         # 결합 우도 (R,)
-        # ✅ 구조모델 우도는 포함하지 않음 (구조모델은 LV 생성만 담당)
-        draw_lls = ll_measurement + ll_choice
+        # ✅ Forward Pass: LL_total = LL_choice + LL_measurement + (structural_weight × LL_structural)
+        draw_lls = ll_measurement + ll_choice + ll_structural
 
         # 📊 전체 우도 성분 누적 (개인별 평균)
         person_ll_measurement = logsumexp(ll_measurement) - np.log(n_draws)
         person_ll_choice = logsumexp(ll_choice) - np.log(n_draws)
+        person_ll_structural = logsumexp(ll_structural) - np.log(n_draws)
 
         total_ll_measurement += person_ll_measurement
         total_ll_choice += person_ll_choice
+        total_ll_structural += person_ll_structural
 
         # 유한성 체크
         non_finite_mask = ~np.isfinite(draw_lls)
@@ -1505,6 +1524,7 @@ def compute_all_individuals_likelihood_full_batch_gpu(
             bad_idx = non_finite_indices[0]
             print(f"  ll_measurement[{bad_idx}]: {ll_measurement[bad_idx]:.4f}")
             print(f"  ll_choice[{bad_idx}]: {ll_choice[bad_idx]:.4f}")
+            print(f"  ll_structural[{bad_idx}]: {ll_structural[bad_idx]:.4f}")
             print(f"  draw_ll[{bad_idx}]: {draw_lls[bad_idx]}")
             print(f"{'='*80}\n")
             raise ValueError(f"개인 {ind_idx+1}에서 비유한 우도 발견!")
@@ -1529,6 +1549,7 @@ def compute_all_individuals_likelihood_full_batch_gpu(
             f"  📈 모델별 우도 성분:\n"
             f"    측정모델: {total_ll_measurement:.4f} ({100*abs(total_ll_measurement)/abs(total_ll):.1f}%)\n"
             f"    선택모델: {total_ll_choice:.4f} ({100*abs(total_ll_choice)/abs(total_ll):.1f}%)\n"
+            f"    구조모델 (가중치 {structural_weight:.1f}×): {total_ll_structural:.4f} ({100*abs(total_ll_structural)/abs(total_ll):.1f}%)\n"
             f"{'='*80}"
         )
 
@@ -1545,7 +1566,8 @@ def compute_all_individuals_gradients_full_batch_gpu(
     choice_model,
     iteration_logger=None,
     log_level: str = 'MINIMAL',
-    use_scaling: bool = False  # ✅ 측정모델 우도 스케일링 사용 여부
+    use_scaling: bool = False,  # ✅ 측정모델 우도 스케일링 사용 여부
+    structural_weight: float = 1.0  # ✅ 구조모델 우도 스케일링 가중치
 ) -> List[Dict]:
     """
     모든 개인의 gradient를 완전 GPU batch로 동시 계산
@@ -1563,6 +1585,7 @@ def compute_all_individuals_gradients_full_batch_gpu(
         iteration_logger: 로거
         log_level: 로깅 레벨
         use_scaling: 측정모델 우도 스케일링 사용 여부 (기본값: False)
+        structural_weight: 구조모델 우도 스케일링 가중치 (기본값: 1.0)
 
     Returns:
         개인별 gradient 딕셔너리 리스트 [grad_dict_1, ..., grad_dict_N]
@@ -1695,7 +1718,8 @@ def compute_all_individuals_gradients_full_batch_gpu(
         lv_names,
         iteration_logger=iteration_logger,
         log_level=log_level,
-        measurement_weight=measurement_weight  # ✅ 스케일링 가중치 전달
+        measurement_weight=measurement_weight,  # ✅ 측정모델 스케일링 가중치 전달
+        structural_weight=structural_weight  # ✅ 구조모델 스케일링 가중치 전달
     )
 
     grad_time = time.time() - grad_start
@@ -1731,7 +1755,8 @@ def compute_full_batch_gradients_gpu(
     lv_names: List[str],
     iteration_logger=None,
     log_level: str = 'MINIMAL',
-    measurement_weight: float = 1.0  # ✅ 측정모델 우도 스케일링 가중치
+    measurement_weight: float = 1.0,  # ✅ 측정모델 우도 스케일링 가중치
+    structural_weight: float = 1.0  # ✅ 구조모델 우도 스케일링 가중치
 ) -> List[Dict]:
     """
     완전 GPU Batch: N명 × R draws × P params를 동시 계산
@@ -1749,6 +1774,7 @@ def compute_full_batch_gradients_gpu(
         iteration_logger: 로거
         log_level: 로깅 레벨
         measurement_weight: 측정모델 우도 스케일링 가중치 (기본값: 1.0)
+        structural_weight: 구조모델 우도 스케일링 가중치 (기본값: 1.0)
 
     Returns:
         개인별 gradient 딕셔너리 리스트 (N개)
@@ -1764,7 +1790,7 @@ def compute_full_batch_gradients_gpu(
     meas_grads = {}
 
     # 1. 구조모델 Gradient (완전 Batch - 체인룰 역전파)
-    # ✅ measurement_weight 전달: Forward와 Backward의 스케일링 일치
+    # ✅ measurement_weight & structural_weight 전달: Forward와 Backward의 스케일링 일치
     struct_grads = compute_structural_full_batch_gpu(
         all_ind_data,
         all_lvs_gpu,
@@ -1776,7 +1802,8 @@ def compute_full_batch_gradients_gpu(
         lv_names,
         iteration_logger,
         log_level,
-        measurement_weight=measurement_weight  # ✅ 스케일링 가중치 전달
+        measurement_weight=measurement_weight,  # ✅ 측정모델 스케일링 가중치 전달
+        structural_weight=structural_weight  # ✅ 구조모델 스케일링 가중치 전달
     )
 
     # 3. 선택모델 Gradient (완전 Batch)
@@ -1919,7 +1946,8 @@ def compute_structural_full_batch_gpu(
     lv_names: List[str],
     iteration_logger=None,
     log_level: str = 'MINIMAL',
-    measurement_weight: float = 1.0  # ✅ 측정모델 우도 스케일링 가중치
+    measurement_weight: float = 1.0,  # ✅ 측정모델 우도 스케일링 가중치
+    structural_weight: float = 1.0  # ✅ 구조모델 우도 스케일링 가중치
 ) -> Dict:
     """
     구조모델 Gradient - 완전 GPU Batch (체인룰 역전파)
@@ -1929,17 +1957,20 @@ def compute_structural_full_batch_gpu(
     This function computes and returns the POSITIVE GRADIENT (∇LL) - the ASCENT direction.
 
     Mathematical Formula:
-        ∂LL/∂γ = Σ_r w_r × (ω × ∂LL_measurement/∂target + ∂LL_choice/∂target) × ∂target/∂γ
+        ∂LL/∂γ = λ_struct × Σ_r w_r × (ω × ∂LL_measurement/∂target + ∂LL_choice/∂target) × ∂target/∂γ
 
     Where:
         - ∂LL/∂γ > 0 indicates the direction that INCREASES log-likelihood
         - ω (measurement_weight) must match the Forward pass scaling
+        - λ_struct (structural_weight) must match the Forward pass scaling
 
     ⚠️ CRITICAL: This function returns POSITIVE gradients (∇LL).
                  The negation to -∇LL (for minimization) happens ONLY at the top-level wrapper.
 
     Args:
         measurement_weight: 측정모델 우도 스케일링 가중치 (기본값: 1.0)
+                          Forward pass에서 사용한 값과 동일해야 함
+        structural_weight: 구조모델 우도 스케일링 가중치 (기본값: 1.0)
                           Forward pass에서 사용한 값과 동일해야 함
 
     Returns:
@@ -2006,21 +2037,22 @@ def compute_structural_full_batch_gpu(
                 positive_grad_ll_choice_wrt_target_gpu = cp.asarray(positive_grad_ll_choice_wrt_target)  # (R,)
 
                 # 3. 총 그래디언트: ∂LL/∂target (스케일링 적용!)
-                # ✅ Forward: LL_total = LL_choice + ω × LL_measurement
-                # ✅ Backward: ∇LL_total = ∇LL_choice + ω × ∇LL_measurement
+                # ✅ Forward: LL_total = LL_choice + ω × LL_measurement + λ_struct × LL_structural
+                # ✅ Backward: ∇LL_total = ∇LL_choice + ω × ∇LL_measurement (구조모델 파라미터에 대한 역전파)
                 # 🔴 SIGN: Sum of POSITIVE gradients = POSITIVE gradient
                 positive_grad_ll_wrt_target = (measurement_weight * positive_grad_ll_meas_wrt_target_gpu +
                                               positive_grad_ll_choice_wrt_target_gpu)  # (R,)
 
-                # 4. 체인룰: ∂LL/∂γ = Σ_r w_r × (∂LL/∂target)_r × (∂target/∂γ)_r
+                # 4. 체인룰: ∂LL/∂γ = λ_struct × Σ_r w_r × (∂LL/∂target)_r × (∂target/∂γ)_r
                 # ∂target/∂γ = predictor
+                # ✅ structural_weight 적용: Forward와 Backward의 일관성 보장
                 # 🔴 SIGN: Chain rule preserves sign → POSITIVE gradient
-                positive_grad_gamma = cp.sum(weights_gpu * positive_grad_ll_wrt_target * pred_values_gpu)
+                positive_grad_gamma = structural_weight * cp.sum(weights_gpu * positive_grad_ll_wrt_target * pred_values_gpu)
 
                 all_positive_grad_gamma[ind_idx] = positive_grad_gamma
 
             # 접두사 없이 저장
-            # 🔴 SIGN: Store POSITIVE gradient (∂LL/∂γ)
+            # 🔴 SIGN: Store POSITIVE gradient (∂LL/∂γ), scaled by structural_weight
             positive_loglike_gradients[param_key] = cp.asnumpy(all_positive_grad_gamma)
 
     # 🔴 SIGN PROTOCOL: Return POSITIVE gradients (∇LL) - Ascent direction

@@ -2591,7 +2591,8 @@ class SimultaneousEstimator:
                 structural_model=structural_model,
                 choice_model=choice_model,
                 iteration_logger=self.iteration_logger,
-                log_level='MINIMAL'
+                log_level='MINIMAL',
+                structural_weight=getattr(self, 'structural_weight', 1.0)  # ✅ 구조모델 가중치 전달
             )
 
             # 모든 개인의 gradient 합산

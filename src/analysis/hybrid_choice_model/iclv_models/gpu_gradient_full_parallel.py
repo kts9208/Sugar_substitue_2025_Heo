@@ -242,7 +242,8 @@ def compute_all_individuals_gradients_full_parallel_gpu(
     choice_model,
     iteration_logger=None,
     log_level: str = 'MINIMAL',
-    use_scaling: bool = False  # ✅ 측정모델 우도 스케일링 사용 여부
+    use_scaling: bool = False,  # ✅ 측정모델 우도 스케일링 사용 여부
+    structural_weight: float = 1.0  # ✅ 구조모델 우도 스케일링 가중치
 ) -> List[Dict]:
     """
     모든 개인의 gradient를 완전 병렬로 계산 (Advanced Indexing 사용)
@@ -400,7 +401,8 @@ def compute_all_individuals_gradients_full_parallel_gpu(
         lv_names,
         iteration_logger,
         log_level,
-        measurement_weight=measurement_weight  # ✅ 스케일링 가중치 전달
+        measurement_weight=measurement_weight,  # ✅ 측정모델 스케일링 가중치 전달
+        structural_weight=structural_weight  # ✅ 구조모델 스케일링 가중치 전달
     )
     struct_time = time.time() - struct_start
 

@@ -88,7 +88,8 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
     def __init__(self, config, use_gpu: bool = True,
                  memory_monitor_cpu_threshold_mb: float = 2000,
                  memory_monitor_gpu_threshold_mb: float = 1500,
-                 use_full_parallel: bool = True):
+                 use_full_parallel: bool = True,
+                 structural_weight: float = 1000.0):
         """
         Args:
             config: MultiLatentConfig 또는 ICLVConfig
@@ -96,11 +97,17 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
             memory_monitor_cpu_threshold_mb: CPU 메모리 임계값 (MB)
             memory_monitor_gpu_threshold_mb: GPU 메모리 임계값 (MB)
             use_full_parallel: 완전 병렬 처리 사용 여부 (Advanced Indexing, 기본값: True)
+            structural_weight: 구조모델 우도/그래디언트 스케일링 가중치 (기본값: 1000.0)
+                              이 값은 Forward Pass와 Backward Pass 모두에 일관되게 적용됩니다.
+                              권장값: 1000.0 (구조모델 그래디언트 노름을 선택모델과 균형 맞추기 위함)
         """
         super().__init__(config)
         self.use_gpu = use_gpu and gpu_batch_utils.CUPY_AVAILABLE
         self.use_full_parallel = use_full_parallel
         self.gpu_measurement_model = None
+
+        # ✅ 구조모델 가중치 저장 (Forward & Backward 일관성 보장)
+        self.structural_weight = structural_weight
 
         # 메모리 모니터 임계값 저장 (나중에 초기화)
         self.memory_monitor_cpu_threshold_mb = memory_monitor_cpu_threshold_mb
@@ -121,6 +128,8 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
                 logger.info("GPU 배치 처리 활성화")
         else:
             logger.info("GPU 배치 처리 비활성화 (CPU 모드)")
+
+        logger.info(f"🔧 구조모델 가중치 (structural_weight): {self.structural_weight:.1f}")
     
     def estimate(self, data: pd.DataFrame,
                 measurement_model,
@@ -364,7 +373,8 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
                 choice_model,
                 iteration_logger=self.iteration_logger if hasattr(self, 'iteration_logger') else None,
                 log_level=log_level,
-                use_scaling=True  # 최적화 중에는 측정모델 우도 스케일링
+                use_scaling=True,  # 최적화 중에는 측정모델 우도 스케일링
+                structural_weight=self.structural_weight  # ✅ 구조모델 가중치 전달
             )
         else:
             # 기존 방식: 개인별 순차 처리
@@ -892,6 +902,7 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
             from . import gpu_gradient_batch
 
             # ✅ use_scaling=False로 언스케일링된 우도 계산
+            # ⚠️ 주의: structural_weight는 최적화 시와 동일하게 적용 (일관성 유지)
             unscaled_ll = gpu_gradient_batch.compute_all_individuals_likelihood_full_batch_gpu(
                 self.gpu_measurement_model,
                 all_ind_data,
@@ -901,7 +912,8 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
                 choice_model,
                 iteration_logger=self.iteration_logger,
                 log_level='DETAILED',
-                use_scaling=False  # 언스케일링
+                use_scaling=False,  # 언스케일링
+                structural_weight=self.structural_weight  # ✅ 구조모델 가중치 전달
             )
 
             self.iteration_logger.info(f"\n스케일링된 우도 (최적화용): {results['log_likelihood']:.4f}")
