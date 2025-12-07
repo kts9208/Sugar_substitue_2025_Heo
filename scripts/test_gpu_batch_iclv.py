@@ -290,15 +290,22 @@ def main():
 
     # 6. Estimator 생성
     print("\n[6] Estimator 생성:")
+
+    # ✅ 구조모델 가중치 설정 (Gradient Scale Balancing)
+    # 권장값: 1000.0 ~ 5000.0 (구조모델 그래디언트 노름을 선택모델과 균형 맞추기 위함)
+    STRUCTURAL_WEIGHT = 1000.0  # 기본값: 1000.0
+
     try:
         estimator = SimultaneousGPUBatchEstimator(
             config,
             use_gpu=True,
             memory_monitor_cpu_threshold_mb=CPU_MEMORY_THRESHOLD_MB,
-            memory_monitor_gpu_threshold_mb=GPU_MEMORY_THRESHOLD_MB
+            memory_monitor_gpu_threshold_mb=GPU_MEMORY_THRESHOLD_MB,
+            structural_weight=STRUCTURAL_WEIGHT  # ✅ 구조모델 가중치 전달
         )
         print(f"    동시추정 GPU 배치 Estimator 생성 완료")
         print(f"    - 메모리 모니터링: CPU {CPU_MEMORY_THRESHOLD_MB}MB, GPU {GPU_MEMORY_THRESHOLD_MB}MB")
+        print(f"    - 구조모델 가중치: {STRUCTURAL_WEIGHT:.1f}× (Gradient Scale Balancing)")
     except Exception as e:
         print(f"    [ERROR] Estimator 생성 실패: {e}")
         import traceback
@@ -600,10 +607,19 @@ def main():
         print(f"    [INFO] 초기 파라미터 설정:")
         if initial_params:
             print(f"      - 측정모델: PKL에서 로드 (고정)")
-            print(f"      - 구조모델: 0.1로 초기화 (추정 대상)")
-            print(f"      - 선택모델: 0.1로 초기화 (추정 대상)")
+            print(f"      - 구조모델: 1단계 SEM 결과 사용 (추정 대상)")
+            print(f"      - 선택모델: 2단계 선택모델 결과 사용 (추정 대상)")
         else:
             print(f"      - 자동 초기화 사용")
+
+        # ✅ Warm Start: 순차추정 결과 CSV 경로 지정
+        # 이 파일에서 gamma, theta 등의 초기값을 자동으로 로드
+        sequential_csv = str(stage2_csv_path) if stage2_csv_path.exists() else None
+
+        if sequential_csv:
+            print(f"\n    [INFO] 🔥 Warm Start 활성화:")
+            print(f"      - 순차추정 결과: {stage2_csv_path.name}")
+            print(f"      - gamma (구조모델), theta (선택모델) 초기값을 자동 로드합니다.")
 
         result = estimator.estimate(
             data=data,
@@ -611,7 +627,8 @@ def main():
             structural_model=structural_model,
             choice_model=choice_model,
             log_file=str(log_file),
-            initial_params=initial_params
+            initial_params=initial_params,
+            sequential_result_csv=sequential_csv  # ✅ Warm Start 활성화
             # ✅ 동시추정은 항상 측정모델 고정 (설정 불필요)
         )
 

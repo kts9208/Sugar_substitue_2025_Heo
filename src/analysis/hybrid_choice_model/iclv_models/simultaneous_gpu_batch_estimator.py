@@ -130,13 +130,62 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
             logger.info("GPU 배치 처리 비활성화 (CPU 모드)")
 
         logger.info(f"🔧 구조모델 가중치 (structural_weight): {self.structural_weight:.1f}")
-    
+
+    def _load_sequential_estimates(self, file_path: str) -> Dict:
+        """
+        순차추정 결과 CSV에서 파라미터 추정값 로드
+
+        Args:
+            file_path: 순차추정 결과 CSV 파일 경로
+
+        Returns:
+            파라미터 딕셔너리 {param_name: estimate_value}
+        """
+        import pandas as pd
+        from pathlib import Path
+
+        path = Path(file_path)
+        if not path.exists():
+            return {}
+
+        try:
+            df = pd.read_csv(path)
+
+            # Parameters 섹션만 추출
+            if 'section' in df.columns:
+                params_df = df[df['section'] == 'Parameters']
+            else:
+                params_df = df
+
+            # parameter와 estimate 컬럼 확인
+            if 'parameter' not in params_df.columns or 'estimate' not in params_df.columns:
+                return {}
+
+            # 딕셔너리로 변환
+            param_dict = {}
+            for _, row in params_df.iterrows():
+                param_name = row['parameter']
+                estimate = row['estimate']
+
+                # NaN이 아닌 값만 저장
+                if pd.notna(estimate):
+                    param_dict[param_name] = float(estimate)
+
+            return param_dict
+
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"순차추정 결과 로드 실패: {e}")
+            return {}
+
     def estimate(self, data: pd.DataFrame,
                 measurement_model,
                 structural_model,
                 choice_model,
                 log_file: Optional[str] = None,
-                initial_params: Optional[np.ndarray] = None) -> Dict:
+                initial_params: Optional[np.ndarray] = None,
+                sequential_result_csv: Optional[str] = None) -> Dict:
         """
         ICLV 모델 동시추정 (GPU 배치 가속)
 
@@ -160,6 +209,9 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
             initial_params: 초기 파라미터 딕셔너리
                 - 'structural', 'choice' 키: 초기값 (추정 대상)
                 - ❌ 'measurement' 키 불필요
+            sequential_result_csv: 순차추정 결과 CSV 파일 경로 (Warm Start용)
+                - 지정 시 해당 파일에서 gamma, theta 등의 초기값을 로드
+                - initial_params보다 우선순위가 높음
 
         Returns:
             추정 결과 딕셔너리
@@ -167,11 +219,56 @@ class SimultaneousGPUBatchEstimator(SimultaneousEstimator):
         # 사용자 정의 초기값 저장
         self.user_initial_params = initial_params
 
+        # ✅ Warm Start: 순차추정 결과에서 초기값 로드
+        if sequential_result_csv is not None:
+            logger.info("=" * 80)
+            logger.info("🔥 Warm Start: 순차추정 결과에서 초기값 로드")
+            logger.info("=" * 80)
+
+            seq_params = self._load_sequential_estimates(sequential_result_csv)
+
+            if seq_params:
+                logger.info(f"✅ {len(seq_params)}개 파라미터 로드 완료:")
+
+                # initial_params가 None이면 빈 딕셔너리로 초기화
+                if initial_params is None:
+                    initial_params = {'structural': {}, 'choice': {}}
+
+                # 구조모델 파라미터 (gamma_*)
+                gamma_count = 0
+                for param_name, value in seq_params.items():
+                    if param_name.startswith('gamma_'):
+                        initial_params['structural'][param_name] = value
+                        logger.info(f"  [구조모델] {param_name}: {value:.6f}")
+                        gamma_count += 1
+
+                # 선택모델 파라미터 (theta_*, beta_*, asc_*)
+                theta_count = 0
+                other_count = 0
+                for param_name, value in seq_params.items():
+                    if param_name.startswith('theta_'):
+                        initial_params['choice'][param_name] = value
+                        logger.info(f"  [선택모델] {param_name}: {value:.6f}")
+                        theta_count += 1
+                    elif param_name.startswith(('beta_', 'asc_')):
+                        initial_params['choice'][param_name] = value
+                        logger.info(f"  [선택모델] {param_name}: {value:.6f}")
+                        other_count += 1
+
+                logger.info(f"\n📊 로드 요약:")
+                logger.info(f"  - 구조모델 (gamma): {gamma_count}개")
+                logger.info(f"  - 선택모델 (theta): {theta_count}개")
+                logger.info(f"  - 선택모델 (기타): {other_count}개")
+                logger.info("=" * 80)
+            else:
+                logger.warning(f"⚠️ 순차추정 결과 로드 실패: {sequential_result_csv}")
+                logger.warning("Cold Start로 전환합니다.")
+
         # ✅ 동시추정은 초기값 필수 (측정모델은 measurement_model 객체에 이미 로드됨)
         if initial_params is None:
             raise ValueError(
                 "동시추정은 초기값이 필수입니다!\n"
-                "initial_params 딕셔너리를 제공해야 합니다.\n"
+                "initial_params 딕셔너리를 제공하거나 sequential_result_csv를 지정해야 합니다.\n"
                 "예: initial_params = {'structural': {...}, 'choice': {...}}\n"
                 "측정모델 파라미터는 measurement_model 객체에 이미 로드되어 있어야 합니다."
             )

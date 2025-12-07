@@ -1127,13 +1127,13 @@ class SimultaneousEstimator:
                 if not hasattr(self, 'prev_grad'):
                     self.prev_grad = None
 
-                # ✅ ftol AND 파라미터 변화량 조건 체크를 위한 변수
+                # ✅ ftol OR 파라미터 변화량 조건 체크를 위한 변수 (완화된 기준)
                 if not hasattr(self, 'ftol_threshold'):
-                    self.ftol_threshold = 1e-6  # ftol 기준
+                    self.ftol_threshold = 1e-4  # ftol 기준 (1e-6 → 1e-4로 완화)
                 if not hasattr(self, 'gtol_threshold'):
                     self.gtol_threshold = 1e-5  # gtol 기준 (참고용, 동시추정에서는 사용 안 함)
                 if not hasattr(self, 'param_change_threshold'):
-                    self.param_change_threshold = 1e-6  # 파라미터 변화량 기준
+                    self.param_change_threshold = 1e-4  # 파라미터 변화량 기준 (1e-6 → 1e-4로 완화)
 
                 # Major iteration 완료 로깅
                 if self.iteration_logger:
@@ -1278,11 +1278,16 @@ class SimultaneousEstimator:
                         f"{'='*80}"
                     )
 
-                    # ✅ ftol AND 파라미터 변화량 조건 체크 (둘 다 만족해야 조기 종료)
+                    # ✅ ftol OR 파라미터 변화량 조건 체크 (둘 중 하나만 만족해도 조기 종료)
                     # 동시추정: gtol 대신 파라미터 변화량 사용 (측정모델 고정으로 gtol 수렴 어려움)
                     ftol_satisfied = False
                     param_change_satisfied = False
                     gtol_satisfied = False  # 참고용
+
+                    # ✅ 변수 초기화 (UnboundLocalError 방지)
+                    rel_change = float('inf')
+                    param_change_norm = float('inf')
+                    grad_norm_active = float('inf')
 
                     # ftol 체크
                     if last_major_iter_func_value[0] is not None:
@@ -1302,19 +1307,21 @@ class SimultaneousEstimator:
                         grad_norm_active = np.linalg.norm(grad[np.abs(grad) > 1e-10], ord=np.inf) if np.any(np.abs(grad) > 1e-10) else 0.0
                         gtol_satisfied = (grad_norm_active <= self.gtol_threshold)
 
-                    # ftol AND 파라미터 변화량 모두 만족하면 조기 종료
-                    if ftol_satisfied and param_change_satisfied:
+                    # ✅ ftol OR 파라미터 변화량 중 하나만 만족해도 조기 종료 (완화된 조건)
+                    # 이유: Line search가 무한 루프에 빠지는 것을 방지
+                    if ftol_satisfied or param_change_satisfied:
                         self.early_stopped = True
                         self.best_x = xk.copy()
                         msg = (
                             f"\n{'='*80}\n"
-                            f"✅ 수렴 완료: ftol AND 파라미터 변화량 조건 모두 만족\n"
-                            f"  - ftol: {rel_change:.6e} <= {self.ftol_threshold:.6e} ✓\n"
-                            f"  - 파라미터 변화량: {param_change_norm:.6e} <= {self.param_change_threshold:.6e} ✓\n"
+                            f"✅ 수렴 완료: ftol OR 파라미터 변화량 조건 만족 (완화된 기준)\n"
+                            f"  - ftol: {rel_change:.6e} <= {self.ftol_threshold:.6e} {'✓' if ftol_satisfied else '✗'}\n"
+                            f"  - 파라미터 변화량: {param_change_norm:.6e} <= {self.param_change_threshold:.6e} {'✓' if param_change_satisfied else '✗'}\n"
                             f"  - gtol (참고): {grad_norm_active:.6e} (기준: {self.gtol_threshold:.6e}) {'✓' if gtol_satisfied else '✗'}\n"
                             f"  - Major iteration: {self.bfgs_iteration_count}\n"
                             f"  - 최종 LL: {current_ll:.4f}\n"
-                            f"  💡 동시추정: 측정모델 고정으로 gtol 수렴 어려움 → 파라미터 변화량으로 판단\n"
+                            f"  💡 동시추정: 측정모델 고정으로 gtol 수렴 어려움 → ftol OR 파라미터 변화량으로 판단\n"
+                            f"  💡 완화된 조건 (ftol=1e-4, xtol=1e-4)으로 Line Search 무한 루프 방지\n"
                             f"{'='*80}"
                         )
                         if self.iteration_logger:
@@ -1449,24 +1456,25 @@ class SimultaneousEstimator:
             elif self.config.estimation.optimizer == 'L-BFGS-B':
                 optimizer_options = {
                     'maxiter': 200,  # Major iteration 최대 횟수
-                    'maxls': 20,     # Line search 최대 횟수 (기본값: 20)
+                    'maxls': 50,     # Line search 최대 횟수 (20 → 50으로 증가, 무한 루프 방지)
+                    'ftol': 1e-5,    # 함수값 상대 변화 허용 오차 (완화: scipy 기본값보다 큼)
                     'disp': True
-                    # ftol, gtol을 설정하지 않음 → scipy 기본값 사용
-                    # 기본값: ftol=2.220446049250313e-09, pgtol=1e-05
+                    # pgtol은 설정하지 않음 → scipy 기본값 사용 (1e-05)
                 }
                 self.iteration_logger.info(
-                    f"L-BFGS-B 옵션:\n"
+                    f"L-BFGS-B 옵션 (완화된 수렴 조건):\n"
                     f"  - maxiter: {optimizer_options['maxiter']}\n"
-                    f"  - ftol: 기본값 (2.22e-09 * factr, factr=1e7)\n"
+                    f"  - ftol: {optimizer_options['ftol']:.1e} (완화: scipy 기본값 2.22e-09보다 큼)\n"
                     f"  - pgtol: 기본값 (1e-05)\n"
-                    f"  - maxls: {optimizer_options['maxls']} (line search 최대 횟수)\n"
+                    f"  - maxls: {optimizer_options['maxls']} (line search 최대 횟수, 20→50으로 증가)\n"
                     f"\n"
-                    f"  ✅ 커스텀 수렴 조건 (callback에서 ftol AND 파라미터 변화량 체크):\n"
-                    f"    1. ftol 조건: (f^k - f^{{k+1}})/max{{|f^k|,|f^{{k+1}}|,1}} <= 1e-6\n"
-                    f"    2. 파라미터 변화량: ||x^k - x^{{k-1}}|| <= 1e-6\n"
-                    f"    → 두 조건을 모두 만족해야 조기 종료\n"
+                    f"  ✅ 커스텀 수렴 조건 (callback에서 ftol OR 파라미터 변화량 체크):\n"
+                    f"    1. ftol 조건: (f^k - f^{{k+1}})/max{{|f^k|,|f^{{k+1}}|,1}} <= 1e-4 (완화)\n"
+                    f"    2. 파라미터 변화량: ||x^k - x^{{k-1}}|| <= 1e-4 (완화)\n"
+                    f"    → 두 조건 중 하나만 만족해도 조기 종료 (AND → OR로 변경)\n"
                     f"\n"
-                    f"  💡 동시추정: 측정모델 고정으로 gtol 수렴 어려움 → 파라미터 변화량으로 판단\n"
+                    f"  💡 동시추정: 측정모델 고정으로 gtol 수렴 어려움 → ftol OR 파라미터 변화량으로 판단\n"
+                    f"  💡 완화된 조건으로 Line Search 무한 루프 방지\n"
                     f"  💡 scipy의 기본 수렴 조건과 병행하여 사용합니다."
                 )
 

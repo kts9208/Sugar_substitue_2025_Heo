@@ -1538,6 +1538,7 @@ def compute_all_individuals_likelihood_full_batch_gpu(
 
     if iteration_logger and log_level in ['MODERATE', 'DETAILED']:
         # 📊 전체 우도 성분 로깅
+        # ✅ 실제 적용된 structural_weight 표시 (하드코딩된 9.0이 아님)
         iteration_logger.info(
             f"\n{'='*80}\n"
             f"📊 우도 계산 완료\n"
